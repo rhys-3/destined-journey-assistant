@@ -1,6 +1,6 @@
 {
   "name": "destined-journey-summarizer",
-  "version": "2.7.0",
+  "version": "2.8.2",
   "description": "命定之诗角色卡专用的 SillyTavern 总结脚本，用于自动/手动总结聊天内容并存入世界书",
   "main": "dist/destined-journey-summarizer.js",
   "scripts": {

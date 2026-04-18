@@ -33,9 +33,9 @@ eventOn(tavern_events.CHAT_CHANGED, async () => {
 loadSettings()
   .then(async () => {
     await migrateOldWorldbookName();
-    toastr.success("命定之诗总结助手 (V2.8.1) 已加载。");
+    toastr.success("命定之诗总结助手 (V2.8.2) 已加载。");
   })
   .catch((e) => {
     console.warn("初始化加载设置失败:", e);
-    toastr.success("命定之诗总结助手 (V2.8.1) 已加载（使用默认设置）。");
+    toastr.success("命定之诗总结助手 (V2.8.2) 已加载（使用默认设置）。");
   });
