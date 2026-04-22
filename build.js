@@ -12,7 +12,7 @@
  * 输出: dist/destined-journey-summarizer.js
  *
  * @author Rhys_z_瑞
- * @version 2.8.2
+ * @version 2.8.3
  */
 
 const fs = require("fs");
@@ -66,13 +66,13 @@ function build() {
   // 添加文件头和 IIFE 开始
   parts.push(`
 /**
- * 命定之诗总结助手 V2.8.2 - 合并后的单文件脚本
+ * 命定之诗总结助手 V2.8.3 - 合并后的单文件脚本
  *
  * 本文件由构建脚本自动生成，请勿手动修改
  * 构建时间: ${new Date().toISOString()}
  *
  * @author Rhys_z_瑞
- * @version 2.8.2
+ * @version 2.8.3
  * @license MIT
  */
 
