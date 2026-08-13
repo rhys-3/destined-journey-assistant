@@ -36,6 +36,6 @@
     "LICENSE"
   ],
   "devDependencies": {
-    "terser": "^5.49.2"
+    "terser": "^5.50.0"
   }
 }
