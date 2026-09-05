@@ -1,70 +1,16 @@
-/**
- * ui/panelEvents.js
- * 面板事件绑定与交互逻辑
- * 依赖: config.js, utils.js, storage.js, summary.js, worldbook.js, api.js,
- *       ui/panel.js, ui/renderer.js, errorHandler.js
- */
-
-// ---- 显示设置面板 ----
-
-const showSettingsPopup = errorCatched(async () => {
-  const doc = window.top?.document || document;
-  const win = window.top || window;
-  if (_panelEl) {
-    _panelEl.remove();
-    _panelEl = null;
-  }
-  await loadSettings();
-  const settings = getSettings();
-  const overlay = doc.createElement("div");
-  overlay.className = "sa-overlay";
-  overlay.innerHTML = PANEL_STYLES + buildPanelHtml(settings);
-  doc.body.appendChild(overlay);
-  _panelEl = overlay;
-  const fitOverlay = () => {
-    const vp = win.visualViewport || {
-      width: win.innerWidth,
-      height: win.innerHeight,
-      offsetTop: 0,
-      offsetLeft: 0,
-    };
-    const w = vp.width || win.innerWidth;
-    const h = vp.height || win.innerHeight;
-    overlay.style.cssText = `
-      position: fixed !important; top: ${vp.offsetTop || 0}px !important; left: ${vp.offsetLeft || 0}px !important;
-      width: ${w}px !important; height: ${h}px !important;
-      max-width: none !important; max-height: none !important; margin: 0 !important; padding: 0 !important;
-      z-index: 10000 !important; display: flex !important; align-items: center !important; justify-content: center !important;
-      background: rgba(5,6,15,0.80) !important; backdrop-filter: blur(8px) !important; -webkit-backdrop-filter: blur(8px) !important;
-      overflow: hidden !important;
-    `;
-    const panel = overlay.querySelector(".sa-panel");
-    if (panel && w <= 768) {
-      panel.style.cssText = `width: ${w}px !important; height: ${h}px !important; max-width: none !important; max-height: none !important; border-radius: 0 !important; border: none !important; margin: 0 !important;`;
-    } else if (panel) {
-      panel.style.cssText = "";
-    }
-  };
-  fitOverlay();
-  const vpObj = win.visualViewport;
-  if (vpObj) {
-    vpObj.addEventListener("resize", fitOverlay);
-    vpObj.addEventListener("scroll", fitOverlay);
-  }
-  win.addEventListener("resize", fitOverlay);
-  overlay._cleanupResize = () => {
-    if (vpObj) {
-      vpObj.removeEventListener("resize", fitOverlay);
-      vpObj.removeEventListener("scroll", fitOverlay);
-    }
-    win.removeEventListener("resize", fitOverlay);
-  };
-  bindPanelEvents(overlay, settings);
-  await refreshEntryList(overlay);
-  await refreshMegaEntryList(overlay);
-  await refreshStatus(overlay);
-});
-
+import { BLOCK_TYPES, generateBlockId, DEFAULT_PROMPT_BLOCKS, DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS } from '../config.js';
+import { clampInt, escapeHtml, parseSummaryEntryName, makeMegaSummaryEntryName, parseTagString } from '../utils.js';
+import { getKeyForUrl, getSettings, updateSettings, resetSettings, getMegaSummaryMap, deleteMegaSummaryMapping } from '../storage.js';
+import { fetchModelList } from '../api.js';
+import { generateDefaultWorldbookName, getActiveWorldbookName, isChatWorldbookBound, bindWorldbookToChat, unbindWorldbookFromChat, migrateWorldbookEntries, getWorldbookEntriesSafe, applySummarizedFloorsVisibility, upsertSummaryEntryByName, deleteSummaryEntry, getAllSummaryEntriesForDisplay, restoreMegaSummaryToSummaries, deactivateMegaSummaryEntry, activateMegaSummaryEntry, getAllMegaSummaryEntriesForDisplay } from '../worldbook.js';
+import { startSummaryProcess, startCustomRangeSummaryProcess, regenerateAndReplaceEntry, executeMegaSummary, regenerateAndReplaceMegaEntry } from '../summary.js';
+import { renderBlocks } from './panel.js';
+import { renderEntryList, renderMegaEntryList, renderStatusInfo } from './renderer.js';
+import { getHost, runAction, captureContext, checkContext, SillyTavern, setChatMessages } from '../../platform/lifecycle.js';
+import { setSummaryEntryEnabled } from '../worldbook.js';
+const actionListener = fn => (...args) => runAction(() => fn(...args));
+let _panelEl = null;
+const showSettingsPopup = () => getHost().remount();
 // ---- 设置收集 ----
 
 const collectBlocksFromPanel = (
@@ -107,6 +53,8 @@ const collectSettingsFromPanel = (overlay) => {
   const val = (id) => overlay.querySelector(`#${id}`)?.value ?? "";
   const checked = (id) => overlay.querySelector(`#${id}`)?.checked ?? false;
   return {
+    enabled: checked("sa-enabled"),
+    customApiSource: getSettings().customApiSource,
     triggerFloorCount: clampInt(val("sa-trigger-count"), 10, 999),
     keepFloorCount: clampInt(val("sa-keep-count"), 1, 999),
     includeOldSummary: checked("sa-include-old-summary"),
@@ -147,6 +95,7 @@ const rerenderBlocks = (
   const container = overlay.querySelector(containerId);
   if (!container) return;
   container.innerHTML = renderBlocks(blocks, containerId.replace("#", ""));
+  overlay.dispatchEvent(new Event("summary-blocks-changed"));
 };
 
 const addNewBlock = async (overlay, containerId = "#sa-blocks-container") => {
@@ -236,7 +185,7 @@ const bindBlockEventsForContainer = (overlay, containerId, defaultBlocks) => {
   if (!container || container._blockEventsBound) return;
   container._blockEventsBound = true;
 
-  container.addEventListener("click", (e) => {
+  container.addEventListener("click", actionListener(async (e) => {
     const target = e.target;
     if (target.closest(".sa-block-enable") || target.tagName === "INPUT")
       return;
@@ -244,21 +193,21 @@ const bindBlockEventsForContainer = (overlay, containerId, defaultBlocks) => {
       target.closest("[data-action-add-block]") ||
       target.closest("[data-action-add-mega-block]")
     ) {
-      addNewBlock(overlay, containerId);
+      await addNewBlock(overlay, containerId);
       return;
     }
     if (target.closest("[data-action-reset-blocks]")) {
-      resetBlocks(overlay, containerId, DEFAULT_PROMPT_BLOCKS);
+      await resetBlocks(overlay, containerId, DEFAULT_PROMPT_BLOCKS);
       return;
     }
     if (target.closest("[data-action-reset-mega-blocks]")) {
-      resetBlocks(overlay, containerId, DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS);
+      await resetBlocks(overlay, containerId, DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS);
       return;
     }
     const deleteEl = target.closest("[data-block-delete]");
     if (deleteEl) {
       e.stopPropagation();
-      deleteBlock(
+      await deleteBlock(
         overlay,
         deleteEl.getAttribute("data-block-delete"),
         containerId,
@@ -272,7 +221,7 @@ const bindBlockEventsForContainer = (overlay, containerId, defaultBlocks) => {
       toggleEl.classList.toggle("collapsed");
       body.classList.toggle("collapsed");
     }
-  });
+  }));
 
   container.addEventListener("change", (e) => {
     const enableEl = e.target.closest("[data-block-enable]");
@@ -365,7 +314,7 @@ const bindBlockEventsForContainer = (overlay, containerId, defaultBlocks) => {
         _touchClone.style.left = rect.left + "px";
         _touchClone.style.top = rect.top + "px";
         const doc = window.top?.document || document;
-        doc.body.appendChild(_touchClone);
+        overlay.getRootNode().querySelector(".destined-root").appendChild(_touchClone);
       }, 150);
     },
     { passive: true },
@@ -385,7 +334,7 @@ const bindBlockEventsForContainer = (overlay, containerId, defaultBlocks) => {
           "sa-block-drag-over-bottom",
         );
       });
-      const elUnder = document.elementFromPoint(touch.clientX, touch.clientY);
+      const elUnder = overlay.getRootNode().elementFromPoint(touch.clientX, touch.clientY);
       const blockUnder = elUnder?.closest?.(".sa-block");
       if (
         blockUnder &&
@@ -408,7 +357,7 @@ const bindBlockEventsForContainer = (overlay, containerId, defaultBlocks) => {
     if (!_touchBlockId) return;
     const touch = e.changedTouches?.[0];
     if (touch && _touchClone) {
-      const elUnder = document.elementFromPoint(touch.clientX, touch.clientY);
+      const elUnder = overlay.getRootNode().elementFromPoint(touch.clientX, touch.clientY);
       const targetBlock = elUnder?.closest?.(".sa-block");
       if (targetBlock) {
         const targetId = targetBlock.getAttribute("data-block-id");
@@ -459,6 +408,11 @@ const bindBlockEvents = (overlay) => {
 
 const handleEntryAction = async (overlay, action, entryName) => {
   switch (action) {
+    case 'enable-summary':
+    case 'disable-summary':
+      await setSummaryEntryEnabled(entryName, action==='enable-summary');
+      await refreshEntryList(overlay);await refreshStatus(overlay);
+      break;
     case "view-edit":
       await viewEditEntry(overlay, entryName);
       break;
@@ -574,7 +528,7 @@ const refreshEntryList = async (panel, enableSelection = false) => {
     el.innerHTML = renderEntryList(entries, enableSelection);
     el.querySelectorAll("button[data-action]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        handleEntryAction(panel, btn.dataset.action, btn.dataset.name);
+        runAction(() => handleEntryAction(panel, btn.dataset.action, btn.dataset.name));
       });
     });
 
@@ -730,7 +684,7 @@ const refreshMegaEntryList = async (panel) => {
     el.innerHTML = renderMegaEntryList(entries);
     el.querySelectorAll("button[data-action]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        handleMegaEntryAction(panel, btn.dataset.action, btn.dataset.name);
+        runAction(() => handleMegaEntryAction(panel, btn.dataset.action, btn.dataset.name));
       });
     });
   } catch (err) {
@@ -751,20 +705,6 @@ const refreshStatus = async (panel) => {
 // ---- 面板事件绑定 ----
 
 const bindPanelEvents = (overlay, initialSettings) => {
-  // 关闭按钮
-  overlay.querySelector("#sa-close").addEventListener("click", () => {
-    overlay._cleanupResize?.();
-    overlay.remove();
-    _panelEl = null;
-  });
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) {
-      overlay._cleanupResize?.();
-      overlay.remove();
-      _panelEl = null;
-    }
-  });
-
   // 主标签页切换
   overlay.querySelectorAll(".sa-tab-item").forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -794,17 +734,6 @@ const bindPanelEvents = (overlay, initialSettings) => {
         .querySelector(`.sa-settings-pane[data-sub-pane="${subNavName}"]`)
         .classList.add("active");
     });
-  });
-
-  // 板块折叠/展开
-  overlay.addEventListener("click", (e) => {
-    const header = e.target.closest("[data-block-toggle]");
-    if (header) {
-      const blockId = header.dataset.blockToggle;
-      const body = overlay.querySelector(`[data-block-body="${blockId}"]`);
-      header.classList.toggle("collapsed");
-      body.classList.toggle("collapsed");
-    }
   });
 
   // API 模式切换
@@ -839,7 +768,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
   // 获取模型列表
   overlay
     .querySelector("#sa-fetch-models")
-    .addEventListener("click", async () => {
+    .addEventListener("click", actionListener(async () => {
       const url = overlay.querySelector("#sa-api-url").value.trim();
       const key = overlay.querySelector("#sa-api-key").value.trim();
       if (!url) {
@@ -866,7 +795,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
         toastr.error(`获取模型列表失败: ${err.message}`);
         console.error("获取模型列表详细错误:", err);
       }
-    });
+    }));
 
   // ---- 楼层隐藏/显示管理 ----
   const CHUNK = 200;
@@ -900,7 +829,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
 
   overlay
     .querySelector("#sa-vis-hide-range")
-    .addEventListener("click", async () => {
+    .addEventListener("click", actionListener(async () => {
       const from = parseInt(overlay.querySelector("#sa-vis-from").value, 10);
       const to = parseInt(overlay.querySelector("#sa-vis-to").value, 10);
       if (isNaN(from) || isNaN(to)) {
@@ -910,10 +839,10 @@ const bindPanelEvents = (overlay, initialSettings) => {
       const count = await batchSetHidden(from, to, true);
       toastr.success(`已隐藏 ${count} 条消息（${from}-${to} 楼）`);
       await refreshStatus(overlay);
-    });
+    }));
   overlay
     .querySelector("#sa-vis-show-range")
-    .addEventListener("click", async () => {
+    .addEventListener("click", actionListener(async () => {
       const from = parseInt(overlay.querySelector("#sa-vis-from").value, 10);
       const to = parseInt(overlay.querySelector("#sa-vis-to").value, 10);
       if (isNaN(from) || isNaN(to)) {
@@ -923,17 +852,17 @@ const bindPanelEvents = (overlay, initialSettings) => {
       const count = await batchSetHidden(from, to, false);
       toastr.success(`已显示 ${count} 条消息（${from}-${to} 楼）`);
       await refreshStatus(overlay);
-    });
+    }));
   overlay
     .querySelector("#sa-vis-hide-summarized")
-    .addEventListener("click", async () => {
+    .addEventListener("click", actionListener(async () => {
       await applySummarizedFloorsVisibility();
       toastr.success("已隐藏所有已总结楼层");
       await refreshStatus(overlay);
-    });
+    }));
   overlay
     .querySelector("#sa-vis-show-all")
-    .addEventListener("click", async () => {
+    .addEventListener("click", actionListener(async () => {
       const lastId = getLastMessageId();
       if (lastId < 0) {
         toastr.warning("聊天为空");
@@ -942,7 +871,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
       const count = await batchSetHidden(0, lastId, false);
       toastr.success(`已显示全部 ${count} 条已隐藏消息`);
       await refreshStatus(overlay);
-    });
+    }));
 
   // ---- 世界书绑定/解绑/迁移 ----
   const refreshWbBindStatus = () => {
@@ -979,7 +908,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
 
   overlay
     .querySelector("#sa-bind-worldbook")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", actionListener(async () => {
       const selectVal = overlay.querySelector("#sa-wb-select")?.value?.trim();
       const inputVal = overlay.querySelector("#sa-new-wb-name")?.value?.trim();
       const name = inputVal || selectVal;
@@ -1012,11 +941,11 @@ const bindPanelEvents = (overlay, initialSettings) => {
       } catch (err) {
         toastr.error(`绑定失败: ${err.message}`);
       }
-    });
+    }));
 
   overlay
     .querySelector("#sa-unbind-worldbook")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", actionListener(async () => {
       if (!isChatWorldbookBound()) {
         toastr.info("当前聊天未绑定世界书");
         return;
@@ -1036,11 +965,11 @@ const bindPanelEvents = (overlay, initialSettings) => {
       } catch (err) {
         toastr.error(`解绑失败: ${err.message}`);
       }
-    });
+    }));
 
   overlay
     .querySelector("#sa-switch-worldbook")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", actionListener(async () => {
       if (!isChatWorldbookBound()) {
         toastr.warning("当前聊天未绑定世界书，请先绑定");
         return;
@@ -1074,14 +1003,24 @@ const bindPanelEvents = (overlay, initialSettings) => {
       } catch (err) {
         toastr.error(`迁移失败: ${err.message}`);
       }
-    });
+    }));
 
   // ---- 自动保存（防抖） ----
   let _autoSaveTimer = null;
+  let panelToken = captureContext();
+  overlay._flush = async () => {
+    if (!_autoSaveTimer) return;
+    clearTimeout(_autoSaveTimer); _autoSaveTimer = null;
+    checkContext(panelToken);
+    await updateSettings(collectSettingsFromPanel(overlay));
+  };
+  overlay._dispose = () => { clearTimeout(_autoSaveTimer); _autoSaveTimer = null; };
   const autoSave = () => {
     if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
     _autoSaveTimer = setTimeout(async () => {
       try {
+        checkContext(panelToken);
+        _autoSaveTimer = null;
         const newSettings = collectSettingsFromPanel(overlay);
         await updateSettings(newSettings);
         toastr.info("设置已自动保存", "", {
@@ -1089,23 +1028,21 @@ const bindPanelEvents = (overlay, initialSettings) => {
           positionClass: "toast-top-right",
         });
       } catch (e) {
-        console.warn("自动保存失败:", e);
+        getHost().status(`总结设置保存失败：${e.message}`, "error");
       }
     }, 800);
   };
-  overlay
-    .querySelectorAll(".sa-body input, .sa-body select, .sa-body textarea")
-    .forEach((el) => {
-      if (el.id === "sa-vis-from" || el.id === "sa-vis-to") return;
-      const evtName =
-        el.type === "checkbox" || el.type === "radio" || el.tagName === "SELECT"
-          ? "change"
-          : "input";
-      el.addEventListener(evtName, autoSave);
-    });
+  const onFieldChange = e => {
+    if (!e.target.matches('input,select,textarea') || ['sa-enabled','sa-vis-from','sa-vis-to'].includes(e.target.id)) return;
+    autoSave();
+  };
+  overlay.addEventListener("summary-blocks-changed", autoSave);
+  overlay.querySelector('#sa-api-url').addEventListener('input', e => { overlay.querySelector('#sa-api-key').value = getKeyForUrl(e.target.value); });
+  overlay.addEventListener('input', onFieldChange);
+  overlay.addEventListener('change', onFieldChange);
 
   // ---- 重置设置 ----
-  overlay.querySelector("#sa-reset").addEventListener("click", async () => {
+  overlay.querySelector("#sa-reset").addEventListener("click", actionListener(async () => {
     const cfm = await SillyTavern.callGenericPopup(
       "确定要重置所有设置为默认值吗？",
       SillyTavern.POPUP_TYPE.CONFIRM,
@@ -1113,17 +1050,15 @@ const bindPanelEvents = (overlay, initialSettings) => {
     if (cfm !== SillyTavern.POPUP_RESULT.AFFIRMATIVE) return;
     await resetSettings();
     await applySummarizedFloorsVisibility();
-    overlay._cleanupResize?.();
-    overlay.remove();
-    _panelEl = null;
+    overlay._flush?.();
     await showSettingsPopup();
     toastr.success("设置已重置");
-  });
+  }));
 
   // ---- 手动开始总结 ----
   overlay
     .querySelector("#sa-start-summary")
-    .addEventListener("click", async () => {
+    .addEventListener("click", actionListener(async () => {
       if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
       const newSettings = collectSettingsFromPanel(overlay);
       await updateSettings(newSettings);
@@ -1131,12 +1066,12 @@ const bindPanelEvents = (overlay, initialSettings) => {
       await refreshEntryList(overlay);
       await refreshMegaEntryList(overlay);
       await refreshStatus(overlay);
-    });
+    }));
 
   // ---- 指定楼层总结 ----
   overlay
     .querySelector("#sa-start-custom-summary")
-    .addEventListener("click", async () => {
+    .addEventListener("click", actionListener(async () => {
       if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
       const newSettings = collectSettingsFromPanel(overlay);
       await updateSettings(newSettings);
@@ -1144,12 +1079,12 @@ const bindPanelEvents = (overlay, initialSettings) => {
       await refreshEntryList(overlay);
       await refreshMegaEntryList(overlay);
       await refreshStatus(overlay);
-    });
+    }));
 
   // ---- 开始大总结 ----
   overlay
     .querySelector("#sa-start-mega-summary")
-    ?.addEventListener("click", async () => {
+    ?.addEventListener("click", actionListener(async () => {
       // 切换选择模式
       const btn = overlay.querySelector("#sa-start-mega-summary");
       const isSelecting = btn.textContent.includes("取消");
@@ -1186,7 +1121,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
         confirmBtn.style.width = "100%";
         entryListContainer.appendChild(confirmBtn);
 
-        confirmBtn.addEventListener("click", async () => {
+        confirmBtn.addEventListener("click", actionListener(async () => {
           const checkboxes = overlay.querySelectorAll(
             ".sa-entry-checkbox:checked",
           );
@@ -1239,18 +1174,21 @@ const bindPanelEvents = (overlay, initialSettings) => {
           if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
           const newSettings = collectSettingsFromPanel(overlay);
           await updateSettings(newSettings);
-          overlay._cleanupResize?.();
-          overlay.remove();
-          _panelEl = null;
+
 
           // 执行大总结
           await executeMegaSummary(selectedNames, entryName, {
             requireReview: true,
           });
-        });
+        }));
       }
-    });
+    }));
 
+  overlay.querySelector('#sa-enabled').addEventListener('change', async e => {
+    try { await updateSettings({ enabled: e.target.checked }); panelToken = captureContext(); } catch(error) { e.target.checked = getSettings().enabled; getHost().status(error.message, 'error'); }
+  });
   // ---- 绑定板块事件 ----
   bindBlockEvents(overlay);
 };
+
+export { actionListener, _panelEl, showSettingsPopup, collectBlocksFromPanel, collectSettingsFromPanel, _draggedBlockId, rerenderBlocks, addNewBlock, deleteBlock, resetBlocks, viewEditEntry, bindBlockEventsForContainer, bindBlockEvents, handleEntryAction, refreshEntryList, bindMegaSelectionLogic, updateSelectionCount, addSelectionControls, handleMegaEntryAction, refreshMegaEntryList, refreshStatus, bindPanelEvents };

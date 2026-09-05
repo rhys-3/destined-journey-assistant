@@ -1,3 +1,6 @@
+import { BLOCK_TYPES } from '../config.js';
+import { escapeHtml, tagsToString } from '../utils.js';
+import { getActiveWorldbookName, isChatWorldbookBound } from '../worldbook.js';
 /**
  * ui/panel.js
  * 设置面板 UI、HTML 构建、事件绑定
@@ -5,7 +8,7 @@
  *       ui/styles.js, ui/renderer.js, errorHandler.js
  */
 
-let _panelEl = null;
+
 
 // ---- 辅助渲染函数 ----
 
@@ -138,15 +141,11 @@ const renderBlocks = (blocks, containerId = "sa-blocks-container") => {
 
 const buildPanelHtml = (settings) => `
 <div class="sa-panel">
-  <div class="sa-header">
-    <span>命定之诗总结助手 ✨ V2.8.3</span>
-    <button class="sa-close" id="sa-close">&times;</button>
-  </div>
+  <article class="card"><label class="sa-enable"><input type="checkbox" id="sa-enabled" ${settings.enabled ? 'checked' : ''}>启用总结功能</label><p>达到阈值后自动总结；关闭保留已有记录。</p></article>
   <div class="sa-tabs">
-    <button class="sa-tab-item active" data-tab="status">📊 状态</button>
-    <button class="sa-tab-item" data-tab="settings">⚙️ 设置</button>
-    <button class="sa-tab-item" data-tab="prompts">📝 提示词</button>
-    <button class="sa-tab-item" data-tab="about">ℹ️ 关于</button>
+    <button class="sa-tab-item active" data-tab="status">记录</button>
+    <button class="sa-tab-item" data-tab="settings">参数</button>
+    <button class="sa-tab-item" data-tab="prompts">提示词</button>
   </div>
   <div class="sa-status-bar" style="padding:10px 16px;border-bottom:1px solid var(--sa-border);background:var(--sa-bg);flex-shrink:0;">
     <div id="sa-status-info" class="sa-status">加载中...</div>
@@ -189,7 +188,7 @@ const buildPanelHtml = (settings) => `
               <label><input type="checkbox" id="sa-include-old-summary" ${settings.includeOldSummary ? "checked" : ""}> 发送已有总结</label>
               <label><input type="checkbox" id="sa-auto-confirm" ${settings.autoTriggerConfirm ? "checked" : ""}> 自动触发时确认</label>
               <label><input type="checkbox" id="sa-auto-hide-summarized" ${settings.autoHideSummarizedFloors !== false ? "checked" : ""}> 自动隐藏楼层</label>
-              <label class="sa-no-trans-label"><input type="checkbox" id="sa-no-trans-tag" ${settings.noTransTag !== false ? "checked" : ""}> 防合并标记(kemini或noass脚本开)<input class="sa-input sa-no-trans-input" id="sa-no-trans-tag-value" type="text" placeholder="<|no-trans|>" value="${escapeHtml(settings.noTransTagValue || "<|no-trans|>")}" title="自定义防合并标记"></label>
+              <label class="sa-no-trans-label"><input type="checkbox" id="sa-no-trans-tag" ${settings.noTransTag !== false ? "checked" : ""}> SPreset 防合并标记<input class="sa-input sa-no-trans-input" id="sa-no-trans-tag-value" type="text" placeholder="<|no-trans|>" value="${escapeHtml(settings.noTransTagValue || "<|no-trans|>")}" title="自定义防合并标记"></label>
             </div>
             <div class="sa-row" style="margin-top:12px"><span class="sa-label">用户前缀</span><input class="sa-input" id="sa-user-prefix" type="text" placeholder="{{user}}" value="${escapeHtml(settings.userPrefix || "{{user}}")}"></div>
             <div class="sa-row"><span class="sa-label">AI前缀</span><input class="sa-input" id="sa-assistant-prefix" type="text" placeholder="{{char}}" value="${escapeHtml(settings.assistantPrefix || "{{char}}")}"></div>
@@ -266,18 +265,9 @@ const buildPanelHtml = (settings) => `
         </div>
       </div>
     </div>
-    <div class="sa-tab-pane" data-pane="about">
-        <div class="sa-about-content">
-            <h3>命定之诗总结助手</h3>
-            <p>版本: 2.8.3</p>
-            <p>作者: Rhys_z_瑞</p>
-            <br>
-            <p>命定之诗角色卡专用，用于其它卡不保证效果</p>
-        </div>
-    </div>
   </div>
   <div class="sa-footer">
-    <div class="sa-footer-left"><button class="sa-btn sa-btn-danger" id="sa-reset">重置所有设置</button></div>
+    <div class="sa-footer-left"><button class="sa-btn sa-btn-danger" id="sa-reset">重置总结参数</button></div>
     <div class="sa-footer-right">
       <button class="sa-btn" id="sa-start-custom-summary">指定楼层总结</button>
       <button class="sa-btn sa-btn-primary" id="sa-start-summary">手动开始总结</button>
@@ -285,3 +275,5 @@ const buildPanelHtml = (settings) => `
   </div>
 </div>
 `;
+
+export { buildRoleSelect, getBlockTypeName, BUILTIN_BLOCK_IDS, renderBlock, renderBlocks, buildPanelHtml };

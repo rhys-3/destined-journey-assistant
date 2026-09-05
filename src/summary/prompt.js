@@ -1,3 +1,9 @@
+import { errorCatched } from './errorHandler.js';
+import { DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS } from './config.js';
+import { parseSummaryEntryName } from './utils.js';
+import { getSettings, getMegaSummaryMapping } from './storage.js';
+import { getRawMessages, processMessagesByTags, messagesToMergedText, getRawChatTextForScan } from './messages.js';
+import { getWorldbookEntriesSafe, getAllSummaryContents, getSummaryContentsBefore, getAllMegaSummaryEntriesForDisplay, getMegaSummaryContentsBefore } from './worldbook.js';
 /**
  * prompt.js
  * 总结提示词参数构建
@@ -128,3 +134,5 @@ const buildRegenerateMegaSummaryPromptParams = errorCatched(async (entryName) =>
   
   return await buildMegaSummaryPromptParams(summaryNames, entryName);
 });
+
+export { buildSummaryPromptParams, buildRegeneratePromptParams, buildMegaSummaryPromptParams, buildRegenerateMegaSummaryPromptParams };

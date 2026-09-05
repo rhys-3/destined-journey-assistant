@@ -1,3 +1,4 @@
+import { assertCurrent } from '../platform/lifecycle.js';
 /**
  * errorHandler.js
  * 全局错误处理包装器
@@ -48,14 +49,6 @@ const formatErrorMessage = (error) => {
   return baseMsg;
 };
 
-function errorCatched(fn) {
-  return async (...args) => {
-    try {
-      return await fn(...args);
-    } catch (error) {
-      console.error('[SummaryAssist] Catched error:', error);
-      const formattedMsg = formatErrorMessage(error);
-      toastr.error(`[总结助手] 操作失败: ${formattedMsg}`);
-    }
-  };
-}
+function errorCatched(fn) { return async (...args) => { assertCurrent(); const result = await fn(...args); assertCurrent(); return result; }; }
+
+export { extractHttpStatus, formatErrorMessage, errorCatched };

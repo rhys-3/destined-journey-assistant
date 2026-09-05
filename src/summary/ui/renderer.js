@@ -1,3 +1,7 @@
+import { errorCatched } from '../errorHandler.js';
+import { escapeHtml, compressRanges } from '../utils.js';
+import { getSettings } from '../storage.js';
+import { getActiveWorldbookName, isChatWorldbookBound, getAllSummaryEntriesForDisplay, getLastSummarizedFloor } from '../worldbook.js';
 /**
  * ui/renderer.js
  * 状态信息与条目列表渲染
@@ -26,6 +30,7 @@ const renderEntryList = (entries, selectionMode = false) => {
       <div class="sa-entry-actions">
         <button class="sa-btn sa-btn-sm" data-action="view-edit" data-name="${escapeHtml(e.name)}">查看/编辑</button>
         <button class="sa-btn sa-btn-sm" data-action="regenerate" data-name="${escapeHtml(e.name)}">重新生成</button>
+        <button class="sa-btn sa-btn-sm" data-action="${e.disabled ? 'enable-summary' : 'disable-summary'}" data-name="${escapeHtml(e.name)}">${e.disabled ? '启用' : '停用'}</button>
         <button class="sa-btn sa-btn-sm sa-btn-danger" data-action="delete" data-name="${escapeHtml(e.name)}">删除</button>
       </div>
     </div>
@@ -109,3 +114,5 @@ const renderStatusInfo = errorCatched(async () => {
     </div>
   `;
 });
+
+export { renderEntryList, renderMegaEntryList, renderStatusInfo };

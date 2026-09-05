@@ -1,0 +1,74 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+module.exports=async(cdp,evaluate)=>{
+ const results=await evaluate(`(async()=>{
+  const checks=[];const check=(name,ok)=>{if(!ok)throw Error(name);checks.push(name);};const q=s=>ui.shadow.querySelector(s);const click=s=>{const e=q(s);if(!e)throw Error('Missing '+s);e.click();};const pause=ms=>new Promise(r=>setTimeout(r,ms));
+  Object.assign(window.SillyTavern,{POPUP_TYPE:{CONFIRM:2,INPUT:1},POPUP_RESULT:{AFFIRMATIVE:1,CANCELLED:0}});
+  ui.state.activeTab='summary';ui.render();await pause(100);
+  check('总结作为第六导航体系中的独立页面',!!q('.summary-slot .sa-panel')&&q('.sa-tabs').textContent.includes('记录')&&q('.sa-tabs').textContent.includes('参数'));
+  check('新装默认关闭总结',!q('#sa-enabled').checked&&!ui.summary.capture().enabled);
+  click('#sa-enabled');await pause(30);check('总结启用开关独立持久化',vars.summary_assistant_settings.enabled===true);
+  click('[data-tab="settings"].sa-tab-item');
+  q('#sa-trigger-count').value='41';q('#sa-trigger-count').dispatchEvent(new Event('input',{bubbles:true}));
+  await pause(850);check('总结参数自动保存',ui.summary.capture().triggerFloorCount===41);
+  await ui.setGlobalPreference('保存预设不丢总结');await ui.settle();check('预设整表保存不覆盖总结',vars.summary_assistant_settings.triggerFloorCount===41);
+  click('[data-tab="prompts"].sa-tab-item');
+  const text=q('#sa-blocks-container textarea');text.value='未离开页面的提示词草稿';text.dispatchEvent(new Event('input',{bubbles:true}));
+  ui.renderActiveContent(true);check('原生同步刷新保留总结草稿',q('#sa-blocks-container textarea').value==='未离开页面的提示词草稿');
+  click('.tabs [data-tab="daily"]');await pause(50);click('.tabs [data-tab="summary"]');await pause(50);
+  check('切换页面保留总结子页与草稿',q('.sa-tab-item.active').dataset.tab==='prompts'&&q('#sa-blocks-container textarea').value==='未离开页面的提示词草稿');
+  const header=q('[data-block-toggle]');const body=q('[data-block-body]');const collapsed=body.classList.contains('collapsed');header.click();await pause(20);check('提示词折叠只响应一次',body.classList.contains('collapsed')!==collapsed);
+  const before=ui.summary.capture().promptBlocks.length;
+  click('[data-action-add-block]');await pause(20);
+  check('新增提示词使用统一主题弹窗',!!q('.dj-dialog')&&!document.querySelector('.sa-overlay'));
+  q('.dj-dialog textarea').value='自建总结规则';q('.dj-dialog-actions button').click();await pause(900);
+  check('新增提示词自动保存',ui.summary.capture().promptBlocks.length===before+1);
+  const added=ui.summary.capture().promptBlocks.at(-1);check('新增提示词名称保存',added.name==='自建总结规则');
+  q('[data-block-delete="'+added.id+'"]').click();await pause(30);q('.dj-dialog-actions button').click();await pause(900);check('删除提示词自动保存',ui.summary.capture().promptBlocks.length===before);
+  await ui.summary.flush();
+  click('.tabs [data-tab="configurations"]');
+  q('[data-action="configuration-scope"][data-kind="save"][data-key="preset"]').click();
+  q('[data-action="configuration-name"]').value='仅总结';q('[data-action="configuration-name"]').dispatchEvent(new Event('input',{bubbles:true}));
+  click('[data-action="configuration-save-new"]');await ui.settle();
+  const item=ui.configLibrary().items.find(i=>i.name==='仅总结');check('保存范围勾选生成仅总结配置',item?.snapshot.summary&&!item.snapshot.preset);
+  const original=JSON.stringify(data);await ui.summary.apply({...ui.summary.capture(),triggerFloorCount:61});await ui.applyConfiguration(item.id);
+  check('仅总结配置切换不改动预设',JSON.stringify(data)===original&&ui.summary.capture().triggerFloorCount===41);
+  check('恢复点只记录受影响的总结部分',!!ui.configLibrary().recovery.snapshot.summary&&!ui.configLibrary().recovery.snapshot.preset);
+  await ui.applyConfiguration('__recovery__');check('仅总结恢复点还原总结参数',ui.summary.capture().triggerFloorCount===61&&JSON.stringify(data)===original);
+  const both=await ui.saveNamedConfiguration('两类配置','',{preset:true,summary:true});
+  const exported=JSON.parse(ui.exportConfigurations(both,{preset:false,summary:true}));check('导出可再次筛选范围',exported.version===2&&exported.items[0].snapshot.summary&&!exported.items[0].snapshot.preset);
+  const legacy={format:'destined-configurations',version:1,items:[{id:'old-config',name:'旧版配置',snapshot:ui.captureConfiguration()}]};await ui.importConfigurations(JSON.stringify(legacy));
+  const old=ui.configLibrary().items.find(i=>i.id==='old-config');check('旧版配置导入为仅预设',old.snapshot.preset&&!old.snapshot.summary);
+  const exp=ui.exportConfigurations();check('配置导出不含密钥、世界书和记录',!exp.includes('customApiKey')&&!exp.includes('summary_assistant_worldbook')&&!exp.includes('summary_assistant_mega_summary_map'));
+  let failed=false;try{ui.exportConfigurations('',{preset:false,summary:false})}catch{failed=true}check('导出不允许空范围',failed);
+  // Exercise actual summary action, review and worldbook save through the UI.
+  window.books={};window.chatVars={};window.globalBooks=[];window.messages=Array.from({length:30},(_,id)=>({message_id:id,role:'assistant',message:'<tp>488-1-1</tp><gametxt>发生事件'+id+'</gametxt>',is_hidden:false}));
+  window.getVariables=o=>structuredClone(o?.type==='chat'?chatVars:vars);
+  window.insertOrAssignVariables=(value,o)=>{Object.assign(o.type==='chat'?chatVars:vars,structuredClone(value))};
+  window.getWorldbookNames=async()=>Object.keys(books);window.getWorldbook=async n=>structuredClone(books[n]||[]);
+  window.getGlobalWorldbookNames=()=>globalBooks;window.rebindGlobalWorldbooks=async n=>{globalBooks=n};
+  window.createWorldbook=async(n,v)=>{books[n]=structuredClone(v)};window.createWorldbookEntries=async(n,v)=>books[n].push(...structuredClone(v));window.updateWorldbookWith=async(n,fn)=>{books[n]=await fn(structuredClone(books[n]))};
+  window.getLastMessageId=()=>messages.length-1;
+  window.getChatMessages=(range,o={})=>{const [a,b]=range.split('-').map(Number);return structuredClone(messages.filter(m=>m.message_id>=a&&m.message_id<=b&&(o.hide_state!=='hidden'||m.is_hidden)))};
+  window.setChatMessages=async values=>values.forEach(v=>Object.assign(messages[v.message_id],v));
+  window.SillyTavern={getContext:()=>({chatId:'assistant-test',characterId:1}),name1:'用户',name2:'角色',POPUP_TYPE:{CONFIRM:2,INPUT:1},POPUP_RESULT:{AFFIRMATIVE:1,CANCELLED:0}};
+  window.generateRaw=async request=>{window.lastRequest=request;return '---\\n488-1-1 | 测试地点:\\n  13:30\\n  两人抵达城门。'};
+  await ui.summary.apply({...ui.summary.capture(),triggerFloorCount:30,enabled:true});ui.state.activeTab='summary';ui.render();await pause(40);
+  click('#sa-start-summary');await pause(30);check('手动总结显示范围确认',q('.dj-dialog').textContent.includes('0')&&q('.dj-dialog').textContent.includes('19'));
+  q('.dj-dialog-actions button').click();await pause(60);check('生成结果进入统一审查窗口',q('.dj-dialog textarea').value.includes('两人抵达城门'));
+  q('.dj-dialog-actions button').click();await pause(150);
+  check('手动总结写入世界书并隐藏对应楼层',Object.values(books).flat().some(e=>e.name==='总结0-19楼')&&messages.slice(0,20).every(m=>m.is_hidden)&&messages.slice(20).every(m=>!m.is_hidden));
+  check('实际请求保留防合并标记',lastRequest.ordered_prompts.filter(p=>typeof p==='object').every(p=>p.content.startsWith('<|no-trans|>')));
+  check('无独立总结窗口及全局旧样式',!document.querySelector('.sa-overlay')&&!document.querySelector('#sa-summary-hint-style'));
+  ui.state.activeTab='summary';ui.render();return checks;
+ })()`);
+ console.log(results);fs.writeFileSync('.ui-review/assistant-test-results.json',JSON.stringify(results,null,2));
+ for(const theme of ['midnight','forest','ember','parchment'])for(const width of [1280,390,320])for(const tab of ['status','settings','prompts']){
+  const height=width===1280?960:844;
+  await cdp('Emulation.setDeviceMetricsOverride',{width,height,screenWidth:width,screenHeight:height,deviceScaleFactor:1,mobile:width<720});
+  await evaluate(`ui.state.activeTab='settings';ui.render();var themeControl=ui.shadow.querySelector('[data-action="ui-theme"]');themeControl.value='${theme}';themeControl.dispatchEvent(new Event('change',{bubbles:true}));ui.state.activeTab='summary';ui.render();ui.shadow.querySelector('.sa-tab-item[data-tab="${tab}"]').click()`);
+  const layout=await evaluate(`(()=>{const c=ui.shadow.querySelector('.content');return {overflow:c.scrollWidth>c.clientWidth+1,width:c.clientWidth,scroll:c.scrollWidth}})()`);assert(!layout.overflow,theme+' '+width+' '+tab+JSON.stringify(layout));
+  if(tab==='status'){const image=await cdp('Page.captureScreenshot',{format:'png'});fs.writeFileSync('.ui-review/summary-'+theme+'-'+width+'.png',Buffer.from(image.data,'base64'));}
+ }
+ console.log('总结界面：4 主题 × 3 屏幕 × 3 子页布局通过');
+};

@@ -1,414 +1,53 @@
-# 架构设计文档
+# 架构与运行依据
 
-> **📝 声明：本文档内容全部由 AI 生成**
+## 模块
 
-本文档详细说明命定之诗总结助手的技术架构和设计思路。
+| 路径 | 职责 |
+| --- | --- |
+| src/index.js | 单实例启动、卸载及启动错误传播 |
+| src/preset/assistant.js | 预设、模型、编辑排序、配置库、入口生命周期 |
+| src/summary/service.js | 一次迁移、事件、嵌入页面、聊天切换 |
+| src/summary/summary.js | 触发、范围、生成、审查、重试与保存 |
+| src/summary/api.js、prompt.js、messages.js | generateRaw、提示词与标签正文 |
+| src/summary/worldbook.js | 绑定、普通／大总结、映射与楼层显隐 |
+| src/summary/storage.js、settingsSchema.js | 总结参数缓存与白名单校验 |
+| src/platform/store.js | 共享变量读写协调 |
+| src/platform/lifecycle.js、ambient.js | 互斥、上下文令牌、取消与宿主 API |
+| src/ui/、src/summary/ui/ | 设置主题、统一弹窗与总结子页面 |
+| src/summary/presetDefaults.js | 当前预设两套默认提示词 |
+| loader.js | 固定版本加载与重试 |
 
-## ⚠️ 运行环境依赖
+只有一份 ES 模块运行时源码与一个新版 bundle；旧总结 dist 是冻结兼容资产。
 
-本脚本是 **[JS-Slash-Runner](https://github.com/N0VI028/JS-Slash-Runner)** 酒馆助手插件的运行脚本，必须在该插件提供的环境中运行。
+## 摘要与请求
 
-### JS-Slash-Runner 提供的全局函数
+预设生成回复中的 summary，SPreset 正则 07 在 maxDepth=10 范围去掉摘要，08 在 minDepth=11 范围保留时间地点与摘要。它们改变发送消息的处理结果，不是助手世界书记录。
 
-脚本依赖以下由 JS-Slash-Runner 插件提供的全局函数：
+助手通过 getChatMessages 读原始楼层，包含隐藏消息；范围计数与标签提取独立。默认提取 tp／gametxt，排除 think／HTML 注释。无匹配标签的用户消息仍计入楼层，但不进入总结正文。
 
-- **脚本管理**：`replaceScriptButtons()` - 注册脚本按钮
-- **事件系统**：`eventOn()`, `eventOff()`, `getButtonEvent()` - 事件监听与触发
-- **数据访问**：`getVariables()`, `getChatMessages()` - 获取聊天数据
-- **UI 交互**：`toastr` - 消息提示，`callPopup()` - 弹窗显示
-- **世界书操作**：世界书相关的 API 函数
+世界书普通／大总结分别深度 9998／9999。当前 SPreset 使用 Cut_900、Cut_2 锚点，将高深度缓冲内容归入 VOID_memory、中间内容归入 VOID_reference、低深度内容归入 VOID_runtime。测试直接执行实际配置的后处理函数；不是对任意 SPreset 的保证。
 
-**离开 JS-Slash-Runner 环境，这些函数将不可用，脚本无法运行。**
+主连接与自定义 API 都经 generateRaw，按板块构建 ordered_prompts，支持仅供扫描的 injects，防合并标记与当前 ChatSquash 配置一致。没有绕过助手的备用生成端点。
 
-## 🏗️ 整体架构
+## 生命周期与存储
 
-### 架构图
+写操作与生成检查聊天、预设和生命周期代次。切换上下文、停用或卸载使令牌失效；独立 generation_id 用于 stopGenerationById。互斥阻止连续消息和重复点击重复提交。取消／超时结束等待，迟到结果不继续审查保存。
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│              SillyTavern + JS-Slash-Runner 环境              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              命定之诗总结助手 V2.7                     │  │
-│  │                                                       │  │
-│  │  ┌─────────────┐      ┌──────────────┐              │  │
-│  │  │   UI Layer  │◄────►│  Core Layer  │              │  │
-│  │  │  (ui/*)     │      │  (*.js)      │              │  │
-│  │  └─────────────┘      └──────────────┘              │  │
-│  │         │                     │                      │  │
-│  │         │                     ▼                      │  │
-│  │         │            ┌──────────────┐               │  │
-│  │         └───────────►│ Storage Layer│               │  │
-│  │                      │ (storage.js) │               │  │
-│  │                      └──────────────┘               │  │
-│  │                             │                       │  │
-│  └─────────────────────────────┼───────────────────────┘  │
-│                                ▼                          │
-│                    ┌────────────────────────┐             │
-│                    │  JS-Slash-Runner API   │             │
-│                    │  - replaceScriptButtons│             │
-│                    │  - eventOn/eventOff    │             │
-│                    │  - getVariables        │             │
-│                    │  - getChatMessages     │             │
-│                    │  - toastr, callPopup   │             │
-│                    └────────────────────────┘             │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-                   ┌─────────────────┐
-                   │   External API  │
-                   │  (可选自定义)    │
-                   └─────────────────┘
-```
+宿主没有跨世界书、聊天变量和消息的数据库事务。写入前后及回调再次检查上下文；已被宿主接受的单次写入无法由浏览器原子撤销。真实宿主异步时序仍需实测。
 
-## 📦 模块设计
+| 范围 | 内容 |
+| --- | --- |
+| 设置脚本变量 | 原设置偏好、模型、configuration_library |
+| 设置脚本变量 | summary_assistant_settings：白名单参数 |
+| 设置脚本变量 | summary_assistant_secrets：按地址保存 Key |
+| 设置脚本变量 | summary_assistant_migration：一次迁移标记 |
+| 聊天变量 | summary_assistant_worldbook：绑定 |
+| 聊天变量 | summary_assistant_mega_summary_map：大总结来源 |
+| 聊天变量 | summary_assistant_auto_hidden_floors：自动隐藏楼层 |
+| 世界书 | 普通／大总结正文 |
 
-### 核心模块
+设置整表写入先读取并保留最新总结字段；总结写入合并最新脚本变量。写入与读回验证失败均传播，不能显示成功或发布成功缓存。
 
-#### 1. errorHandler.js - 错误处理器
+绑定记在聊天变量中，生效仍沿用全局世界书列表，切换时解绑前一本并加入当前书；关闭总结本身不解绑。
 
-**职责**：全局错误捕获和处理
-
-```javascript
-// 功能：
-- 包装函数调用，捕获异常
-- 统一错误日志格式
-- 防止脚本崩溃
-```
-
-#### 2. config.js - 配置管理
-
-**职责**：定义全局配置常量
-
-```javascript
-// 包含：
-- 默认设置值
-- API 配置
-- UI 常量
-- 世界书配置
-```
-
-#### 3. utils.js - 工具函数
-
-**职责**：提供通用工具方法
-
-```javascript
-// 功能：
-- 字符串处理
-- 日期格式化
-- DOM 操作辅助
-- 数据验证
-```
-
-#### 4. storage.js - 存储管理
-
-**职责**：设置的持久化存储
-
-```javascript
-// 功能：
-- 加载/保存设置
-- 版本迁移
-- 默认值处理
-- 数据验证
-```
-
-### 业务模块
-
-#### 5. messages.js - 消息处理
-
-**职责**：聊天消息的提取和处理
-
-```javascript
-// 功能：
-- 获取聊天历史
-- 过滤系统消息
-- 格式化消息内容
-- 提取上下文
-```
-
-#### 6. api.js - API 调用
-
-**职责**：与 AI 模型交互
-
-```javascript
-// 功能：
-- 调用 SillyTavern API
-- 支持自定义 API
-- 请求/响应处理
-- 错误重试机制
-```
-
-#### 7. prompt.js - 提示词构建
-
-**职责**：构建总结提示词
-
-```javascript
-// 功能：
-- 组装提示词模板
-- 注入消息内容
-- 参数配置
-- 格式化输出
-```
-
-#### 8. worldbook.js - 世界书管理
-
-**职责**：世界书条目的 CRUD 操作
-
-```javascript
-// 功能：
-- 绑定世界书
-- 创建/更新/删除条目
-- 关键词管理
-- 条目查询
-```
-
-#### 9. summary.js - 总结流程
-
-**职责**：总结的完整流程控制
-
-```javascript
-// 功能：
-- 触发总结
-- 执行总结流程
-- 重新生成总结
-- 状态管理
-```
-
-### UI 模块
-
-#### 10. ui/styles.js - 样式定义
-
-**职责**：面板 CSS 样式
-
-```javascript
-// 包含：
-- 面板布局样式
-- 按钮和表单样式
-- 响应式设计
-- 主题适配
-```
-
-#### 11. ui/renderer.js - 渲染器
-
-**职责**：状态和数据的视图渲染
-
-```javascript
-// 功能：
-- 渲染状态信息
-- 渲染条目列表
-- 动态更新 DOM
-- 数据绑定
-```
-
-#### 12. ui/panel.js - 面板管理
-
-**职责**：设置面板的创建和管理
-
-```javascript
-// 功能：
-- 创建面板 UI
-- 初始化表单
-- 绑定事件
-- 面板显示/隐藏
-```
-
-#### 13. ui/panelEvents.js - 事件处理
-
-**职责**：面板交互事件处理
-
-```javascript
-// 功能：
-- 表单提交处理
-- 按钮点击事件
-- 输入验证
-- 用户反馈
-```
-
-### 入口模块
-
-#### 14. index.js - 主入口
-
-**职责**：脚本初始化和事件绑定
-
-```javascript
-// 功能：
-- 初始化各模块
-- 绑定全局事件
-- 启动脚本
-- 生命周期管理
-```
-
-## 🔄 数据流
-
-### 总结流程数据流
-
-```
-用户触发
-   │
-   ▼
-summary.js (触发总结)
-   │
-   ├──► messages.js (提取消息)
-   │         │
-   │         ▼
-   ├──► prompt.js (构建提示词)
-   │         │
-   │         ▼
-   ├──► api.js (调用 API)
-   │         │
-   │         ▼
-   └──► worldbook.js (保存到世界书)
-            │
-            ▼
-      ui/renderer.js (更新显示)
-```
-
-### 设置管理数据流
-
-```
-用户修改设置
-      │
-      ▼
-ui/panelEvents.js (事件处理)
-      │
-      ▼
-storage.js (保存设置)
-      │
-      ▼
-SillyTavern 本地存储
-```
-
-## 🔌 依赖关系
-
-### 模块依赖层级
-
-```
-Level 0 (无依赖):
-  - errorHandler.js
-  - config.js
-  - ui/styles.js
-
-Level 1 (依赖 Level 0):
-  - utils.js
-  - storage.js
-
-Level 2 (依赖 Level 0-1):
-  - messages.js
-  - worldbook.js
-
-Level 3 (依赖 Level 0-2):
-  - api.js
-  - prompt.js
-  - ui/renderer.js
-
-Level 4 (依赖 Level 0-3):
-  - summary.js
-  - ui/panel.js
-
-Level 5 (依赖 Level 0-4):
-  - ui/panelEvents.js
-  - index.js
-```
-
-## 🛠️ 构建系统
-
-### 构建流程
-
-[`build.js`](../build.js) 负责将模块化源码合并为单文件：
-
-1. **读取模块**：按依赖顺序读取所有源文件
-2. **合并代码**：将模块代码拼接到一起
-3. **包装 IIFE**：用立即执行函数包装，避免全局污染
-4. **输出文件**：生成最终的单文件脚本
-
-### 模块加载顺序
-
-构建时严格按照依赖关系排序：
-
-```javascript
-const MODULE_ORDER = [
-  'src/errorHandler.js',    // 最先加载
-  'src/config.js',
-  'src/utils.js',
-  'src/storage.js',
-  'src/messages.js',
-  'src/api.js',
-  'src/worldbook.js',
-  'src/prompt.js',
-  'src/summary.js',
-  'src/ui/styles.js',
-  'src/ui/renderer.js',
-  'src/ui/panel.js',
-  'src/ui/panelEvents.js',
-  'src/index.js',           // 最后加载
-];
-```
-
-## 🔐 安全考虑
-
-### 沙盒环境
-
-脚本运行在 SillyTavern 的沙盒中：
-
-- 无法访问文件系统
-- 受限的网络访问
-- 隔离的执行环境
-
-### 数据安全
-
-- 所有设置存储在本地
-- 不向外部发送敏感信息
-- API 密钥加密存储（如适用）
-
-## 🎯 设计原则
-
-### 1. 模块化
-
-- 单一职责原则
-- 高内聚低耦合
-- 便于测试和维护
-
-### 2. 可扩展性
-
-- 插件化架构
-- 配置驱动
-- 易于添加新功能
-
-### 3. 容错性
-
-- 全局错误处理
-- 优雅降级
-- 详细的错误日志
-
-### 4. 用户友好
-
-- 直观的 UI 设计
-- 清晰的反馈信息
-- 完善的文档
-
-## 📊 性能优化
-
-### 代码优化
-
-- 避免不必要的 DOM 操作
-- 使用事件委托
-- 延迟加载非关键资源
-
-### 存储优化
-
-- 最小化存储数据量
-- 使用增量更新
-- 定期清理过期数据
-
-## 🔮 未来规划
-
-### 可能的改进方向
-
-1. **多语言支持**：国际化 UI 和提示词
-2. **主题系统**：可自定义的 UI 主题
-3. **插件系统**：支持第三方扩展
-4. **批量操作**：批量处理多个总结
-5. **导出功能**：导出总结为多种格式
-
----
-
-**注意**：本文档描述的是 V2.7 版本的架构，后续版本可能会有调整。
+命名快照 v2 含可选 preset／summary，内部配置库版本仍为 1，分享文件外层版本为 2。v1 快照规范化为 preset 部分。所有分享路径采用白名单；Key、世界书、绑定、聊天、总结和隐藏记录不进入命名配置或恢复点。

@@ -1,0 +1,288 @@
+
+(async () => {
+  const results = [];
+  const check = (name, ok) => { if (!ok) throw Error(name); results.push(name); };
+  const rejected = async (name, fn, fragment = '') => { let error; try { await fn(); } catch (e) { error = e; } check(name + (error ? ' [' + error.message + ']' : ''), !!error && (!fragment || error.message.includes(fragment))); };
+  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  ui.closePromptEditor(true); ui.state.styleEditor = null;
+  await ui.settle();
+  const initialData = structuredClone(data), initialStored = structuredClone(stored), initialVars = structuredClone(vars);
+  const apis = Object.fromEntries(['getCharWorldbookNames','getGlobalWorldbookNames','getChatWorldbookName','getWorldbook','updateWorldbookWith','getLoadedPresetName','replacePreset','replaceVariables','triggerSlash','SillyTavern'].map(key => [key, window[key]]));
+  let ctx = { chatId: 'configuration-test', characterId: 1 };
+  let bound = [];
+  let books = {};
+  window.getCharWorldbookNames = () => ({ primary: bound[0], additional: bound.slice(1) });
+  window.getGlobalWorldbookNames = () => [];
+  window.getChatWorldbookName = () => '';
+  window.getWorldbook = async name => structuredClone(books[name] ?? []);
+  window.updateWorldbookWith = async (name, fn) => { books[name] = fn(structuredClone(books[name])); return structuredClone(books[name]); };
+  window.SillyTavern = { getContext: () => ctx };
+  let loaded = 'test';
+  window.getLoadedPresetName = () => loaded;
+  await ui.scanWorldbookMode({ follow: false });
+  ui.state.config.connection_link.enabled = false;
+  ui.state.config.custom_models = [];
+  ui.state.config.configuration_library = ui.emptyLibrary();
+  ui.state.config.model_tail_modes = { Gemini: 'no-prefill' };
+  ui.rebuildModelRegistry();
+  window.replaceVariables(structuredClone(ui.state.config));
+  await ui.selectModelAdapter('Gemini'); await ui.settle();
+  const builtin = ui.modelRegistry();
+  const originalCount = data.prompts.length;
+
+  ui.state.editorUnlocked=true;ui.state.activeTab = 'tools'; ui.render();
+  let input = ui.shadow.querySelector('[data-action="model-draft"][data-field="name"]');
+  input.value = 'GLM'; input.dispatchEvent(new Event('input', { bubbles: true }));
+  ui.shadow.querySelector('[data-action="model-add"]').click();
+  await pause(50); await ui.settle();
+  const glm = ui.state.config.custom_models[0], gid = glm?.id;
+  check('通过界面添加 GLM 恰好创建三个条目', glm?.label === 'GLM' && data.prompts.length === originalCount + 3 && glm.ids.length === 3);
+  check('新模型三条目默认全部禁用', glm.ids.every(id => !data.prompts.find(p => p.id === id).enabled));
+  check('三个新 ID 独立且持久预设同步', new Set(data.prompts.map(p => p.id)).size === data.prompts.length && glm.ids.every(id => stored.prompts.some(p => p.id === id)));
+  const sources = [builtin.Gemini.ids[0], builtin.Gemini.ids[1], builtin.Gemini.tails[1]];
+  check('头部思维链尾部按对应来源插入', glm.ids.every((id, index) => data.prompts.findIndex(p => p.id === id) > data.prompts.findIndex(p => p.id === sources[index])));
+  check('非预填充尾部正文与角色来自对应 Gemini 模板', data.prompts.find(p => p.id === glm.ids[2]).role === 'system' && data.prompts.find(p => p.id === glm.ids[2]).content === data.prompts.find(p => p.id === sources[2]).content);
+  await rejected('模型名大小写重复被拒绝', () => ui.addCustomModel('gLm'), '名称已存在');
+  await rejected('模型空名称被拒绝', () => ui.addCustomModel(' '), '名称');
+  await rejected('内置模型重名被拒绝', () => ui.addCustomModel('gemini'), '名称已存在');
+  const altId = await ui.addCustomModel('GLM 预填充', 'prefill');
+  const alt = ui.state.config.custom_models.find(model => model.id === altId);
+  check('另一模型预填充也只增加三个条目', data.prompts.length === originalCount + 6 && data.prompts.find(p => p.id === alt.ids[2]).role === 'assistant');
+  await ui.selectModelAdapter(gid);
+  check('动态模型切换互斥', ui.detectModelAdapter() === gid && Object.entries(ui.modelRegistry()).every(([id,a]) => [...a.ids,...a.tails].every(pid => data.prompts.find(p=>p.id===pid).enabled === (id===gid))));
+  ui.state.editorUnlocked = true; ui.openPromptEditor(glm.ids[2]);
+  check('动态模型编辑器保护联动启停', ui.shadow.querySelector('[data-field="enabled"]').disabled && ui.shadow.querySelector('[data-field="included"]').disabled);
+  ui.setEditorField('content', 'GLM 独立尾部'); await ui.savePromptEditor(); ui.closePromptEditor(true);
+  check('编辑模型副本不改变 Gemini 模板', data.prompts.find(p=>p.id===glm.ids[2]).content==='GLM 独立尾部' && data.prompts.find(p=>p.id===sources[2]).content!=='GLM 独立尾部');
+  await rejected('自定义尾部替换须确认', () => ui.setCustomTail(gid, 'prefill'), '确认');
+  const tailIndex = data.prompts.findIndex(p=>p.id===glm.ids[2]);
+  await ui.setCustomTail(gid, 'prefill', true);
+  check('尾部类型替换保持单条目 ID 与位置', data.prompts.length===originalCount+6 && data.prompts[tailIndex].id===glm.ids[2] && data.prompts[tailIndex].role==='assistant');
+  check('替换前自定义正文保存在恢复点', ui.configLibrary().recovery.snapshot.preset.prompts.find(p=>p.id===glm.ids[2]).content==='GLM 独立尾部');
+  await ui.selectModelAdapter('Claude'); await ui.selectModelAdapter(gid);
+  check('往返模型切换记住自定义尾部类型', ui.state.config.custom_models.find(m=>m.id===gid).tailMode==='prefill');
+  await rejected('禁止删除当前模型', () => ui.deleteCustomModel(gid), '先切换');
+  await ui.renameCustomModel(gid, 'GLM 正式');
+  check('重命名保持模型与条目稳定 ID', ui.state.config.custom_models.find(m=>m.label==='GLM 正式')?.id===gid && ui.detectModelAdapter()===gid);
+  const idA = await ui.saveNamedConfiguration('配置 A');
+  check('保存命名配置后不显示已修改', ui.configLibrary().activeId===idA && !ui.configurationIsDirty());
+  const snapA = structuredClone(ui.configLibrary().items.find(i=>i.id===idA).snapshot.preset);
+  check('配置没有递归包含配置库或扩展脚本', !('configuration_library' in snapA.config) && !('extensions' in snapA) && !('configuration_library' in snapA));
+  ui.setGlobalPreference('立即切换前的防抖偏好');
+  await ui.saveNamedConfiguration('配置 B');
+  const idB=ui.configLibrary().activeId;
+  check('保存前刷新脚本变量防抖任务', ui.configLibrary().items.find(i=>i.id===idB).snapshot.preset.config.managed_values.global_preference==='立即切换前的防抖偏好');
+  ui.setUserAdditionalSetting('立即切换前的条目防抖');
+  await ui.applyConfiguration(idA);
+  check('切换前刷新条目防抖并保存在恢复点', ui.configLibrary().recovery.snapshot.preset.prompts.find(p=>p.id===ui.IDS.userAdditional).content.includes('立即切换前的条目防抖'));
+  await pause(400);
+  check('旧防抖不覆盖新配置', ui.state.config.managed_values.global_preference===snapA.config.managed_values.global_preference && ui.readUserAdditionalSetting().value!=='立即切换前的条目防抖');
+  check('无世界书时保留模式和待同步提示', !!ui.configLibrary().pendingWorld && ui.variablePresetMode()===ui.variablePresetMode(snapA) && ui.worldLink.phase==='warning');
+  await ui.applyConfiguration('__recovery__');
+  check('恢复点可恢复切换前内容', ui.readUserAdditionalSetting().value==='立即切换前的条目防抖');
+  await ui.applyConfiguration(idA);
+  data.settings.temperature=0.83; stored.settings.temperature=0.83;
+  data.extensions={keep:'当前脚本和正则'}; stored.extensions={keep:'持久脚本和正则'};
+  const changed=structuredClone(ui.captureConfiguration());
+  const temporary={id:crypto.randomUUID(),name:'未加入测试项',role:'user',enabled:false,position:{type:'relative'},content:'保留未加入正文'};
+  data.prompts_unused.push(temporary); stored.prompts_unused.push(structuredClone(temporary)); ui.reconcilePreset();
+  const idC=await ui.saveNamedConfiguration('完整配置 C');
+  data.prompts_unused=[]; stored.prompts_unused=[]; data.settings.temperature=0.2;
+  await ui.applyConfiguration(idC);
+  check('恢复生成参数及未加入发送列表的条目', data.settings.temperature===0.83 && data.prompts_unused.some(p=>p.id===temporary.id));
+  check('应用配置保留两份预设各自当前扩展', data.extensions.keep==='当前脚本和正则' && stored.extensions.keep==='持久脚本和正则');
+  const exported=ui.exportConfigurations(idC);
+  const count=ui.configLibrary().items.length;
+  await ui.importConfigurations(exported);
+  check('导入同名配置自动改名且不自动应用', ui.configLibrary().items.length===count+1 && ui.configLibrary().items.at(-1).name==='完整配置 C (2)' && ui.configLibrary().activeId===idC);
+  check('导入冲突配置 ID 重新生成而快照保持一致',ui.configLibrary().items.at(-1).id!==idC && JSON.stringify(ui.configLibrary().items.at(-1).snapshot)===JSON.stringify(ui.configLibrary().items.find(i=>i.id===idC).snapshot));
+  await rejected('畸形 JSON 拒绝导入',()=>ui.importConfigurations('{'));
+  const invalid=JSON.parse(exported);invalid.version=9;
+  await rejected('未来文件版本拒绝导入',()=>ui.importConfigurations(JSON.stringify(invalid)),'不支持');
+  const duplicate=JSON.parse(exported);duplicate.items[0].snapshot.preset.prompts.push(duplicate.items[0].snapshot.preset.prompts[0]);
+  await rejected('重复条目 ID 拒绝导入',()=>ui.importConfigurations(JSON.stringify(duplicate)),'重复');
+  const missing=JSON.parse(exported);missing.items[0].snapshot.preset.prompts=missing.items[0].snapshot.preset.prompts.filter(p=>p.id!=='worldInfoBefore');
+  await rejected('缺少基础条目拒绝导入',()=>ui.importConfigurations(JSON.stringify(missing)),'基础条目');
+  await rejected('原型污染字段拒绝导入',()=>ui.importConfigurations('{"format":"destined-configurations","version":1,"items":[],"__proto__":{}}'),'不支持');
+
+  const badSettings=JSON.parse(exported);badSettings.items[0].snapshot.preset.settings.should_stream='true';
+  await rejected('生成参数类型错误拒绝导入',()=>ui.importConfigurations(JSON.stringify(badSettings)),'生成参数');
+  check('原预设负同层顺序完整保留',ui.configLibrary().items.find(i=>i.id===idC).snapshot.preset.prompts.filter(p=>p.position?.type==='in_chat').some(p=>p.position.order===-1));
+  const originalSnap=structuredClone(ui.configLibrary().items.find(i=>i.id===idC).snapshot);
+  await ui.saveNamedConfiguration('',idC);
+  check('覆盖保存保持配置 ID 且不增加条数',ui.configLibrary().activeId===idC&&ui.configLibrary().items.length===count+1);
+
+  const reloaded=ui.loadScriptConfig();
+  check('脚本重新读取保留配置库和动态模型',!reloaded.configuration_error && reloaded.custom_models.length===2 && reloaded.configuration_library.items.length===count+1);
+  const validVars=structuredClone(vars);vars.configuration_library.version=99;
+  const malformed=ui.loadScriptConfig();
+  check('损坏存储保留原始数据并报告',!!malformed.configuration_error && malformed.configuration_library.version===99);
+  vars=validVars;
+  await ui.renameConfiguration(idB,'配置 B 改名'); check('配置重命名保持 ID',ui.configLibrary().items.find(i=>i.id===idB).name==='配置 B 改名');
+  await rejected('配置重名被拒绝',()=>ui.renameConfiguration(idB,'配置 A'),'名称已存在');
+  await ui.deleteConfiguration(idB);check('删除配置不改变当前条目',!ui.configLibrary().items.some(i=>i.id===idB) && data.prompts.some(p=>p.id===glm.ids[0]));
+
+  // Whole operation failures must not report success or leave half-written datasets.
+  const beforeFailure=JSON.stringify(data), storedFailure=JSON.stringify(stored);
+  window.failWrite='in_use';
+  await rejected('预设第二阶段失败向调用方报告',()=>ui.applyConfiguration(idA),'simulated');
+  check('预设第二阶段失败回滚持久预设',JSON.stringify(stored)===storedFailure && JSON.stringify(data)===beforeFailure && ui.state.saveState==='error');
+
+  // Both target and rollback writes can fail independently.
+  const originalForRollback=window.replacePreset;
+  let namedCalls=0;
+  window.replacePreset=async(n,v,o)=>{
+    if(n==='test') {namedCalls++;if(namedCalls===2)throw Error('模拟回滚失败');}
+    if(n==='in_use')throw Error('模拟当前写入失败');
+    return originalForRollback(n,v,o);
+  };
+  await rejected('回滚失败保留恢复点并报告具体阶段',()=>ui.applyConfiguration(idA),'回滚失败');
+  check('回滚失败不会显示成功',ui.state.saveState==='error'&&!!ui.configLibrary().recovery);
+  window.replacePreset=originalForRollback;
+  data=JSON.parse(beforeFailure);stored=JSON.parse(storedFailure);ui.reconcilePreset();
+
+  const originalWriteVars=window.replaceVariables;
+  let writes=0;
+  window.replaceVariables=v=>{writes++;if(writes===2)throw Error('脚本数据注入失败');return originalWriteVars(v);};
+  await rejected('预设成功脚本设置失败仍报告失败',()=>ui.applyConfiguration(idA),'脚本数据注入失败');
+  check('脚本设置失败回滚双份预设',JSON.stringify(data)===beforeFailure&&JSON.stringify(stored)===storedFailure);
+  window.replaceVariables=()=>{throw Error('恢复点无法保存');};
+  const beforeRecoveryFailure=JSON.stringify(data);
+  await rejected('恢复点失败阻止切换',()=>ui.applyConfiguration(idA),'恢复点无法保存');
+  check('恢复点失败不改变预设',JSON.stringify(data)===beforeRecoveryFailure);
+  window.replaceVariables=originalWriteVars;
+  const originalReplace=window.replacePreset;
+  let release, began, blockedOnce = false;
+  const started=new Promise(r=>began=r);
+  window.replacePreset=async(n,v,o)=>{if(n==='test' && !blockedOnce){blockedOnce = true; began();await new Promise(r=>release=r);}return originalReplace(n,v,o);};
+  const first=ui.applyConfiguration(idA);await started;
+  await rejected('快速重复操作被阻止',()=>ui.saveNamedConfiguration('不应创建'),'尚未完成');
+  release();await first;
+  window.replacePreset=originalReplace;
+  check('快速重复操作没有额外配置',!ui.configLibrary().items.some(i=>i.name==='不应创建'));
+  ui.openPromptEditor(glm.ids[0]);
+  await rejected('编辑器草稿不被配置切换丢弃',()=>ui.applyConfiguration(idA),'编辑器');
+  ui.closePromptEditor(true);
+
+  // Connection identity matching and rollbacks.
+  ui.state.profiles=[{id:'a',name:'同名'},{id:'b',name:'同名'}];
+  check('连接绑定优先 ID',ui.resolveBoundProfile({id:'b',name:'同名'}).id==='b');
+  check('仅名称匹配存在重名时拒绝',ui.resolveBoundProfile({id:'gone',name:'同名'})===null);
+  ui.state.profiles=[{id:'b',name:'新名称'}];
+  check('连接改名仍按 ID 解析',ui.resolveBoundProfile({id:'b',name:'旧名称'}).name==='新名称');
+  let activeConnection='原连接', failConnect=false, switchPreset=false;
+  ctx.ConnectionManagerRequestService={getSupportedProfiles:()=>[{id:'p',name:'GLM 连接',mode:'cc',model:'glm-test',api:'custom'}]};
+  ctx.getChatCompletionModel=()=> 'glm-test';ctx.chatCompletionSettings={chat_completion_source:'custom'};
+  window.triggerSlash=async command=>{
+    if(command==='/profile')return activeConnection;
+    if(command==='/profile-list')return JSON.stringify(['GLM 连接']);
+    if(command.includes('GLM 连接')) {activeConnection='GLM 连接';if(switchPreset)loaded='other-preset';if(failConnect)throw Error('模拟连接失败');}
+    if(command.includes('原连接')) {activeConnection='原连接';if(switchPreset)loaded='test';}
+    return activeConnection;
+  };
+  ui.state.config.connection_link.enabled=true;ui.state.config.connection_link.bindings[gid]={id:'p',name:'旧连接名'};
+  await ui.selectModelAdapter(gid);
+  check('动态模型可联动连接并校验结果',activeConnection==='GLM 连接'&&ui.detectModelAdapter()===gid);
+  activeConnection='原连接';failConnect=true;
+  const beforeConnectionFailure=JSON.stringify(data);
+  await ui.selectModelAdapter(gid);
+  check('连接命令失败恢复原连接且不写预设',activeConnection==='原连接'&&JSON.stringify(data)===beforeConnectionFailure&&ui.state.saveState==='error');
+  failConnect=false;switchPreset=true;
+  await ui.selectModelAdapter(gid);
+  check('连接改变预设被阻止并恢复连接',activeConnection==='原连接'&&loaded==='test'&&JSON.stringify(data)===beforeConnectionFailure);
+  switchPreset=false;ctx.getChatCompletionModel=()=> '错误模型';
+  await ui.selectModelAdapter(gid);
+  check('连接实际模型不符会回滚',activeConnection==='原连接'&&ui.state.saveState==='error');
+  ctx.getChatCompletionModel=()=> 'glm-test';
+  ui.state.config.connection_link.bindings[gid]={id:'不存在',name:'不存在'};
+  await ui.selectModelAdapter(gid);
+  check('缺失连接不擅自替代',activeConnection==='原连接'&&ui.state.saveState==='error');
+  ui.state.config.connection_link.enabled=false;
+
+
+  // Profile commands can resolve after their timeout; block another switch until safely settled.
+  ui.state.config.connection_link.enabled=true;
+  ui.state.config.connection_link.bindings[gid]={id:'p',name:'GLM 连接'};
+  const normalSlash=window.triggerSlash;
+  let releaseConnection;
+  window.triggerSlash=async command=>{
+    if(command.includes('GLM 连接')) await new Promise(resolve=>releaseConnection=resolve);
+    return normalSlash(command);
+  };
+  const timeoutData=JSON.stringify(data);
+  await ui.selectModelAdapter(gid);
+  check('连接超时不写入配置并显示等待旧请求',JSON.stringify(data)===timeoutData&&!!ui.state.connectionRequest&&ui.state.saveMessage.includes('超时'));
+  await rejected('连接迟到期间阻止再次切换',()=>ui.saveNamedConfiguration('连接未完成时不得保存'),'连接请求尚未结束');
+  releaseConnection();await pause(450);
+  check('迟到连接请求完成后恢复原连接',activeConnection==='原连接'&&!ui.state.connectionRequest&&JSON.stringify(data)===timeoutData);
+  window.triggerSlash=async command=>{if(command.includes('原连接'))throw Error('恢复连接失败');return normalSlash(command);};
+  failConnect=true;await ui.selectModelAdapter(gid);
+  check('连接回滚失败明确提示',ui.state.saveMessage.includes('连接回滚失败')&&activeConnection==='GLM 连接');
+  failConnect=false;activeConnection='原连接';window.triggerSlash=normalSlash;
+  let connectionStarted;
+  const connectionStart=new Promise(resolve=>connectionStarted=resolve);
+  window.triggerSlash=async command=>{
+    if(command.includes('GLM 连接')) {connectionStarted();await new Promise(resolve=>releaseConnection=resolve);}
+    return normalSlash(command);
+  };
+  const movingChat=ui.selectModelAdapter(gid);await connectionStart;
+  ctx.chatId='用户已切换到另一聊天';
+  releaseConnection();await movingChat;
+  check('异步连接期间切换聊天不向新聊天回滚旧连接',activeConnection==='GLM 连接'&&ui.state.saveMessage.includes('上下文已变化'));
+  ctx.chatId='configuration-test';activeConnection='原连接';window.triggerSlash=normalSlash;
+  // Native edits during the profile lookup must not be silently overwritten.
+  let releaseProfiles;
+  ctx.ConnectionManagerRequestService.getSupportedProfiles=()=>new Promise(resolve=>releaseProfiles=resolve);
+  ui.state.editorUnlocked=true;const waitingModel=ui.addCustomModel('外部修改期间不得创建','no-prefill','p');
+  await pause(30);
+  data.prompts.find(p=>p.id===ui.IDS.resetCache).content='原生界面并发编辑';
+  releaseProfiles([{id:'p',name:'GLM 连接',mode:'cc',model:'glm-test',api:'custom'}]);
+  await rejected('读取连接列表期间的预设并发修改被保留',()=>waitingModel,'内容已变化');
+  check('并发修改不会半创建模型',!ui.state.config.custom_models.some(m=>m.label==='外部修改期间不得创建')&&data.prompts.find(p=>p.id===ui.IDS.resetCache).content==='原生界面并发编辑');
+  ctx.ConnectionManagerRequestService.getSupportedProfiles=()=>[{id:'p',name:'GLM 连接',mode:'cc',model:'glm-test',api:'custom'}];
+
+  ui.state.config.connection_link.enabled=false;
+  // Applying a snapshot synchronizes only the bound worldbook switches.
+  const entries=[
+    {uid:1,name:'output_format_(随AI输出开，主API)',enabled:false,content:'主API正文'},
+    {uid:2,name:'[mvu_update]output_format_(使用额外模型更新变量开)',enabled:true,content:'额外API正文'},
+    {uid:3,name:'[mvu_update]用户最新输入(使用额外模型更新变量开)',enabled:true,content:'输入正文'},
+    {uid:4,name:'无关条目',enabled:true,content:'不能改动'}
+  ];
+  bound=['配置世界书'];books['配置世界书']=structuredClone(entries);
+  await ui.applyConfiguration(idA);
+  check('配置切换同步当前绑定世界书开关',books['配置世界书'][0].enabled&&!books['配置世界书'][1].enabled&&!books['配置世界书'][2].enabled);
+  check('世界书正文及无关条目保持原样',books['配置世界书'].every((entry,i)=>entry.content===entries[i].content)&&books['配置世界书'][3].enabled);
+  check('世界书同步成功清除待同步状态',ui.configLibrary().pendingWorld===null);
+  books['配置世界书']=structuredClone(entries);
+  window.updateWorldbookWith=async()=>{throw Error('世界书写入失败');};
+  await ui.applyConfiguration(idA);
+  check('世界书失败保留已应用模式与重试状态',ui.variablePresetMode()==='main'&&!!ui.configLibrary().pendingWorld&&ui.worldLink.phase==='warning');
+  await ui.scanWorldbookMode();
+  check('自动扫描不会反向覆盖待同步配置',ui.variablePresetMode()==='main');
+  window.updateWorldbookWith=async(name,fn)=>{books[name]=fn(structuredClone(books[name]));return structuredClone(books[name]);};
+  await ui.selectVariableMode('main');
+  check('重试成功同步并清除待同步状态',books['配置世界书'][0].enabled&&ui.configLibrary().pendingWorld===null);
+  bound=[];
+  await ui.selectModelAdapter('Gemini');
+  ui.state.editorUnlocked=true;await ui.deleteCustomModel(gid);
+  check('删除自定义模型只移除三个所属条目',!ui.state.config.custom_models.some(m=>m.id===gid)&&glm.ids.every(id=>!data.prompts.some(p=>p.id===id))&&alt.ids.every(id=>data.prompts.some(p=>p.id===id)));
+  check('删除模型不修改已保存配置',ui.configLibrary().items.find(i=>i.id===idA).snapshot.preset.config.custom_models.some(m=>m.id===gid));
+  await ui.applyConfiguration(idA);
+  check('恢复旧配置能够恢复已删除模型',ui.state.config.custom_models.some(m=>m.id===gid)&&glm.ids.every(id=>data.prompts.some(p=>p.id===id)));
+  const withoutSource=structuredClone(data);
+  data.prompts=data.prompts.filter(p=>p.id!==builtin.Gemini.ids[0]);ui.reconcilePreset();
+  const countBeforeMissing=data.prompts.length;
+  ui.state.editorUnlocked=true;await rejected('Gemini 来源缺失停止创建',()=>ui.addCustomModel('不应新增'),'模板缺失');
+  check('来源缺失没有半创建模型',data.prompts.length===countBeforeMissing&&!ui.state.config.custom_models.some(m=>m.label==='不应新增'));
+  data=withoutSource;ui.reconcilePreset();
+
+  // Keep a populated configuration view for layout checks; restore external APIs.
+  for(const [key,value] of Object.entries(apis))window[key]=value;
+  ui.state.config.connection_link.enabled=false;
+  ui.state.config.configuration_library.pendingWorld=null;
+  window.replaceVariables(ui.state.config);
+  ui.state.activeTab='configurations';ui.render();
+  check('配置页面和顶部快捷切换完整',!!ui.shadow.querySelector('[data-action="configuration-save-new"]')&&ui.shadow.querySelectorAll('[data-action="configuration-switch"] option').length===ui.configLibrary().items.length+1);
+  return results;
+})()

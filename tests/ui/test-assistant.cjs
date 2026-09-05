@@ -1,0 +1,12 @@
+const fs=require('node:fs'),Module=require('node:module');
+let source=fs.readFileSync('tests/ui/test-ui.cjs','utf8');
+const start=source.indexOf('console.log(await evaluate'),end=source.indexOf("await cdp('Browser.close');",start);
+source=source.slice(0,start)+`await require('./assistant-tests.cjs')(cdp,evaluate);
+const bundleUrl='data:text/javascript;base64,'+fs.readFileSync('dist/destined-journey-assistant.js').toString('base64');
+await evaluate('globalThis.__destinedJourneyAssistant.destroy();');
+await evaluate('import('+JSON.stringify(bundleUrl)+').then(() => globalThis.__destinedJourneyAssistant.open())');
+assert(await evaluate('!!globalThis.__destinedJourneyAssistant && document.querySelectorAll("[id^=destined-settings-]").length === 1'));
+console.log('发布 ESM 产物实际导入与启动通过');
+\n`+source.slice(end);
+source=source.replaceAll('.ui-review/preview.html','.ui-review/assistant-preview.html').replace("path.resolve('.ui-review/chrome-profile')","path.resolve('.ui-review/chrome-assistant-profile')");
+const runner=new Module(__filename,module);runner.filename=__filename;runner.paths=module.paths;runner._compile(source,__filename);

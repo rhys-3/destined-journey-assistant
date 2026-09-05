@@ -1,3 +1,9 @@
+import { requestGeneration } from '../platform/lifecycle.js';
+import { extractHttpStatus, errorCatched } from './errorHandler.js';
+import { BLOCK_TYPES, BUILTIN_PROMPTS } from './config.js';
+import { getSettings } from './storage.js';
+import { replaceMacros } from './messages.js';
+import { assertCurrent } from '../platform/lifecycle.js';
 /**
  * api.js
  * API 调用逻辑（酒馆主API / 自定义API）
@@ -113,59 +119,18 @@ const callSummaryApi = errorCatched(
 
     if (generateRawFn) {
       try {
-        const result = await generateRawFn(config);
+        const result = await requestGeneration(generateRawFn, config);
+        assertCurrent();
         return result ? String(result).trim() : '';
       } catch (e) {
+        if (e.name === "AbortError") throw e;
         const status = extractHttpStatus(e);
         const statusInfo = status ? ` [HTTP ${status}]` : '';
         throw new Error(`API请求失败${statusInfo}: ${e.message || '未知错误'}`);
       }
     }
 
-    console.log('Using fetch fallback for generateRaw');
-    const headers = { 'Content-Type': 'application/json' };
-    const stObj =
-      typeof SillyTavern !== 'undefined'
-        ? SillyTavern
-        : window.SillyTavern || (window.parent && window.parent.SillyTavern);
-    if (stObj && stObj.getRequestHeaders) {
-      const stHeaders = stObj.getRequestHeaders();
-      Object.assign(headers, stHeaders);
-    }
-
-    // 创建 AbortController 用于超时控制
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5分钟超时
-
-    try {
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(config),
-        keepalive: true, // 启用保活机制
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Generation failed (${response.status}): ${errText}`);
-      }
-      const resultData = await response.json();
-      if (
-        resultData &&
-        Array.isArray(resultData.results) &&
-        resultData.results.length > 0
-      ) {
-        return String(resultData.results[0].text).trim();
-      }
-      return '';
-    } catch (error) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
-        throw new Error('API请求超时（5分钟），请检查网络连接或增加超时时间');
-      }
-      throw error;
-    }
+    throw new Error('需要酒馆助手 generateRaw 接口，请更新或启用酒馆助手。');
   }
 );
 
@@ -233,59 +198,18 @@ const callMegaSummaryApi = errorCatched(
 
     if (generateRawFn) {
       try {
-        const result = await generateRawFn(config);
+        const result = await requestGeneration(generateRawFn, config);
+        assertCurrent();
         return result ? String(result).trim() : '';
       } catch (e) {
+        if (e.name === "AbortError") throw e;
         const status = extractHttpStatus(e);
         const statusInfo = status ? ` [HTTP ${status}]` : '';
         throw new Error(`API请求失败${statusInfo}: ${e.message || '未知错误'}`);
       }
     }
 
-    console.log('Using fetch fallback for generateRaw');
-    const headers = { 'Content-Type': 'application/json' };
-    const stObj =
-      typeof SillyTavern !== 'undefined'
-        ? SillyTavern
-        : window.SillyTavern || (window.parent && window.parent.SillyTavern);
-    if (stObj && stObj.getRequestHeaders) {
-      const stHeaders = stObj.getRequestHeaders();
-      Object.assign(headers, stHeaders);
-    }
-
-    // 创建 AbortController 用于超时控制
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5分钟超时
-
-    try {
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(config),
-        keepalive: true, // 启用保活机制
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Generation failed (${response.status}): ${errText}`);
-      }
-      const resultData = await response.json();
-      if (
-        resultData &&
-        Array.isArray(resultData.results) &&
-        resultData.results.length > 0
-      ) {
-        return String(resultData.results[0].text).trim();
-      }
-      return '';
-    } catch (error) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
-        throw new Error('API请求超时（5分钟），请检查网络连接或增加超时时间');
-      }
-      throw error;
-    }
+    throw new Error('需要酒馆助手 generateRaw 接口，请更新或启用酒馆助手。');
   }
 );
 
@@ -346,3 +270,5 @@ const fetchModelList = errorCatched(async (apiUrl, apiKey) => {
     throw new Error(`获取模型列表失败: ${e.message} (尝试 URL: ${url})`);
   }
 });
+
+export { parseOptionalNumberSetting, buildCustomApiConfig, callSummaryApi, callMegaSummaryApi, fetchModelList };

@@ -1,3 +1,4 @@
+
 /**
  * utils.js
  * 通用工具函数
@@ -85,3 +86,5 @@ const tagsToString = (tags) => {
 };
 
 const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export { clampInt, escapeHtml, compressRanges, makeSummaryEntryName, parseSummaryEntryName, makeMegaSummaryEntryName, parseMegaSummaryEntryName, isMegaSummaryEntry, normalizeWorldbookEntries, parseTagString, tagsToString, escapeRegex };

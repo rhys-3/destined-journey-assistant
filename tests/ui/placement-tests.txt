@@ -1,0 +1,53 @@
+(async()=>{
+ const results=[],check=(name,ok)=>{if(!ok)throw Error(name);results.push(name)},q=s=>ui.shadow.querySelector(s);
+ ui.closePromptEditor(true);await ui.settle();
+ const before={data:structuredClone(data),stored:structuredClone(stored),vars:structuredClone(vars)};
+ const open=id=>{ui.state.editorUnlocked=true;ui.openPromptEditor(id)};
+ const move=async(id,block,before='')=>{open(id);ui.setPlacementField('block',block);ui.setPlacementField('before',before);await ui.savePromptEditor();check('保存位置 '+block,!ui.state.promptEditor.dirty&&ui.state.promptEditor.id===id);ui.closePromptEditor(true)};
+ try{
+  ui.state.activeTab='daily';ui.render();
+  check('没有作者工作台与额外管理入口',!ui.shadow.textContent.includes('作者工作台')&&!q('[data-action="author-enter"]')&&!q('[data-tab="author"]'));
+  const id=ui.IDS.eventChain,pace=ui.GROUPS['plot-pace'].options[0][0];
+  const initialPrompts=structuredClone(data.prompts),enabled=JSON.stringify(data.prompts.map(p=>[p.id,p.enabled]).sort());
+  open(id);check('位置编辑仅两个下拉框',ui.shadow.querySelectorAll('[data-action="placement-field"]').length===2);
+  check('发送设置默认折叠',!q('.editor-properties').open);
+  ui.setPlacementField('block','style-extra');await ui.savePromptEditor();ui.closePromptEditor(true);
+  check('改板块同步发送位置但保留开关',data.prompts.findIndex(p=>p.id===id)>initialPrompts.findIndex(p=>p.id===id)&&JSON.stringify(data.prompts.map(p=>[p.id,p.enabled]).sort())===enabled);
+  ui.state.activeTab='style';ui.render();check('移动后显示在目标板块',!!q('[data-placement-block="style-extra"] [data-placement-id="'+id+'"]'));
+  ui.state.activeTab='daily';ui.render();check('原板块不残留重复条目',!q('[data-placement-id="'+id+'"]'));
+  await move(id,'main-style');check('放到单选板块不自动改变普通条目逻辑',ui.getPromptGroupId(data.prompts.find(p=>p.id===id))===null);
+  await move(pace,'style-extra');check('移动单选项保留原单选关系',ui.getPromptGroupId(data.prompts.find(p=>p.id===pace))==='plot-pace');
+  ui.applyGroup('plot-pace',pace);await ui.settle();check('跨板块单选依然互斥',data.prompts.filter(p=>ui.getPromptGroupId(p)==='plot-pace'&&p.enabled).length===1);
+  await move(pace,'hidden');check('隐藏仍保留开关和单选关系',data.prompts.find(p=>p.id===pace).enabled&&ui.getPromptGroupId(data.prompts.find(p=>p.id===pace))==='plot-pace');
+  ui.state.activeTab='style';ui.render();check('隐藏条目不出现在设置页',!q('[data-placement-id="'+pace+'"]'));
+  ui.state.activeTab='advanced';ui.render();check('隐藏条目仍可从条目列表找到',!!q('[data-action="prompt-open"][data-id="'+pace+'"]'));
+  await move(ui.IDS.outputLength,'style-extra');ui.state.activeTab='style';ui.render();check('移动字数条目保留原数值控件',!!q('[data-action="field-number"][data-field="hanzi"]')&&!!q('[data-action="field-number"][data-field="combatRounds"]'));
+  ui.state.activeTab='daily';ui.render();check('原页面不重复字数控件',!q('[data-action="field-number"][data-field="hanzi"]'));
+  await move(ui.IDS.sceneInfo,'style-extra');ui.state.activeTab='style';ui.render();check('核心条目可展示但不暴露关闭开关',!!q('[data-placement-id="'+ui.IDS.sceneInfo+'"]')&&!q('[data-key="prompt:'+ui.IDS.sceneInfo+'"]'));
+  const anchor=ui.placementMembers('style-extra')[0].id;await move(id,'style-extra',anchor);check('选择排在谁前面生效',ui.placementMembers('style-extra')[0].id===id);
+  check('界面排序同步原生位置',data.prompts.findIndex(p=>p.id===id)+1===data.prompts.findIndex(p=>p.id===anchor));
+  ui.state.activeTab='style';ui.render();q('[data-action="entry-new-here"][data-block="style-extra"]').click();
+  check('在板块直接新增自动填写位置',ui.state.promptEditor.draft.authorUi.block==='style-extra'&&ui.state.editorUnlocked);
+  ui.setEditorField('name','测试新增条目');ui.setEditorField('content','我的正文');await ui.savePromptEditor();const created=ui.state.promptEditor.id;
+  check('新建默认关闭并显示在指定板块',created&&!data.prompts.find(p=>p.id===created).enabled&&ui.placementEntry(data.prompts.find(p=>p.id===created)).block==='style-extra');
+  await ui.editEntryAction('entry-copy');const copied=ui.state.promptEditor.id;
+  check('一键复制获得新 ID 且关闭',copied!==created&&data.prompts.find(p=>p.id===copied).name.includes('副本')&&!data.prompts.find(p=>p.id===copied).enabled);
+  ui.setEditorField('content','未保存草稿');await ui.editEntryAction('entry-delete');check('删除不会丢掉未保存草稿',ui.state.promptEditor.dirty&&!!data.prompts.find(p=>p.id===copied));
+  await ui.savePromptEditor();await ui.editEntryAction('entry-delete');check('删除同步两份预设且没有撤销入口',!data.prompts.some(p=>p.id===copied)&&!stored.prompts.some(p=>p.id===copied)&&!q('[data-action="entry-delete-undo"]'));
+  open(ui.IDS.sceneInfo);await ui.editEntryAction('entry-delete');check('核心删除依赖保护',!!data.prompts.find(p=>p.id===ui.IDS.sceneInfo)&&ui.state.promptEditor.message.includes('依赖'));ui.closePromptEditor(true);
+  open(created);ui.setPlacementField('block','content-extra');const saved=structuredClone(stored);window.failWrite='in_use';await ui.savePromptEditor();check('位置保存失败回滚并保留草稿',JSON.stringify(stored)===JSON.stringify(saved)&&ui.state.promptEditor.dirty);ui.closePromptEditor(true);
+  open(created);ui.setPlacementField('before','missing-placement-anchor');await ui.savePromptEditor();check('过期位置目标会阻止保存',ui.state.promptEditor.dirty);ui.closePromptEditor(true);
+  open(created);ui.setPlacementField('block','content-extra');data.prompts.find(p=>p.id===created).extra.destined_ui.block='helpers';await ui.savePromptEditor();check('显示位置并发冲突保留草稿',ui.state.promptEditor.dirty&&ui.state.promptEditor.message.includes('界面展示'));ui.closePromptEditor(true);
+  const snapshot=ui.validateSnapshot(ui.captureConfiguration());check('配置保存简化位置数据',snapshot.prompts.find(p=>p.id===created).extra.destined_ui.version===3);
+  await ui.saveNamedConfiguration('简化位置测试');const config=ui.configLibrary().items.find(p=>p.name==='简化位置测试');await move(created,'hidden');await ui.applyConfiguration(config.id);await ui.settle();check('恢复配置带回显示位置',ui.placementEntry(data.prompts.find(p=>p.id===created)).block==='helpers');
+  // Read, but do not recreate, the previous editor's custom pages and layout.
+  const oldLayout=ui.defaultAuthorLayout();oldLayout.pages.push({id:'page:legacy',label:'旧版页面',order:90,hidden:false});oldLayout.blocks.push({id:'block:legacy',page:'page:legacy',label:'旧版板块',kind:'single',order:99,hidden:false,allowNone:true,defaultId:''});data.extensions.destined_author=oldLayout;
+  data.prompts.find(p=>p.id===created).extra.destined_ui={version:2,block:'block:legacy',label:'旧条目',description:'',order:1,protected:false,defaultEnabled:false};ui.reconcilePreset('legacy');
+  check('旧版页面和条目可继续读取',ui.placementEntry(data.prompts.find(p=>p.id===created)).block==='block:legacy'&&ui.getPromptGroupId(data.prompts.find(p=>p.id===created))==='block:legacy');
+  await move(created,'style-extra');check('旧版单选关系在移动时保留',ui.getPromptGroupId(data.prompts.find(p=>p.id===created))==='block:legacy');
+  open(created);ui.setEditorField('name','改名后的条目');await ui.savePromptEditor();ui.closePromptEditor(true);ui.state.activeTab='style';ui.render();check('修改名称同步显示并清除旧别名',q('[data-placement-id="'+created+'"] [data-action="group"]').textContent==='改名后的条目');
+  check('旧数据迁移不重建作者工作台',!q('[data-tab="author"]'));
+  ui.closePanel();ui.openPanel();await ui.settle();check('重新打开仍默认只读',!ui.state.editorUnlocked);
+ }finally{data=before.data;stored=before.stored;vars=before.vars;ui.state.config=ui.loadScriptConfig();ui.rebuildModelRegistry();ui.closePromptEditor(true);ui.state.activeTab='daily';ui.reconcilePreset('placement restored');ui.render();await ui.settle();}
+ return results;
+})()

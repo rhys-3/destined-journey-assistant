@@ -1,0 +1,68 @@
+name: Verify and release
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Publish the package version after all checks pass
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - run: git diff --exit-code -- dist/destined-journey-assistant.js
+      - run: node tests/ui/test-ui.cjs
+      - run: node tests/ui/test-assistant.cjs
+      - run: node tests/ui/test-themes.cjs
+      - run: node tests/ui/test-settings.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification
+          include-hidden-files: true
+          path: |
+            dist/destined-journey-assistant.js
+            .ui-review/*results.json
+            .ui-review/*.png
+  release:
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' && inputs.release && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Publish immutable version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if git show-ref --verify --quiet "refs/tags/$version"; then
+            echo "Version already exists; refusing to overwrite $version"
+            exit 1
+          fi
+          git tag "$version"
+          git push origin "$version"
+          gh release create "$version" dist/destined-journey-assistant.js --title "$version · 命定预设助手" --notes-file "docs/RELEASE-$version.md"

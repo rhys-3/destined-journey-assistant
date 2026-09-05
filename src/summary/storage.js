@@ -1,3 +1,8 @@
+import { errorCatched } from './errorHandler.js';
+import { CONFIG, BLOCK_TYPES, generateBlockId, DEFAULT_PROMPT_BLOCKS, DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS, DEFAULT_SETTINGS } from './config.js';
+import { getHost, setRuntimeEnabled, insertOrAssignVariables } from '../platform/lifecycle.js';
+import { readStore, patchSummaryStore } from '../platform/store.js';
+import { summarySnapshot } from './settingsSchema.js';
 /**
  * storage.js
  * 设置的加载、保存、迁移、重置
@@ -23,14 +28,6 @@ const cloneSettings = (settings) => ({
 });
 
 const migrateOldSettings = (raw) => {
-  // 迁移 temperature 和 maxTokens 的默认值（v2.6+）
-  if (raw.temperature === 'same_as_preset') {
-    raw.temperature = 1;
-  }
-  if (raw.maxTokens === 'same_as_preset') {
-    raw.maxTokens = 32000;
-  }
-  
   if (Array.isArray(raw.promptBlocks) && raw.promptBlocks.length > 0) return raw;
   const blocks = DEFAULT_PROMPT_BLOCKS.map((b) => ({ ...b }));
   for (const block of blocks) {
@@ -88,67 +85,40 @@ const validateBlocks = (blocks, defaultBlocks = DEFAULT_PROMPT_BLOCKS) => {
   return normalized;
 };
 
-const loadSettings = errorCatched(async () => {
-  try {
-    const vars = getVariables({ type: 'script' });
-    const raw = vars?.[CONFIG.SETTINGS_VAR_KEY];
-    if (raw && typeof raw === 'object') {
-      const migrated = migrateOldSettings({ ...raw });
-      _cachedSettings = { ...DEFAULT_SETTINGS, ...migrated };
-      if (!Array.isArray(_cachedSettings.includeTags))
-        _cachedSettings.includeTags = [...DEFAULT_SETTINGS.includeTags];
-      if (!Array.isArray(_cachedSettings.excludeTags))
-        _cachedSettings.excludeTags = [...DEFAULT_SETTINGS.excludeTags];
-      _cachedSettings.promptBlocks = validateBlocks(_cachedSettings.promptBlocks, DEFAULT_PROMPT_BLOCKS);
-      _cachedSettings.megaPromptBlocks = validateBlocks(_cachedSettings.megaPromptBlocks, DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS);
-    } else {
-      _cachedSettings = cloneSettings({
-        ...DEFAULT_SETTINGS,
-        promptBlocks: DEFAULT_PROMPT_BLOCKS.map((b) => ({ ...b })),
-      });
-    }
-  } catch (e) {
-    console.warn('加载设置失败，使用默认值:', e);
-    _cachedSettings = cloneSettings({
-      ...DEFAULT_SETTINGS,
-      promptBlocks: DEFAULT_PROMPT_BLOCKS.map((b) => ({ ...b })),
-    });
-  }
-  return _cachedSettings;
-});
-
-const saveSettings = errorCatched(async (settings) => {
-  _cachedSettings = cloneSettings(settings);
-  insertOrAssignVariables(
-    { [CONFIG.SETTINGS_VAR_KEY]: cloneSettings(_cachedSettings) },
-    { type: 'script' }
-  );
-});
-
-const getSettings = () => {
-  if (!_cachedSettings)
-    return cloneSettings({
-      ...DEFAULT_SETTINGS,
-      promptBlocks: DEFAULT_PROMPT_BLOCKS.map((b) => ({ ...b })),
-    });
+export function getKeyForUrl(url) {
+  const vars=readStore(), secrets=vars.summary_assistant_secrets ?? {};
+  const key=String(url??'').trim();
+  return secrets.keysByUrl?.[key] ?? (String(vars[CONFIG.SETTINGS_VAR_KEY]?.customApiUrl??'').trim()===key ? secrets.customApiKey ?? vars[CONFIG.SETTINGS_VAR_KEY]?.customApiKey ?? '' : '');
+}
+const loadSettings = async () => {
+  const vars = readStore();
+  const raw = vars[CONFIG.SETTINGS_VAR_KEY];
+  const settings = summarySnapshot(raw ? migrateOldSettings(structuredClone(raw)) : DEFAULT_SETTINGS);
+  _cachedSettings = { ...settings, customApiKey: getKeyForUrl(settings.customApiUrl) };
+  setRuntimeEnabled(settings.enabled);
   return cloneSettings(_cachedSettings);
 };
-
-const updateSettings = errorCatched(async (partial) => {
-  const current = getSettings();
-  const updated = { ...current, ...partial };
-  await saveSettings(updated);
-  return updated;
-});
-
-const resetSettings = errorCatched(async () => {
-  const defaults = cloneSettings({
-    ...DEFAULT_SETTINGS,
-    promptBlocks: DEFAULT_PROMPT_BLOCKS.map((b) => ({ ...b })),
+const saveSettings = async settings => {
+  const validated = summarySnapshot(settings);
+  patchSummaryStore({
+    [CONFIG.SETTINGS_VAR_KEY]: validated,
+    summary_assistant_secrets: { keysByUrl: { ...readStore().summary_assistant_secrets?.keysByUrl, [validated.customApiUrl.trim()]: String(settings.customApiKey ?? '') } },
   });
-  await saveSettings(defaults);
-  return defaults;
-});
+  _cachedSettings = { ...validated, customApiKey: String(settings.customApiKey ?? '') };
+  setRuntimeEnabled(validated.enabled);
+  getHost()?.changed?.();
+};
+const getSettings = () => cloneSettings(_cachedSettings ?? DEFAULT_SETTINGS);
+const updateSettings = async partial => {
+  const settings = { ...getSettings(), ...partial };
+  if(partial.customApiUrl !== undefined && partial.customApiUrl !== getSettings().customApiUrl && !Object.hasOwn(partial,'customApiKey')) settings.customApiKey=getKeyForUrl(partial.customApiUrl);
+  await saveSettings(settings);
+  return settings;
+};
+const resetSettings = async () => {
+  const settings = { ...structuredClone(DEFAULT_SETTINGS), enabled: getSettings().enabled, customApiKey: getKeyForUrl(DEFAULT_SETTINGS.customApiUrl) };
+  await saveSettings(settings); return settings;
+};
 
 // ---- 大总结映射管理 ----
 
@@ -193,3 +163,5 @@ const deleteMegaSummaryMapping = errorCatched(async (megaSummaryName) => {
   delete map[megaSummaryName];
   await saveMegaSummaryMap(map);
 });
+
+export { _cachedSettings, cloneSettings, migrateOldSettings, validateBlocks, loadSettings, saveSettings, getSettings, updateSettings, resetSettings, loadMegaSummaryMap, saveMegaSummaryMap, getMegaSummaryMap, setMegaSummaryMapping, getMegaSummaryMapping, deleteMegaSummaryMapping };

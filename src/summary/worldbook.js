@@ -1,3 +1,9 @@
+import { errorCatched } from './errorHandler.js';
+import { helperApi } from '../platform/ambient.js';
+import { CONFIG } from './config.js';
+import { parseSummaryEntryName, parseMegaSummaryEntryName, isMegaSummaryEntry, normalizeWorldbookEntries } from './utils.js';
+import { getSettings, getMegaSummaryMap, setMegaSummaryMapping, getMegaSummaryMapping, deleteMegaSummaryMapping } from './storage.js';
+import { captureContext, checkContext, createWorldbook, rebindGlobalWorldbooks, createWorldbookEntries, updateWorldbookWith, setChatMessages, insertOrAssignVariables, replaceWorldbook, deleteWorldbook } from '../platform/lifecycle.js';
 /**
  * worldbook.js
  * 世界书绑定、条目管理、楼层可见性
@@ -34,6 +40,7 @@ const writeChatWorldbookBinding = (name) => {
     _cachedChatWbName = name || null;
   } catch (e) {
     console.warn("写入聊天世界书绑定失败:", e);
+    throw e;
   }
 };
 
@@ -43,14 +50,12 @@ const clearChatWorldbookBinding = () => {
     _cachedChatWbName = null;
   } catch (e) {
     console.warn("清除聊天世界书绑定失败:", e);
+    throw e;
   }
 };
 
 const getActiveWorldbookName = () => {
-  if (_cachedChatWbName) return _cachedChatWbName;
-  const name = readChatWorldbookBinding();
-  _cachedChatWbName = name;
-  return name;
+  return readChatWorldbookBinding();
 };
 
 const isChatWorldbookBound = () => {
@@ -73,9 +78,9 @@ const bindWorldbookToChat = errorCatched(async (name) => {
     typeof rebindGlobalWorldbooks === "function"
   ) {
     const globalNames = getGlobalWorldbookNames() || [];
-    if (!globalNames.includes(name)) {
-      await rebindGlobalWorldbooks([...new Set([...globalNames, name])]);
-    }
+    const previous = getActiveWorldbookName();
+    const next = [...new Set([...globalNames.filter(n => n !== previous), name])];
+    if (JSON.stringify(next) !== JSON.stringify(globalNames)) await rebindGlobalWorldbooks(next);
   }
   writeChatWorldbookBinding(name);
 });
@@ -172,7 +177,7 @@ const migrateWorldbookEntries = errorCatched(async (oldName, newName) => {
   if (names.includes(oldName)) {
     const oldEntries = normalizeWorldbookEntries(await getWorldbook(oldName));
     const summaryEntries = oldEntries.filter(
-      (e) => e && parseSummaryEntryName(e.name),
+      (e) => e && (parseSummaryEntryName(e.name) || parseMegaSummaryEntryName(e.name)),
     );
     if (summaryEntries.length > 0) {
       const newEntries = normalizeWorldbookEntries(await getWorldbook(newName));
@@ -182,7 +187,7 @@ const migrateWorldbookEntries = errorCatched(async (oldName, newName) => {
       }
       await replaceWorldbook(newName, [...newByName.values()]);
       const remaining = oldEntries.filter(
-        (e) => !e || !parseSummaryEntryName(e.name),
+        (e) => !e || (!parseSummaryEntryName(e.name) && !parseMegaSummaryEntryName(e.name)),
       );
       if (remaining.length === 0) {
         await deleteWorldbook(oldName);
@@ -359,6 +364,7 @@ const saveAutoHiddenFloorIds = (floorIds) => {
     );
   } catch (e) {
     console.warn("保存自动隐藏楼层记录失败:", e);
+    throw e;
   }
 };
 
@@ -393,9 +399,9 @@ const applySummarizedFloorsVisibility = errorCatched(async () => {
       const currentHidden = !!msg?.is_hidden;
       const targetHidden = summarizedSet.has(id);
       if (targetHidden) {
-        nextAutoHiddenSet.add(id);
+        if (!currentHidden || previousAutoHiddenSet.has(id)) nextAutoHiddenSet.add(id);
       }
-      if (currentHidden !== targetHidden) {
+      if (currentHidden !== targetHidden && (targetHidden || previousAutoHiddenSet.has(id))) {
         updates.push({ message_id: id, is_hidden: targetHidden });
       }
     }
@@ -528,6 +534,21 @@ const deleteSummaryEntry = errorCatched(async (entryName) => {
     return Array.isArray(wb) ? filtered : { ...wb, entries: filtered };
   });
   await reorderAllSummaryEntries();
+  await applySummarizedFloorsVisibility();
+});
+
+export const setSummaryEntryEnabled = errorCatched(async (entryName, enabled) => {
+  const wbName=getActiveWorldbookName();
+  if(!wbName)throw new Error('当前聊天没有绑定总结世界书');
+  const map=await getMegaSummaryMap();
+  await updateWorldbookWith(wbName, wb=>{
+    const entries=normalizeWorldbookEntries(wb);
+    if(enabled && entries.some(entry=>!isEntryDisabled(entry)&&parseMegaSummaryEntryName(entry.name)&&map[entry.name]?.includes(entryName)))throw new Error('该条目已被大总结包含，请先回档对应的大总结');
+    const entry=entries.find(e=>e.name===entryName);
+    if(!entry)throw new Error('总结条目已不存在');
+    entry.enabled=enabled;entry.disable=!enabled;if('disabled' in entry)entry.disabled=!enabled;
+    return Array.isArray(wb)?entries:{...wb,entries};
+  });
   await applySummarizedFloorsVisibility();
 });
 
@@ -907,3 +928,22 @@ const getMegaSummaryContentsBefore = errorCatched(async (entryName) => {
     )
     .map((e) => ({ name: e.name, content: e.content }));
 });
+
+const reconcileChatBinding = async () => {
+  const token = captureContext();
+  const oldName = _cachedChatWbName;
+  const newName = readChatWorldbookBinding();
+  const names = await helperApi('getWorldbookNames')(); checkContext(token);
+  const globalNames = helperApi('getGlobalWorldbookNames')();
+  const next = globalNames.filter(name => name !== oldName);
+  if (newName && names.includes(newName) && !next.includes(newName)) next.push(newName);
+  if (JSON.stringify(next) !== JSON.stringify(globalNames)) {
+    await helperApi('rebindGlobalWorldbooks')(next);
+    // Remember the applied book even if context changed while the host wrote it.
+    _cachedChatWbName = newName;
+    checkContext(token);
+  }
+  _cachedChatWbName = newName;
+};
+
+export { _cachedChatWbName, AUTO_HIDDEN_FLOORS_VAR_KEY, generateDefaultWorldbookName, readChatWorldbookBinding, writeChatWorldbookBinding, clearChatWorldbookBinding, getActiveWorldbookName, isChatWorldbookBound, bindWorldbookToChat, unbindWorldbookFromChat, onChatChanged, migrateOldWorldbookName, migrateWorldbookEntries, getWorldbookEntriesSafe, ensureWorldbookExists, VISIBILITY_CHUNK_SIZE, isEntryDisabled, applyEntryDepthAndOrder, addFloorRangeToSet, buildSummarizedFloorSet, loadAutoHiddenFloorIds, saveAutoHiddenFloorIds, applySummarizedFloorsVisibility, buildSummaryOrderMap, reorderAllSummaryEntries, upsertSummaryEntryByName, deleteSummaryEntry, getAllSummaryEntriesForDisplay, getLastSummarizedFloor, getAllSummaryContents, getSummaryContentsBefore, upsertMegaSummaryEntry, reorderAllMegaSummaryEntries, deleteMegaSummaryEntry, restoreMegaSummaryToSummaries, deactivateMegaSummaryEntry, activateMegaSummaryEntry, getAllMegaSummaryEntriesForDisplay, getMegaSummaryContentsBefore, reconcileChatBinding };

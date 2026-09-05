@@ -1,214 +1,14 @@
-/**
- * summary.js
- * 总结流程：触发判断、执行生成、重新生成、自动触发
- * 依赖: config.js, utils.js, storage.js, api.js, prompt.js, worldbook.js, errorHandler.js
- */
-
-let _summaryHintEl = null;
-let _summaryHintStyleReady = false;
-
-// ---- 总结进度提示 UI ----
-
-const ensureSummaryHintStyle = () => {
-  if (_summaryHintStyleReady) return;
-  const doc = window.top?.document || document;
-  if (doc.getElementById("sa-summary-hint-style")) {
-    _summaryHintStyleReady = true;
-    return;
-  }
-  const style = doc.createElement("style");
-  style.id = "sa-summary-hint-style";
-  style.textContent = `
-    .sa-summary-hint {
-      position: fixed;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 10020;
-      min-width: 280px;
-      max-width: min(90vw, 780px);
-      padding: 10px 14px;
-      border-radius: 10px;
-      font-size: 13px;
-      line-height: 1.5;
-      color: #eee;
-      background: rgba(26, 26, 46, 0.94);
-      border: 1px solid rgba(123, 104, 238, 0.55);
-      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
-      pointer-events: none;
-      text-align: center;
-      white-space: pre-wrap;
-      backdrop-filter: blur(2px);
-      -webkit-backdrop-filter: blur(2px);
-    }
-    .sa-summary-hint.sa-summary-hint-success {
-      border-color: rgba(40, 167, 69, 0.75);
-      background: rgba(26, 46, 33, 0.92);
-    }
-    .sa-summary-hint.sa-summary-hint-error {
-      border-color: rgba(220, 53, 69, 0.75);
-      background: rgba(55, 24, 28, 0.92);
-    }
-  `;
-  doc.head.appendChild(style);
-  _summaryHintStyleReady = true;
-};
-
-const showSummaryHint = (text, variant = "info") => {
-  const doc = window.top?.document || document;
-  ensureSummaryHintStyle();
-  if (!_summaryHintEl || !_summaryHintEl.isConnected) {
-    _summaryHintEl = doc.createElement("div");
-    _summaryHintEl.className = "sa-summary-hint";
-    doc.body.appendChild(_summaryHintEl);
-  }
-  _summaryHintEl.className = `sa-summary-hint${
-    variant === "success"
-      ? " sa-summary-hint-success"
-      : variant === "error"
-        ? " sa-summary-hint-error"
-        : ""
-  }`;
-  _summaryHintEl.textContent = text;
-};
-
-const hideSummaryHint = () => {
-  if (_summaryHintEl && _summaryHintEl.isConnected) {
-    _summaryHintEl.remove();
-  }
-  _summaryHintEl = null;
-};
-
-const showSummaryHintFor = (text, variant = "info", ms = 2800) => {
-  showSummaryHint(text, variant);
-  setTimeout(() => {
-    if (_summaryHintEl && _summaryHintEl.textContent === text) {
-      hideSummaryHint();
-    }
-  }, ms);
-};
-
-const chooseSummaryFailureAction = async ({
-  title = "总结失败",
-  message = "",
-  retryLabel = "重新总结",
-  reviewLabel = "手动编辑",
-  cancelLabel = "取消",
-} = {}) => {
-  const doc = window.top?.document || document;
-  return await new Promise((resolve) => {
-    const overlay = doc.createElement("div");
-    overlay.style.cssText = `
-      position: fixed;
-      inset: 0;
-      z-index: 10030;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-      background: rgba(5, 6, 15, 0.72);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
-    `;
-
-    const dialog = doc.createElement("div");
-    dialog.style.cssText = `
-      width: min(92vw, 560px);
-      background: rgba(22, 24, 38, 0.98);
-      color: #eee;
-      border: 1px solid rgba(123, 104, 238, 0.45);
-      border-radius: 12px;
-      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
-      padding: 18px 18px 16px;
-    `;
-
-    const titleEl = doc.createElement("div");
-    titleEl.style.cssText = `
-      font-size: 16px;
-      font-weight: 700;
-      margin-bottom: 10px;
-    `;
-    titleEl.textContent = title;
-
-    const messageEl = doc.createElement("div");
-    messageEl.style.cssText = `
-      white-space: pre-wrap;
-      line-height: 1.6;
-      font-size: 13px;
-      color: #ddd;
-      margin-bottom: 16px;
-      max-height: min(42vh, 320px);
-      overflow: auto;
-    `;
-    messageEl.textContent = message;
-
-    const actionsEl = doc.createElement("div");
-    actionsEl.style.cssText = `
-      display: flex;
-      gap: 10px;
-      justify-content: flex-end;
-      flex-wrap: wrap;
-    `;
-
-    const buildButton = (label, action, extraCss = "") => {
-      const btn = doc.createElement("button");
-      btn.type = "button";
-      btn.textContent = label;
-      btn.style.cssText = `
-        min-width: 92px;
-        padding: 8px 14px;
-        border-radius: 8px;
-        border: 1px solid rgba(123, 104, 238, 0.35);
-        background: rgba(52, 58, 90, 0.92);
-        color: #fff;
-        cursor: pointer;
-        font-size: 13px;
-        ${extraCss}
-      `;
-      btn.addEventListener("click", () => {
-        overlay.remove();
-        resolve(action);
-      });
-      return btn;
-    };
-
-    actionsEl.appendChild(
-      buildButton(
-        retryLabel,
-        "retry",
-        "background: rgba(70, 82, 140, 0.95); border-color: rgba(123, 104, 238, 0.6);",
-      ),
-    );
-    actionsEl.appendChild(
-      buildButton(
-        reviewLabel,
-        "review",
-        "background: rgba(40, 92, 66, 0.95); border-color: rgba(40, 167, 69, 0.55);",
-      ),
-    );
-    actionsEl.appendChild(
-      buildButton(
-        cancelLabel,
-        "cancel",
-        "background: rgba(58, 58, 74, 0.95); border-color: rgba(180, 180, 200, 0.25);",
-      ),
-    );
-
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) {
-        overlay.remove();
-        resolve("cancel");
-      }
-    });
-
-    dialog.appendChild(titleEl);
-    dialog.appendChild(messageEl);
-    dialog.appendChild(actionsEl);
-    overlay.appendChild(dialog);
-    doc.body.appendChild(overlay);
-  });
-};
-
+import { formatErrorMessage, errorCatched } from './errorHandler.js';
+import { escapeHtml, makeSummaryEntryName, parseSummaryEntryName, parseMegaSummaryEntryName, normalizeWorldbookEntries } from './utils.js';
+import { getSettings, getMegaSummaryMapping } from './storage.js';
+import { callSummaryApi, callMegaSummaryApi } from './api.js';
+import { getActiveWorldbookName, applySummarizedFloorsVisibility, upsertSummaryEntryByName, getLastSummarizedFloor, upsertMegaSummaryEntry } from './worldbook.js';
+import { buildSummaryPromptParams, buildRegeneratePromptParams, buildMegaSummaryPromptParams, buildRegenerateMegaSummaryPromptParams } from './prompt.js';
+import { assertCurrent, getHost, SillyTavern, updateWorldbookWith } from '../platform/lifecycle.js';
+const showSummaryHint = (text, variant = 'info') => getHost().status(text, variant);
+const hideSummaryHint = () => {};
+const showSummaryHintFor = showSummaryHint;
+const chooseSummaryFailureAction = options => { assertCurrent(); return getHost().chooseFailure(options); };
 // ---- 返回内容校验 ----
 
 const SUMMARY_INVALID_PATTERNS = [
@@ -499,6 +299,8 @@ const startCustomRangeSummaryProcess = errorCatched(async () => {
 
 const executeSummary = errorCatched(
   async (startFloor, endFloor, entryName, { requireReview = false } = {}) => {
+    assertCurrent();
+    if (!getSettings().enabled) throw new Error("请先启用总结功能");
     showSummaryHint(
       `正在生成总结，请稍候...\n总结范围：${startFloor} - ${endFloor} 楼`,
     );
@@ -560,6 +362,8 @@ const executeSummary = errorCatched(
       }
       await finalizeSummarySave(entryName, contentToSave);
     } catch (error) {
+      if (error.name === "AbortError") throw error;
+      assertCurrent();
       console.error("总结过程中出错:", error);
       const errMsg = formatErrorMessage(error);
       const fullErrorMessage = `总结失败：${errMsg}`;
@@ -655,6 +459,8 @@ const regenerateAndReplaceEntry = errorCatched(async (entryName) => {
     showSummaryHintFor(`条目已重新生成：${entryName}`, "success", 3200);
     toastr.success(`已重新生成并替换：${entryName}`);
   } catch (error) {
+      if (error.name === "AbortError") throw error;
+      assertCurrent();
     console.error("重新生成失败:", error);
     const errMsg = formatErrorMessage(error);
     showSummaryHintFor(`重新生成失败：${errMsg}`, "error", 4200);
@@ -665,6 +471,7 @@ const regenerateAndReplaceEntry = errorCatched(async (entryName) => {
 // ---- 自动触发 ----
 
 const autoTriggerSummary = errorCatched(async () => {
+  if (!getSettings().enabled) return;
   const should = await shouldAutoTrigger();
   if (!should) return;
   const settings = getSettings();
@@ -688,6 +495,8 @@ const autoTriggerSummary = errorCatched(async () => {
 
 const executeMegaSummary = errorCatched(
   async (summaryNames, entryName, { requireReview = false } = {}) => {
+    assertCurrent();
+    if (!getSettings().enabled) throw new Error("请先启用总结功能");
     showSummaryHint(
       `正在生成大总结，请稍候...\n总结条目数：${summaryNames.length}`,
     );
@@ -748,6 +557,8 @@ const executeMegaSummary = errorCatched(
 
       await finalizeMegaSummarySave(entryName, contentToSave, summaryNames);
     } catch (error) {
+      if (error.name === "AbortError") throw error;
+      assertCurrent();
       console.error("大总结过程中出错:", error);
       const errMsg = formatErrorMessage(error);
       const fullErrorMessage = `大总结失败：${errMsg}`;
@@ -837,9 +648,13 @@ const regenerateAndReplaceMegaEntry = errorCatched(async (entryName) => {
     showSummaryHintFor(`大总结条目已重新生成：${entryName}`, "success", 3200);
     toastr.success(`已重新生成并替换：${entryName}`);
   } catch (error) {
+      if (error.name === "AbortError") throw error;
+      assertCurrent();
     console.error("重新生成大总结失败:", error);
     const errMsg = formatErrorMessage(error);
     showSummaryHintFor(`重新生成失败：${errMsg}`, "error", 4200);
     toastr.error(`重新生成失败: ${errMsg}`);
   }
 });
+
+export { showSummaryHint, hideSummaryHint, showSummaryHintFor, chooseSummaryFailureAction, SUMMARY_INVALID_PATTERNS, SUMMARY_LAZY_PATTERNS, SUMMARY_HEADER_PATTERN, SUMMARY_WRAPPER_LINE_PATTERNS, stripMarkdownCodeFence, containsMarkdownCodeFence, normalizeSummaryFormatting, validateSummaryContent, finalizeSummarySave, finalizeMegaSummarySave, computeSummaryPlan, shouldAutoTrigger, validateManualSummaryRange, startSummaryProcess, startCustomRangeSummaryProcess, executeSummary, regenerateAndReplaceEntry, autoTriggerSummary, executeMegaSummary, regenerateAndReplaceMegaEntry };

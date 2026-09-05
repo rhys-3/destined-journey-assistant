@@ -1,0 +1,28 @@
+
+(async()=>{
+  const results=[];
+  const check=(name,ok)=>{if(!ok)throw Error(name);results.push(name)};
+  ui.closePromptEditor(true);ui.state.styleEditor=null;await ui.settle();
+  const expectedIds=ui.state.config.custom_models.map(model=>model.id);
+  const expectedConfigurations=ui.configLibrary().items.map(item=>item.id);
+  const before=JSON.stringify(data);
+  let release;
+  const context={chatId:'生命周期测试',ConnectionManagerRequestService:{getSupportedProfiles:()=>new Promise(resolve=>release=resolve)}};
+  const previousST=window.SillyTavern;
+  window.SillyTavern={getContext:()=>context};
+  ui.state.editorUnlocked=true;const pending=ui.addCustomModel('卸载时不得保存','no-prefill','p').then(()=>null,error=>error);
+  await new Promise(resolve=>setTimeout(resolve,30));
+  window.dispatchEvent(new Event('pagehide'));
+  release([{id:'p',name:'生命周期连接'}]);
+  const error=await pending;
+  check('卸载后迟到操作不写预设',!!error&&JSON.stringify(data)===before);
+  check('卸载清理设置 UI',!document.querySelector('[id^="destined-settings-a980269e"]'));
+  window.SillyTavern=previousST;
+  (0,eval)(document.scripts[1].textContent);
+  await new Promise(resolve=>setTimeout(resolve,500));
+  await ui.settle();
+  check('完整脚本重启恢复自定义模型与配置库',JSON.stringify(ui.state.config.custom_models.map(model=>model.id))===JSON.stringify(expectedIds)&&JSON.stringify(ui.configLibrary().items.map(item=>item.id))===JSON.stringify(expectedConfigurations));
+  check('完整脚本重启没有重复创建模型条目',JSON.stringify(data.prompts.map(prompt=>prompt.id))===JSON.stringify(JSON.parse(before).prompts.map(prompt=>prompt.id)));
+  check('完整脚本重启只保留一个设置根节点',document.querySelectorAll('[id="destined-settings-a980269e-8d77-4f5e-bad7-b2fe0a2cd470"]').length===1);
+  return results;
+})()

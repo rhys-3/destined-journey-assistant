@@ -1,0 +1,42 @@
+(async()=>{
+ const results=[],check=(name,ok)=>{if(!ok)throw Error(name);results.push(name)},q=s=>ui.shadow.querySelector(s);
+ await ui.settle();ui.closePromptEditor(true);
+ const initial={data:structuredClone(data),stored:structuredClone(stored),vars:structuredClone(vars)};
+ const mode=value=>{const input=q('[data-action="edit-mode"]');input.checked=value;input.dispatchEvent(new Event('change',{bubbles:true}));};
+ const addNative=(id,anchor)=>{const prompt={id,name:'自定义条目 '+id,content:'原生新增正文',enabled:false,role:'system',position:{type:'relative'}};data.prompts.splice(data.prompts.findIndex(p=>p.id===anchor)+1,0,prompt);return prompt;};
+ try{
+  ui.state.editorUnlocked=false;ui.state.activeTab='style';ui.render();
+  check('全界面只有一个编辑总开关',ui.shadow.querySelectorAll('[data-action="edit-mode"]').length===1&&!q('[data-action="editor-unlock"]'));
+  check('关闭编辑模式隐藏所有条目新增编辑入口',!q('[data-action="entry-edit"]')&&!q('[data-action="entry-new-here"]')&&!q('[data-action="new-style"]'));
+  check('普通使用仍可选择文风和切换功能',!!q('[data-action="group"]')&&!!q('[data-key="prompt:9c4ef2a1-949c-41b1-b821-4197b705380a"]'));
+  check('已知美化条目不被相邻单选组吸收',ui.getPromptGroupId(data.prompts.find(p=>p.id==='c10c1fdb-cb0b-435b-8d39-7b2e1f1c5e1e'))===null);
+  ui.openPromptEditor();check('关闭总开关不能新建',!ui.state.promptEditor);
+  mode(true);check('开启总开关显示编辑和新增',!!q('[data-action="entry-edit"]')&&!!q('[data-action="entry-new-here"]')&&!!q('[data-action="new-style"]'));
+  ui.state.activeTab='advanced';ui.render();q('[data-action="prompt-open"][data-id="'+ui.IDS.eventChain+'"]').click();
+  check('条目列表打开后直接可编辑，无二次解锁',!q('[data-field="content"]').readOnly&&!q('[data-action="editor-unlock"]'));
+  ui.closePromptEditor(true);ui.state.activeTab='style';ui.render();
+  const members=ui.placementMembers('style-extra'),tail=members.at(-1).id,count=data.prompts.length;
+  q('[data-action="entry-new-here"][data-block="style-extra"]').click();ui.setEditorField('name','前端新加的功能');ui.setEditorField('content','正文');await ui.savePromptEditor();
+  const created=ui.state.promptEditor.id;
+  check('板块新增只增加一个条目，没有分隔条目',data.prompts.length===count+1);
+  check('前端新增插在原生同板块最后一项之后',data.prompts.findIndex(p=>p.id===created)===data.prompts.findIndex(p=>p.id===tail)+1);
+  check('新增同时保存当前与持久预设',stored.prompts.findIndex(p=>p.id===created)===data.prompts.findIndex(p=>p.id===created));
+  ui.closePromptEditor(true);
+  const native=addNative('native-feature',created);ui.reconcilePreset('native insert');
+  check('原生新增自动显示在相邻功能板块',ui.placementEntry(native).block==='style-extra'&&!!q('[data-placement-id="native-feature"]'));
+  check('原生普通新增保持独立开关',ui.getPromptGroupId(native)===null);
+  const styleAnchor=ui.GROUPS['main-style'].options[1][0],newStyle=addNative('native-style',styleAnchor);ui.reconcilePreset('native style');
+  check('原生文风区新增自动归入主文风',ui.placementEntry(newStyle).block==='main-style'&&ui.getPromptGroupId(newStyle)==='main-style');
+  ui.applyGroup('main-style',newStyle.id);await ui.settle();check('原生新增文风参与互斥选择',data.prompts.filter(p=>ui.getPromptGroupId(p)==='main-style'&&p.enabled).map(p=>p.id).join()===newStyle.id);
+  const item=data.prompts.find(p=>p.id==='native-feature');data.prompts=data.prompts.filter(p=>p.id!==item.id);data.prompts.splice(data.prompts.findIndex(p=>p.id===members[0].id)+1,0,item);ui.reconcilePreset('native reorder');
+  check('原生同板块调整顺序立即反映到前端',ui.placementMembers('style-extra')[1].id==='native-feature');
+  const beforeHide=data.prompts.map(p=>p.id).join();ui.openPromptEditor(created);ui.setPlacementField('block','hidden');await ui.savePromptEditor();ui.closePromptEditor(true);
+  check('隐藏不改变原生位置',data.prompts.map(p=>p.id).join()===beforeHide&&!q('[data-placement-id="'+created+'"]'));
+  ui.openPromptEditor(item.id);ui.setPlacementField('before',created);await ui.savePromptEditor();check('原生边界变化阻止失效位置保存',ui.state.promptEditor.dirty);ui.closePromptEditor(true);
+  ui.state.activeTab='tools';ui.render();check('模型与工具只有一个页面标题',ui.shadow.querySelectorAll('.content .section-head').length===1);
+  mode(false);check('退出编辑模式隐藏自定义模型增删入口',!q('[data-action="model-add"]')&&!q('[data-action="model-delete"]'));
+  ui.state.activeTab='advanced';ui.render();check('退出模式隐藏新建和排序手柄',!q('[data-action="prompt-new"]')&&!q('.sort-handle'));
+  ui.closePanel();ui.openPanel();await ui.settle();check('重新打开总开关默认关闭',!ui.state.editorUnlocked&&!q('[data-action="edit-mode"]').checked);
+ }finally{data=initial.data;stored=initial.stored;vars=initial.vars;ui.state.config=ui.loadScriptConfig();ui.rebuildModelRegistry();ui.closePromptEditor(true);ui.state.editorUnlocked=false;ui.state.activeTab='daily';ui.reconcilePreset('同步验证完成');ui.render();await ui.settle();}
+ return results;
+})()

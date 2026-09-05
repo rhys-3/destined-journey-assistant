@@ -1,3 +1,6 @@
+import { errorCatched } from './errorHandler.js';
+import { escapeRegex } from './utils.js';
+import { SillyTavern } from '../platform/lifecycle.js';
 /**
  * messages.js
  * 聊天消息的提取、标签过滤、合并处理
@@ -139,3 +142,5 @@ const getRawChatTextForScan = errorCatched(async (startFloor, endFloor) => {
   const msgs = await getRawMessages(startFloor, endFloor);
   return msgs.map((m) => m.message).join("\n");
 });
+
+export { replaceMacros, getRawMessages, getAllRawMessages, extractTagContent, excludeTagContent, removeHtmlComments, processMessagesByTags, messagesToMergedText, getRawChatTextForScan };

@@ -1,11 +1,12 @@
 {
-  "name": "destined-journey-summarizer",
-  "version": "2.8.3",
-  "description": "命定之诗角色卡专用的 SillyTavern 总结脚本，用于自动/手动总结聊天内容并存入世界书",
-  "main": "dist/destined-journey-summarizer.js",
+  "name": "destined-journey-assistant",
+  "version": "3.0.0",
+  "description": "命定之诗预设设置与聊天总结助手",
+  "main": "dist/destined-journey-assistant.js",
   "scripts": {
     "build": "node build.js",
-    "prebuild": "node -e \"const fs=require('fs');if(!fs.existsSync('dist'))fs.mkdirSync('dist');\""
+    "test": "node --test tests/*.test.js",
+    "test:ui": "node tests/ui/test-ui.cjs"
   },
   "keywords": [
     "SillyTavern",
@@ -19,14 +20,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yourusername/destined-journey-summarizer.git"
+    "url": "git+https://github.com/rhys-3/destined-journey-assistant.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/destined-journey-summarizer/issues"
+    "url": "https://github.com/rhys-3/destined-journey-assistant/issues"
   },
-  "homepage": "https://github.com/yourusername/destined-journey-summarizer#readme",
+  "homepage": "https://github.com/rhys-3/destined-journey-assistant#readme",
   "engines": {
-    "node": ">=12.0.0"
+    "node": ">=22"
   },
   "files": [
     "dist/",
@@ -36,6 +37,7 @@
     "LICENSE"
   ],
   "devDependencies": {
-    "terser": "^5.51.2"
-  }
+    "esbuild": "^0.28.2"
+  },
+  "type": "module"
 }
