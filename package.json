@@ -1,7 +1,7 @@
 {
   "name": "destined-journey-assistant",
-  "version": "3.0.0",
-  "description": "命定之诗预设设置与聊天总结助手",
+  "version": "3.0.1",
+  "description": "适配命定·黄昏 Prime 的预设管理与聊天总结助手",
   "main": "dist/destined-journey-assistant.js",
   "scripts": {
     "build": "node build.js",

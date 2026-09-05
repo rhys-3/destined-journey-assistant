@@ -1,6 +1,6 @@
 # Repository guidance
 
-命定预设助手适配“命定之诗专用预设”。先阅读 README，再按任务查阅 docs/ARCHITECTURE.md、CONTRIBUTING.md 和 docs/VERSIONING.md。
+命定预设助手适配“命定·黄昏 Prime”。先阅读 README，再按任务查阅 docs/ARCHITECTURE.md、CONTRIBUTING.md 和 docs/VERSIONING.md。
 
 - `src/` 是唯一运行时源码。预设功能在 `src/preset/` 按职责拆分；实例状态由 assistant.js 持有。不要重新合并成长脚本或维护第二份运行时源码。
 - 新版 dist 由 Actions 在测试通过后自动提交，本地 build 用于验证。旧总结 dist 是冻结兼容资产，不能删除、覆盖或重新构建。

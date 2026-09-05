@@ -1,9 +1,9 @@
 // Preset identifiers, managed fields and interface defaults.
-export const SCRIPT_NAME = '【命定之诗】预设设置';
+export const SCRIPT_NAME = '命定预设助手';
 
-export const BUTTON_NAME = '命定预设设置';
+export const BUTTON_NAME = '命定预设助手';
 
-export const LEGACY_BUTTON_NAME = '命定设置';
+export const LEGACY_BUTTON_NAMES = Object.freeze(['命定预设设置', '命定设置']);
 
 export const UI_THEMES = Object.freeze([
   { id: 'midnight', label: '曜石黑金' },

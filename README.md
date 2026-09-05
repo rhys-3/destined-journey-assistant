@@ -1,8 +1,8 @@
 # 命定预设助手
 
-适配 **命定之诗专用预设** 的 SillyTavern 脚本。提供预设设置、模型与连接管理、提示词编辑和聊天总结，在同一个面板中使用。
+适配 **命定·黄昏 Prime** 的 SillyTavern 脚本。提供预设设置、模型与连接管理、提示词编辑和聊天总结，在同一个面板中使用。
 
-助手的版本号独立于预设版本号。适配依赖预设中的条目 ID、受管宏和扩展配置；预设名称相同并不保证经过大幅修改的结构仍然兼容。
+「命定·黄昏 Prime」延续原“命定之诗专用预设”的结构，旧版预设仍可保留原名称使用。助手的版本号独立于预设版本号。适配依赖预设中的条目 ID、受管宏和扩展配置；预设名称相同并不保证经过大幅修改的结构仍然兼容。
 
 ## 功能
 
@@ -15,16 +15,16 @@
 
 ## 运行环境
 
-需要 SillyTavern、酒馆助手和命定之诗专用预设。助手调用酒馆助手的预设、脚本变量、世界书、事件和 `generateRaw` 等接口；启动检查最低版本为 4.0.0，旧脚本迁移还依赖 `getScriptTrees` 和 `updateScriptTreesWith`。是否具备全部接口，以已安装的酒馆助手版本为准。
+需要 SillyTavern、酒馆助手和命定·黄昏 Prime。助手调用酒馆助手的预设、脚本变量、世界书、事件和 `generateRaw` 等接口；启动检查最低版本为 4.0.0，旧脚本迁移还依赖 `getScriptTrees` 和 `updateScriptTreesWith`。是否具备全部接口，以已安装的酒馆助手版本为准。
 
 本仓库分发助手脚本，不分发完整预设。
 
 ## 安装与更新
 
-在预设的酒馆助手脚本列表中，将 **【命定之诗】预设设置** 的内容替换为 [loader.js](loader.js)，保留脚本 UUID 和已有变量。标准 UUID 为 `3a01f9c2-f6e8-4754-ad75-347741051662`。加载器通过固定版本地址载入助手：
+在预设的酒馆助手脚本列表中，将 **命定预设助手**（旧版名为“【命定之诗】预设设置”） 的内容替换为 [loader.js](loader.js)，保留脚本 UUID 和已有变量。标准 UUID 为 `3a01f9c2-f6e8-4754-ad75-347741051662`。加载器通过固定版本地址载入助手：
 
 ```text
-https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.0.0/dist/destined-journey-assistant.js
+https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.0.1/dist/destined-journey-assistant.js
 ```
 
 加载失败时会显示版本、原因和重试按钮。重试使用同一个版本，不会切换到开发分支。

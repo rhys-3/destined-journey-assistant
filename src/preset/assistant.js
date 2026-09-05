@@ -1,7 +1,7 @@
 import {
   SCRIPT_NAME,
   BUTTON_NAME,
-  LEGACY_BUTTON_NAME,
+  LEGACY_BUTTON_NAMES,
   UI_THEMES,
   SAVE_DELAY,
   PROFILE_TIMEOUT,
@@ -77,7 +77,7 @@ export async function startPresetAssistant() {
     get ID_TO_GROUP() { return ID_TO_GROUP; },
     get LANGUAGE_DEFINITIONS() { return LANGUAGE_DEFINITIONS; },
     get LANGUAGE_PRESETS() { return LANGUAGE_PRESETS; },
-    get LEGACY_BUTTON_NAME() { return LEGACY_BUTTON_NAME; },
+    get LEGACY_BUTTON_NAMES() { return LEGACY_BUTTON_NAMES; },
     get MANAGED_MACROS() { return MANAGED_MACROS; },
     get MANAGED_MACRO_PATTERN() { return MANAGED_MACRO_PATTERN; },
     get MANAGED_VALUES_VERSION() { return MANAGED_VALUES_VERSION; },

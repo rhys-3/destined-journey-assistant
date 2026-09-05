@@ -153,8 +153,8 @@ export function createConnections(ctx) {
   function syncInputButtonEntry() {
     const visible = ctx.state.config.entry_points.input_button === true;
     updateScriptButtonsWith(buttons => {
-      const existing = buttons.find(button => button.name === ctx.BUTTON_NAME || button.name === ctx.LEGACY_BUTTON_NAME);
-      const others = buttons.filter(button => button.name !== ctx.BUTTON_NAME && button.name !== ctx.LEGACY_BUTTON_NAME);
+      const existing = buttons.find(button => button.name === ctx.BUTTON_NAME || ctx.LEGACY_BUTTON_NAMES.includes(button.name));
+      const others = buttons.filter(button => button.name !== ctx.BUTTON_NAME && !ctx.LEGACY_BUTTON_NAMES.includes(button.name));
       return [...others, { ...existing, name: ctx.BUTTON_NAME, visible }];
     });
   }

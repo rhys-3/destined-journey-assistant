@@ -6,8 +6,8 @@ module.exports=async(cdp,evaluate)=>{
  // intentionally retains volatile preferences after a simulated storage failure.
  await evaluate(`globalThis.__destinedJourneyAssistant.destroy();localStorage.setItem('${key}','{"theme":"midnight"}')`);await reload();
  assert.equal(await evaluate('ui.shadow.querySelector("[data-action=ui-transparency]").value'),'1');
- assert(await evaluate(`!ui.shadow.textContent.includes('旅程')&&ui.shadow.querySelector('.eyebrow').textContent==='DESTINED JOURNEY'&&!getComputedStyle(ui.shadow.querySelector('.tabs'),'::before').content.includes('旅程')`));
- results.push('未设定时默认透明度1%，保留DESTINED JOURNEY与中文文案修正');
+ assert(await evaluate(`!ui.shadow.textContent.includes('旅程')&&ui.shadow.querySelector('.eyebrow').textContent==='DESTINED DUSK PRIME'&&!getComputedStyle(ui.shadow.querySelector('.tabs'),'::before').content.includes('旅程')`));
+ results.push('未设定时默认透明度1%，保留DESTINED DUSK PRIME与中文文案修正');
  const before=await evaluate('JSON.stringify({data,stored,vars})');
  await evaluate('window.retainedContent=ui.shadow.querySelector(".content");window.transparencyWrites=0;window.originalStorageWrite=Storage.prototype.setItem;Storage.prototype.setItem=function(...args){transparencyWrites++;return originalStorageWrite.apply(this,args)}');
  const set=async(value,event)=>evaluate(`(()=>{const s=ui.shadow.querySelector('[data-action="ui-transparency"]');s.value=${value};s.dispatchEvent(new Event('${event}',{bubbles:true}));return getComputedStyle(ui.shadow.querySelector('.panel')).backgroundColor})()`);

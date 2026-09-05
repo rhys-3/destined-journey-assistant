@@ -32,7 +32,7 @@ select option{background:var(--panel);color:var(--ink)}textarea{width:100%;resiz
 .configuration-shortcut label{display:flex;align-items:center;gap:9px;min-width:0;flex:1}.configuration-shortcut select{width:100%;max-width:280px;padding:6px 9px}.configuration-shortcut>span{color:var(--gold);font-size:11px}.configuration-shortcut .text-button{padding:4px 0}
 .panel-layout{display:grid;grid-template-columns:156px minmax(0,1fr);grid-template-rows:minmax(0,1fr);flex:1 1 0;min-height:0;overflow:hidden}
 .tabs{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-height:0;overflow:auto;padding:17px 10px;border-right:1px solid var(--line);background:var(--panel2)}
-.tabs:before{content:"预设设置 / INDEX";font-size:9px;letter-spacing:.1em;color:var(--muted);padding:0 10px 10px}
+.tabs:before{content:"预设助手 / INDEX";font-size:9px;letter-spacing:.1em;color:var(--muted);padding:0 10px 10px}
 .tabs button{position:relative;display:flex;align-items:center;gap:10px;border:1px solid transparent;border-radius:8px;padding:11px 9px;min-height:43px;text-align:left;color:var(--muted);background:transparent}
 .tabs button strong{font-size:13px;font-weight:500;overflow-wrap:anywhere}.nav-index{font:11px/1 Georgia,serif;color:var(--gold2);font-variant-numeric:tabular-nums}.tabs button.active{color:var(--gold);background:var(--selected);border-color:var(--gold2)}.tabs button.active strong{font-weight:600}.tabs button.active .nav-index{color:var(--gold)}.tabs button:hover{background:var(--soft)}
 .content{min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;overflow-anchor:none;scrollbar-gutter:stable;padding:20px 22px 26px;-webkit-overflow-scrolling:touch;touch-action:pan-y}

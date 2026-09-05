@@ -1,5 +1,5 @@
-// Paste this loader into the existing 【命定之诗】预设设置 script.
-const version = '3.0.0';
+// Paste this loader into the existing 命定预设助手 script (preserve its UUID and variables).
+const version = '3.0.1';
 const url = `https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v${version}/dist/destined-journey-assistant.js`;
 let loading = false;
 let attempt = 0;
