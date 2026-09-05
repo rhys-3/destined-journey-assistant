@@ -65,7 +65,7 @@ module.exports=async(cdp,evaluate)=>{
  assert.equal(await evaluate('ui.shadow.querySelector(".destined-root").dataset.theme'),'forest');
  results.push('关闭重开与完整刷新后恢复本机主题');
  // Local storage payloads from old versions or invalid data must safely fall back.
- await evaluate(`localStorage.setItem('destined-settings-ui:a980269e-8d77-4f5e-bad7-b2fe0a2cd470','{"theme":"unknown"}')`);
+ await evaluate(`globalThis.__destinedJourneyAssistant.destroy();localStorage.setItem('destined-settings-ui:a980269e-8d77-4f5e-bad7-b2fe0a2cd470','{"theme":"unknown"}')`);
  await cdp('Page.reload');
  for(let i=0;i<50;i++){if(await evaluate('!!window.ui?.shadow?.querySelector(".panel")'))break;await new Promise(r=>setTimeout(r,100));}
  assert.equal(await evaluate('ui.shadow.querySelector(".destined-root").dataset.theme'),'midnight');

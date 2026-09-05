@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 const mode=process.argv[2]??'status';
-if(!['status','rename','runs','dispatch','upload'].includes(mode))throw new Error('Use status, rename, runs, dispatch, or upload');
+if(!['status','rename','runs','logs','dispatch','upload'].includes(mode))throw new Error('Use status, rename, runs, logs, dispatch, or upload');
 const credential=spawnSync('git',['-c','credential.interactive=never','credential','fill'],{
   input:'protocol=https\nhost=github.com\n\n',encoding:'utf8',windowsHide:true,
   env:{...process.env,GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never'},
@@ -31,6 +31,15 @@ if(mode==='runs') {
  if(process.argv[3]) {
    const {jobs}=await api(`/repos/rhys-3/destined-journey-assistant/actions/runs/${Number(process.argv[3])}/jobs`);
    console.log(JSON.stringify(jobs.map(j=>({name:j.name,status:j.status,conclusion:j.conclusion,steps:j.steps.map(s=>({name:s.name,status:s.status,conclusion:s.conclusion}))})),null,2));
+ }
+}
+if(mode==='logs') {
+ const {jobs}=await api(`/repos/rhys-3/destined-journey-assistant/actions/runs/${Number(process.argv[3])}/jobs`);
+ for(const job of jobs.filter(j=>j.conclusion==='failure')) {
+   const response=await fetch(`https://api.github.com/repos/rhys-3/destined-journey-assistant/actions/jobs/${job.id}/logs`,{headers:{Authorization:'Bearer '+fields.password},redirect:'manual'});
+   if(response.status!==302)throw new Error('Job log HTTP '+response.status);
+   const log=await (await fetch(response.headers.get('location'))).text();
+   console.log(log.split('\n').filter(line=>/AssertionError|Error:|expected|actual|operator|at |layout|主题|overflow|outside/i.test(line)).slice(-35).join('\n'));
  }
 }
 if(mode==='upload') {

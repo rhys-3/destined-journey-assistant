@@ -2,7 +2,9 @@ module.exports=async(cdp,evaluate)=>{
  const assert=require('node:assert/strict'),results=[];
  const key='destined-settings-ui:a980269e-8d77-4f5e-bad7-b2fe0a2cd470';
  const reload=async()=>{await evaluate('window.transparencyReloadPending=true');await cdp('Page.reload');for(let i=0;i<50;i++){if(await evaluate('!window.transparencyReloadPending&&!!window.ui?.shadow?.querySelector(".panel")')){await evaluate('ui.shadow.querySelector("[data-tab=settings]").click()');return;}await new Promise(r=>setTimeout(r,100));}throw Error('面板未加载');};
- await evaluate(`localStorage.setItem('${key}','{"theme":"midnight"}')`);await reload();
+ // Stop resize listeners before replacing persisted test data: a live session
+ // intentionally retains volatile preferences after a simulated storage failure.
+ await evaluate(`globalThis.__destinedJourneyAssistant.destroy();localStorage.setItem('${key}','{"theme":"midnight"}')`);await reload();
  assert.equal(await evaluate('ui.shadow.querySelector("[data-action=ui-transparency]").value'),'1');
  assert(await evaluate(`!ui.shadow.textContent.includes('旅程')&&ui.shadow.querySelector('.eyebrow').textContent==='DESTINED JOURNEY'&&!getComputedStyle(ui.shadow.querySelector('.tabs'),'::before').content.includes('旅程')`));
  results.push('未设定时默认透明度1%，保留DESTINED JOURNEY与中文文案修正');
@@ -32,11 +34,11 @@ module.exports=async(cdp,evaluate)=>{
  assert.equal(await evaluate('ui.shadow.querySelector("[data-action=ui-transparency]").value'),'8');
  await reload();
  for(const value of ['bad',-1,200,null]){
-  await evaluate(`localStorage.setItem('${key}',JSON.stringify({theme:'midnight',transparency:${JSON.stringify(value)}}))`);await reload();
+  await evaluate(`globalThis.__destinedJourneyAssistant.destroy();localStorage.setItem('${key}',JSON.stringify({theme:'midnight',transparency:${JSON.stringify(value)}}))`);await reload();
   assert.equal(await evaluate('ui.shadow.querySelector("[data-action=ui-transparency]").value'),'1');
  }
  results.push('存储不可用仍可调节；非法透明度安全回退为1%');
- await evaluate(`localStorage.setItem('${key}','{"theme":"midnight","transparency":27}')`);await reload();
+ await evaluate(`globalThis.__destinedJourneyAssistant.destroy();localStorage.setItem('${key}','{"theme":"midnight","transparency":27}')`);await reload();
  assert.equal(await evaluate('ui.shadow.querySelector("[data-action=ui-transparency]").value'),'10');
  results.push('旧版保存的较高透明度自动限制到10%');
  return results;
