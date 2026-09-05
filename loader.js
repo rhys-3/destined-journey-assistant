@@ -1,3 +1,8 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: Copyright (c) 2024-2026 Rhys_z_瑞
+Required Notice: Licensing scope and historical/third-party exceptions: https://github.com/rhys-3/destined-journey-assistant/blob/main/docs/LICENSING.md
+License: https://spdx.org/licenses/PolyForm-Noncommercial-1.0.0.html
+*/
 // Paste this loader into the existing 命定预设助手 script (preserve its UUID and variables).
 const version = '3.0.1';
 const url = `https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v${version}/dist/destined-journey-assistant.js`;

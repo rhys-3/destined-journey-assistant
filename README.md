@@ -1,5 +1,7 @@
 # 命定预设助手
 
+**仅限非商业使用。** 允许按许可条款使用、修改和分享；商业用途需另行授权。详见 [使用许可](docs/LICENSING.md)。
+
 适配 **命定·黄昏 Prime** 的 SillyTavern 脚本。提供预设设置、模型与连接管理、提示词编辑和聊天总结，在同一个面板中使用。
 
 「命定·黄昏 Prime」延续原“命定之诗专用预设”的结构，旧版预设仍可保留原名称使用。助手的版本号独立于预设版本号。适配依赖预设中的条目 ID、受管宏和扩展配置；预设名称相同并不保证经过大幅修改的结构仍然兼容。
@@ -72,4 +74,4 @@ pnpm version:prepare patch
 - [验证说明](docs/VERIFICATION.md)：测试范围和环境限制。
 - [更新日志](CHANGELOG.md)：版本变更。
 
-[MIT 许可](LICENSE) · [问题反馈](https://github.com/rhys-3/destined-journey-assistant/issues)
+[非商业许可](LICENSE) · [问题反馈](https://github.com/rhys-3/destined-journey-assistant/issues)

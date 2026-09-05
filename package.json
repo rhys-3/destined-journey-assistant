@@ -20,7 +20,7 @@
     "聊天机器人"
   ],
   "author": "Rhys_z_瑞",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/rhys-3/destined-journey-assistant.git"
@@ -37,7 +37,9 @@
     "src/",
     "build.js",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "LICENSES/",
+    "docs/LICENSING.md"
   ],
   "devDependencies": {
     "esbuild": "^0.28.2"
