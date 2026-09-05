@@ -72,13 +72,13 @@ jobs:
         if: needs.plan.outputs.themes == 'true' && runner.os == 'Linux'
       - run: node tests/ui/test-settings.cjs
         if: needs.plan.outputs.settings == 'true' && runner.os == 'Linux'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: needs.plan.outputs.build == 'true' && runner.os == 'Linux'
         with:
           name: assistant-bundle
           path: dist/destined-journey-assistant.js
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && needs.plan.outputs.build == 'true' && runner.os == 'Linux'
         with:
           name: verification
