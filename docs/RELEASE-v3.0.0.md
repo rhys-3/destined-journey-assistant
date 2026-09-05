@@ -6,4 +6,4 @@
 - 统一存储、取消和生命周期，防止整表覆盖和迟到结果写入新聊天。
 - 保留旧标签和旧 dist，旧固定链接及旧文件 main／latest 用户无需升级。
 
-用仓库 loader.js 替换原设置脚本内容，保留 UUID 和数据。配套预设包在 CDN 校验及构建完成后附加。自动测试与模拟浏览器回归已执行；真实酒馆与模型接口尚未完成实测。详见 docs/VERIFICATION.md 和 docs/MIGRATION.md。
+用仓库 loader.js 替换原设置脚本内容，保留 UUID 和数据。完整预设包仅在独立的本地工作区维护，不在本仓库或 Release 分发。自动测试与模拟浏览器回归已执行；真实酒馆与模型接口尚未完成实测。详见 docs/VERIFICATION.md 和 docs/MIGRATION.md。

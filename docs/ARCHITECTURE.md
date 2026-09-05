@@ -5,7 +5,14 @@
 | 路径 | 职责 |
 | --- | --- |
 | src/index.js | 单实例启动、卸载及启动错误传播 |
-| src/preset/assistant.js | 预设、模型、编辑排序、配置库、入口生命周期 |
+| src/preset/assistant.js | 实例状态、模块组装、启动与宿主事件接线 |
+| src/preset/definitions.js | 预设条目 UUID、受管字段和界面默认值 |
+| src/preset/store.js | 预设读写队列、同步、失败回滚 |
+| src/preset/models.js、connections.js、managed.js | 模型选择、连接、受管宏和字段 |
+| src/preset/worldbook.js | 变量世界书与预设模式联动 |
+| src/preset/styles-editor.js、prompt-editor.js、placement.js | 文风、条目编辑、排序与分区位置 |
+| src/preset/configuration-schema.js、configurations.js、custom-models.js | 配置白名单、导入导出、恢复与自定义模型 |
+| src/preset/render.js、appearance.js、events.js | 页面渲染、主题与布局、交互与清理 |
 | src/summary/service.js | 一次迁移、事件、嵌入页面、聊天切换 |
 | src/summary/summary.js | 触发、范围、生成、审查、重试与保存 |
 | src/summary/api.js、prompt.js、messages.js | generateRaw、提示词与标签正文 |
@@ -18,6 +25,10 @@
 | loader.js | 固定版本加载与重试 |
 
 只有一份 ES 模块运行时源码与一个新版 bundle；旧总结 dist 是冻结兼容资产。
+
+设置模块以工厂函数创建，每次启动拥有独立的状态与函数。模块间通过显式的实时访问器共享当前状态，避免异步保存、拖动、聊天切换和清理期间持有旧值；没有字符串拼接或运行时 eval。esbuild 将模块依赖打包为单文件。预设 split 中只维护固定版本加载器，完整预设 JSON 只在独立的本地工作区生成。
+
+主分支工作流在所有测试通过后提交下载自同一次验证任务的构建产物，发布任务使用该提交打标签。PR 不回写仓库，已发布标签不覆盖；并发主分支更新会阻止过时产物写入。独立的类型声明工作流每三天检查上游，只提交 `@types/` 的内容变化。
 
 ## 摘要与请求
 

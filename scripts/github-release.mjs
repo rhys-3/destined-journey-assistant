@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 const mode=process.argv[2]??'status';
-if(!['status','rename','runs','logs','dispatch','upload'].includes(mode))throw new Error('Use status, rename, runs, logs, dispatch, or upload');
+if(!['status','rename','runs','logs','dispatch','upload','remove-presets'].includes(mode))throw new Error('Unknown release operation');
 const credential=spawnSync('git',['-c','credential.interactive=never','credential','fill'],{
   input:'protocol=https\nhost=github.com\n\n',encoding:'utf8',windowsHide:true,
   env:{...process.env,GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never'},
@@ -46,9 +46,28 @@ if(mode==='upload') {
  const {readFile}=await import('node:fs/promises');
  const {basename}=await import('node:path');
  const file=process.argv[3];if(!file)throw new Error('Asset file required');
- const name=basename(file), release=await api('/repos/rhys-3/destined-journey-assistant/releases/tags/v3.0.0');
+ const name=basename(file);
+ if(name !== 'destined-journey-assistant.js' && !/^verification-v[\d.]+\.json$/.test(name))throw new Error('Only the assistant bundle and verification report may be uploaded; preset packages stay local.');
+ const release=await api('/repos/rhys-3/destined-journey-assistant/releases/tags/v3.0.0');
  if(release.assets.some(a=>a.name===name))throw new Error('Asset already exists; refusing to overwrite');
  const response=await fetch(release.upload_url.split('{')[0]+'?name='+encodeURIComponent(name),{method:'POST',headers:{Authorization:'Bearer '+fields.password,'Content-Type':name.endsWith('.json')?'application/json':'application/octet-stream'},body:await readFile(file)});
  if(!response.ok)throw new Error('Asset upload HTTP '+response.status);
  console.log(JSON.stringify({url:(await response.json()).browser_download_url}));
+}
+if(mode==='remove-presets') {
+ const base='/repos/rhys-3/destined-journey-assistant';
+ const release=await api(base+'/releases/tags/v3.0.0');
+ {
+   const assets=release.assets.filter(a=>a.name==='destined-journey-preset-0.7.json');
+   for(const asset of assets) {
+     await api(base+'/releases/assets/'+asset.id,'DELETE');
+     console.log('Removed preset asset: '+release.tag_name+'/'+asset.name);
+   }
+   if(assets.length) {
+     const body=(release.body??'').split('\n').filter(line=>!(/destined-journey-preset|命定之诗专用预设-0\.7\.json|配套预设包在 CDN/.test(line))).join('\n');
+     await api(base+'/releases/'+release.id,'PATCH',{body:body+'\n\n完整预设包仅在本地维护，不在此仓库或 Release 分发。'});
+   }
+ }
+ const remaining=await api(base+'/releases/tags/v3.0.0');
+ console.log(JSON.stringify({remainingAssets:remaining.assets.map(a=>a.name)},null,2));
 }

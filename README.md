@@ -4,7 +4,7 @@
 
 ## 安装与升级
 
-使用配套的「命定之诗专用预设-0.7」发布包，或把 [loader.js](loader.js) 全文替换到已有的 **【命定之诗】预设设置** 脚本中。保留 UUID `3a01f9c2-f6e8-4754-ad75-347741051662` 和脚本数据。加载器固定使用：
+把 [loader.js](loader.js) 全文替换到已有的 **【命定之诗】预设设置** 脚本中。完整预设包在独立的本地预设工作区维护，不提交到本仓库，也不上传到 Release。保留 UUID `3a01f9c2-f6e8-4754-ad75-347741051662` 和脚本数据。加载器固定使用：
 
 ```text
 https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.0.0/dist/destined-journey-assistant.js
@@ -43,7 +43,11 @@ node tests/ui/test-settings.cjs
 
 浏览器测试需要 Chrome，可设置 CHROME_PATH。源码为 ES 模块，由 esbuild 构建单文件。旧总结 dist 是冻结资产，不从新源码重新构建。
 
-Actions 先测试、构建、检查产物一致性与浏览器回归。手动运行工作流并勾选 release 才会发布 package 版本；已有标签拒绝覆盖。新版 CDN 验证后才同步正式预设包。
+推送源码到 main 后，Actions 自动测试、构建并执行浏览器回归，通过后将生成的 `dist/destined-journey-assistant.js` 提交回 main。无需手工提交构建产物。PR 只验证，不写入仓库。手动运行工作流并勾选 release 才会在包含构建产物的提交上发布 package 版本；已有标签拒绝覆盖。新版 CDN 验证后才同步本地正式预设包。
+
+`src/preset/` 按预设存储、模型、受管字段、世界书联动、编辑排序、配置库、界面和生命周期拆分；`assistant.js` 负责组装。预设分区中仍只保留短加载器。
+
+`Update Tavern Helper types` 工作流每三天检查原酒馆助手上游的声明文件，也可手动运行；仅在内容变化时提交 `@types/`。它不更新运行时脚本或发布版本。依赖包由 Dependabot 单独维护。
 
 - [使用说明](docs/USAGE.md)
 - [架构与数据边界](docs/ARCHITECTURE.md)

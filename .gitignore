@@ -28,6 +28,14 @@ desktop.ini
 .ui-review/
 node_modules/
 
+# Full preset packages belong only to the separate local preset workspace.
+build/
+source/
+split/
+*preset-0.7.json
+命定之诗专用预设-*.json
+__pycache__/
+
 # 环境变量文件
 .env
 .env.local

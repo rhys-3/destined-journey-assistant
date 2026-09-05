@@ -31,11 +31,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm build
-      - run: git diff --exit-code -- dist/destined-journey-assistant.js
       - run: node tests/ui/test-ui.cjs
       - run: node tests/ui/test-assistant.cjs
       - run: node tests/ui/test-themes.cjs
       - run: node tests/ui/test-settings.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assistant-bundle
+          path: dist/destined-journey-assistant.js
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -45,8 +49,41 @@ jobs:
             dist/destined-journey-assistant.js
             .ui-review/*results.json
             .ui-review/*.png
-  release:
+  bundle:
     needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      commit: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: assistant-bundle
+          path: dist
+      - name: Commit verified bundle
+        id: commit
+        run: |
+          git fetch origin main
+          if [ "$(git rev-parse origin/main)" != "${{ github.sha }}" ]; then
+            echo 'Main changed during verification; refusing to publish a stale bundle. Rerun on current main.'
+            exit 1
+          fi
+          git add -- dist/destined-journey-assistant.js
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'build: update verified assistant bundle'
+            git push origin HEAD:main
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  release:
+    needs: bundle
     if: github.event_name == 'workflow_dispatch' && inputs.release && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -54,6 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.bundle.outputs.commit }}
           fetch-depth: 0
       - name: Publish immutable version
         env:
