@@ -1,30 +1,50 @@
-# 开发与发布
+# 开发指南
 
-Node 22、pnpm 10。src/ 是唯一 ES 模块运行时源码；新版 dist 由 pnpm build 生成。旧 dist/destined-journey-summarizer.js 是冻结兼容资产，不删除、不覆盖。
+## 环境与命令
 
-## 验证
+运行时源码使用 JavaScript ES 模块。开发环境为 Node.js 22、pnpm 10；类型声明同步工具另需 Python 3。
 
-安装冻结依赖后运行 pnpm test、pnpm build，顺序运行 tests/ui/test-ui.cjs、test-assistant.cjs、test-themes.cjs、test-settings.cjs。浏览器需要 Chrome，可设置 CHROME_PATH。产物位于 .ui-review/。模拟测试不得写成真实酒馆实测。
+```sh
+pnpm install --frozen-lockfile
+pnpm test
+pnpm build
+node tests/ui/test-ui.cjs
+node tests/ui/test-assistant.cjs
+node tests/ui/test-themes.cjs
+node tests/ui/test-settings.cjs
+```
 
-## 发布
+浏览器回归需要 Chrome，可用 `CHROME_PATH` 指定路径。四组测试顺序执行，结果和截图写入 `.ui-review/`。
 
-1. 修改源码并执行本地验证；准备发布时更新 package 版本、loader 固定版本、发布说明与版本断言。提交源码即可，不必提交本地 dist。
-2. 推送主分支，等待 Verify and release 完成测试与浏览器回归，自动提交通过验证的 dist。之后拉取机器人提交。若 main 在验证期间改变，工作流拒绝提交过时产物，请基于最新 main 重新运行。
-3. 手动运行工作流并选择 release。发布依赖验证成功，标签已存在时失败，禁止覆盖。
-4. 校验新版固定 CDN 内容与 dist 相同，运行 scripts/check-legacy-links.mjs 检查旧地址。
-5. 再同步预设 split 的 loader 与元数据，移除独立总结运行入口；保留 source，执行工作区 scripts/workspace.ps1 build。
-6. 完整 JSON 仅留在本地预设工作区，禁止提交本仓库或附加到 Release；记录真实环境未完成项。
+## 源码组织
 
-scripts/github-release.mjs 使用现有 Git 凭据维护本次改名和 GitHub 状态，不打印令牌；日常发布不需要 rename。
+`src/index.js` 管理助手单实例。`src/preset/assistant.js` 组装预设功能模块并持有实例状态；`src/summary/service.js` 负责总结服务。模块职责见 [架构说明](docs/ARCHITECTURE.md)。
 
-## 类型声明
+界面样式位于 `src/ui/` 与 `src/summary/ui/`。总结页面嵌入设置面板，使用相同主题变量和弹窗组件。配置持久化统一经过 `src/platform/store.js`，避免设置保存覆盖总结的新值。
 
-`Update Tavern Helper types` 每三天及手动触发，从原上游 `https://gitlab.com/novi028/JS-Slash-Runner/-/raw/main/dist/@types.zip` 同步。该地址当前返回 TAR，更新器也支持 ZIP；先在内存中校验路径、文件类型和必需声明，再更新 `@types/function` 与 `@types/iframe`。下载或校验失败不会清空本地声明。仅有换行差异不会产生机器人提交。
+新增字段时应明确存储位置、分享范围和兼容策略。命名配置及导出使用白名单；密钥、世界书、聊天绑定和总结记录不进入配置快照。改变 UUID、变量键或世界书条目格式时，需要提供迁移。
 
-本地可用 Python 3 运行 `python scripts/update-types.py`。`@types` 是编辑器声明，不是酒馆助手运行时，不进入浏览器构建，也不等同于类型检查已通过。当前 JavaScript 回归由 Node 与浏览器测试负责；声明更新工作流不自动升级依赖或发布版本。
+## 构建与版本
 
-## 测试数据
+`pnpm build` 用于本地验证。提交源码后，Actions 在回归通过时自动提交新版 dist；无需手工提交生成文件。旧 `dist/destined-journey-summarizer.js` 是冻结的兼容产物，不能用新版构建覆盖。
 
-`tests/fixtures/preset.json` 只包含回归所需的提示词、顺序和流式设置，不含扩展脚本及完整预设包装；`spreset.json` 是分区后处理测试夹具。完整可导入预设不属于此仓库。
+版本按语义化版本号维护，通过 Git 标签分发。准备版本、工作流行为和 CDN 校验见 [版本管理](docs/VERSIONING.md)。
 
-设置与总结统一通过 platform/store.js 写脚本变量。新增字段先明确配置范围，分享使用白名单；Key、世界书、绑定、聊天、总结记录不进入配置、恢复点或发布包。改变旧键或条目格式必须提供迁移。
+## 类型声明与依赖
+
+`Update Tavern Helper types` 每三天或手动运行，从酒馆助手上游同步 `@types/function/` 与 `@types/iframe/`。本地命令：
+
+```sh
+python -m unittest discover -s tests -p test_update_types.py
+python scripts/update-types.py
+```
+
+更新器支持上游的 TAR 和 ZIP 格式，先校验全部文件，再写入声明。下载或校验失败不清空本地声明；没有实质变化时不产生提交。声明供编辑器使用，不会更新酒馆助手运行时，也不进入浏览器 bundle。
+
+Dependabot 单独检查 pnpm 依赖和 GitHub Actions 版本。依赖修改应保留单一 `pnpm-lock.yaml`，通过验证后合并。
+
+## 测试夹具与预设集成
+
+`tests/fixtures/preset.json` 包含回归所需的提示词、顺序和流式设置，没有完整预设包装及扩展脚本；`spreset.json` 提供分区处理测试配置。夹具不存储个人密钥或聊天记录。
+
+完整预设在独立工作区维护，不提交本仓库或作为附件上传。集成助手时，预设的脚本内容仅保存固定版本加载器，保留脚本身份和变量。完整预设的校验与打包由对应工作区执行。

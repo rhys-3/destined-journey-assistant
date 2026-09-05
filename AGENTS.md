@@ -1,13 +1,15 @@
-# 命定预设助手
+# Repository guidance
 
-- `src/` 是唯一运行时源码；`dist/destined-journey-assistant.js` 由 `pnpm build` 生成，不手改。
-- 保留设置脚本 UUID、聊天变量键和世界书条目格式。设置与总结的脚本变量写入统一经过 `src/platform/store.js`。
-- 不向配置快照、导出文件、测试夹具或发布包写入个人 API Key、聊天记录、总结记录。
-- 完整预设 JSON 只留在独立的本地预设工作区，禁止提交本仓库或上传 Release。发布附件只允许助手脚本和验证报告。
-- 主分支的 dist 由 Actions 在全部回归通过后自动提交；日常提交源码，不手工提交生成产物。旧总结 dist 和已发布标签保持冻结。
-- `@types/` 由独立的定时工作流同步，不能在整理构建流程时移除该能力。
-- `loader.js` 必须固定版本；更新版本时同步 package、发布说明与加载器。不得覆盖已发布标签。
-- 验证：`pnpm test`、`pnpm build`，以及顺序运行 `tests/ui/test-ui.cjs`、`test-assistant.cjs`、`test-themes.cjs`、`test-settings.cjs`。
-- 浏览器测试需要 Chrome，可通过 `CHROME_PATH` 指定。测试使用隔离浏览器与模拟酒馆 API，不能声称是真实酒馆或模型接口实测。
-- 测试产物在 `.ui-review/`，不纳入 Git。测试夹具只保存可公开的预设和 SPreset 配置。
-- 同步关联预设工作区时遵守其 AGENTS.md：只改 `split/`，不覆盖 `source/`；完成后必须校验并构建可导入 JSON。
+命定预设助手适配“命定之诗专用预设”。先阅读 README，再按任务查阅 docs/ARCHITECTURE.md、CONTRIBUTING.md 和 docs/VERSIONING.md。
+
+- `src/` 是唯一运行时源码。预设功能在 `src/preset/` 按职责拆分；实例状态由 assistant.js 持有。不要重新合并成长脚本或维护第二份运行时源码。
+- 新版 dist 由 Actions 在测试通过后自动提交，本地 build 用于验证。旧总结 dist 是冻结兼容资产，不能删除、覆盖或重新构建。
+- 保持设置脚本 UUID、聊天变量键、世界书条目格式和旧标签兼容；不兼容变化必须提供迁移。
+- 设置与总结共用 `src/platform/store.js`。异步保存须保留上下文保护，界面只有在写入成功后才能报告成功。
+- 命名配置、恢复点、导出和测试夹具不得携带密钥、聊天记录或世界书记录；分享字段使用白名单。
+- 完整预设在独立工作区维护，不纳入本仓库或上传附件。集成时遵循对应工作区的校验与构建约定。
+- 版本通过 `pnpm version:prepare` 统一准备，由工作流创建不可覆盖的 Git 标签，不依赖 GitHub Release。
+- `@types/` 由独立定时工作流同步。调整构建流程时保留类型声明更新能力。
+- 验证：`pnpm test`、`pnpm build`，顺序运行四组 tests/ui 浏览器测试；修改类型同步工具时运行对应 Python 测试。测试命令见 CONTRIBUTING.md。
+- 浏览器测试使用模拟 API，不能写成真实酒馆或模型接口实测。测试产物位于忽略目录 `.ui-review/`。
+- 文档面向用户和维护者，描述适用范围、行为、接口、数据与流程；不写协作对话、任务进度或临时编辑过程。

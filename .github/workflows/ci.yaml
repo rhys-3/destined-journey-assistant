@@ -1,14 +1,9 @@
-name: Verify and release
+name: Build and version
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-    inputs:
-      release:
-        description: Publish the package version after all checks pass
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
@@ -82,9 +77,9 @@ jobs:
             git push origin HEAD:main
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-  release:
+  version:
     needs: bundle
-    if: github.event_name == 'workflow_dispatch' && inputs.release && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -93,15 +88,10 @@ jobs:
         with:
           ref: ${{ needs.bundle.outputs.commit }}
           fetch-depth: 0
-      - name: Publish immutable version
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version="v$(node -p "require('./package.json').version")"
-          if git show-ref --verify --quiet "refs/tags/$version"; then
-            echo "Version already exists; refusing to overwrite $version"
-            exit 1
-          fi
-          git tag "$version"
-          git push origin "$version"
-          gh release create "$version" dist/destined-journey-assistant.js --title "$version · 命定预设助手" --notes-file "docs/RELEASE-$version.md"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Create immutable version tag
+        run: node scripts/publish-version.mjs
+      - name: Verify fixed CDN version
+        run: node scripts/check-cdn.mjs
