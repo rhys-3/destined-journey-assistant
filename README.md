@@ -47,13 +47,10 @@ API Key 独立保存，不进入命名配置、恢复点或配置导出。世界
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm test
-pnpm build
-node tests/ui/test-ui.cjs
-node tests/ui/test-assistant.cjs
-node tests/ui/test-themes.cjs
-node tests/ui/test-settings.cjs
+pnpm verify -- --full
 ```
+
+首次安装可完整验证。日常使用 `pnpm verify` 按改动选择检查，`pnpm verify -- --plan` 只查看范围；已提交改动使用 `--base <提交>`。文档修改不构建，局部功能只跑相关浏览器组；共享逻辑和工具变更保留完整检查。详见 [验证说明](docs/VERIFICATION.md)。
 
 `src/` 为 ES 模块源码，`src/preset/` 按功能拆分。esbuild 生成单个 `dist/destined-journey-assistant.js`。推送到主分支后，Actions 自动测试、打包并提交产物；版本号增加时创建对应 Git 标签，无需 GitHub Release。
 
