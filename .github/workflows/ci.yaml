@@ -6,12 +6,39 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  verify:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.scope.outputs.matrix }}
+      build: ${{ steps.scope.outputs.build }}
+      python: ${{ steps.scope.outputs.python }}
+      ui: ${{ steps.scope.outputs.ui }}
+      assistant: ${{ steps.scope.outputs.assistant }}
+      themes: ${{ steps.scope.outputs.themes }}
+      settings: ${{ steps.scope.outputs.settings }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: scope
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERIFICATION_WORKFLOW: ci.yaml
+        run: node scripts/verify-changes.mjs --plan
+  verify:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -20,33 +47,48 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: node scripts/verify-changes.mjs --docs
+      - uses: actions/setup-python@v5
+        if: needs.plan.outputs.python == 'true' && runner.os == 'Linux'
+        with:
+          python-version: '3.x'
+      - run: python -m unittest discover -s tests -p test_update_types.py
+        if: needs.plan.outputs.python == 'true' && runner.os == 'Linux'
       - uses: pnpm/action-setup@v4
+        if: needs.plan.outputs.build == 'true'
         with:
           version: 10
       - run: pnpm install --frozen-lockfile
+        if: needs.plan.outputs.build == 'true'
       - run: pnpm test
+        if: needs.plan.outputs.build == 'true'
       - run: pnpm build
+        if: needs.plan.outputs.build == 'true'
       - run: node tests/ui/test-ui.cjs
+        if: needs.plan.outputs.ui == 'true' && runner.os == 'Linux'
       - run: node tests/ui/test-assistant.cjs
+        if: needs.plan.outputs.assistant == 'true' && runner.os == 'Linux'
       - run: node tests/ui/test-themes.cjs
+        if: needs.plan.outputs.themes == 'true' && runner.os == 'Linux'
       - run: node tests/ui/test-settings.cjs
+        if: needs.plan.outputs.settings == 'true' && runner.os == 'Linux'
       - uses: actions/upload-artifact@v4
+        if: needs.plan.outputs.build == 'true' && runner.os == 'Linux'
         with:
           name: assistant-bundle
           path: dist/destined-journey-assistant.js
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && needs.plan.outputs.build == 'true' && runner.os == 'Linux'
         with:
           name: verification
           include-hidden-files: true
           path: |
-            dist/destined-journey-assistant.js
             .ui-review/*results.json
             .ui-review/*.png
   bundle:
-    needs: verify
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [plan, verify]
+    if: needs.plan.outputs.build == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -92,6 +134,8 @@ jobs:
         with:
           node-version: 22
       - name: Create immutable version tag
+        id: tag
         run: node scripts/publish-version.mjs
-      - name: Verify fixed CDN version
+      - name: Verify new fixed CDN version
+        if: steps.tag.outputs.check_cdn == 'true'
         run: node scripts/check-cdn.mjs

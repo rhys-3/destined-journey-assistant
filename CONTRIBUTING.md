@@ -14,7 +14,7 @@ node tests/ui/test-themes.cjs
 node tests/ui/test-settings.cjs
 ```
 
-浏览器回归需要 Chrome，可用 `CHROME_PATH` 指定路径。四组测试顺序执行，结果和截图写入 `.ui-review/`。
+上面的命令是单项检查入口，无需每次全部执行。日常使用 `pnpm verify -- --plan` 查看范围、`pnpm verify` 执行，已提交改动加 `--base <提交>`，完整验证加 `--full`。规则见 [验证说明](docs/VERIFICATION.md)。浏览器回归需要 Chrome，可用 `CHROME_PATH` 指定路径。四组测试顺序执行，结果和截图写入 `.ui-review/`。
 
 ## 源码组织
 

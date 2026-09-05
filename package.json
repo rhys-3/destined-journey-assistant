@@ -8,7 +8,8 @@
     "test": "node --test tests/*.test.js",
     "test:ui": "node tests/ui/test-ui.cjs",
     "version:prepare": "node scripts/prepare-version.mjs",
-    "check:cdn": "node scripts/check-cdn.mjs"
+    "check:cdn": "node scripts/check-cdn.mjs",
+    "verify": "node scripts/verify-changes.mjs"
   },
   "keywords": [
     "SillyTavern",
