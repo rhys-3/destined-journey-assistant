@@ -43,6 +43,7 @@ import { createStore } from './store.js';
 import { createWorldbook } from './worldbook.js';
 import { createModels } from './models.js';
 import { createManaged } from './managed.js';
+import { createSettingLists } from './setting-lists.js';
 import { createStylesEditor } from './styles-editor.js';
 import { createConnections } from './connections.js';
 import { createRender } from './render.js';
@@ -155,6 +156,7 @@ export async function startPresetAssistant() {
     get fingerprintPresetValue() { return fingerprintPresetValue; },
     get flushPendingSaves() { return flushPendingSaves; },
     get getContext() { return getContext; },
+    get initializeManagedSettings() { return initializeManagedSettings; },
     get getCurrentProfileName() { return getCurrentProfileName; },
     get getGeminiTail() { return getGeminiTail; },
     get getGroupOptions() { return getGroupOptions; },
@@ -374,6 +376,7 @@ export async function startPresetAssistant() {
     initializeStyleStructures,
     createPromptId
   } = createManaged(ctx);
+  Object.assign(ctx, createSettingLists(ctx));
   const { openStyleEditor, saveStyleEditor, deleteUserStyle, setStreaming, ensurePromptMetadata, inferPromptMeta } = createStylesEditor(ctx);
   const {
     loadProfiles,

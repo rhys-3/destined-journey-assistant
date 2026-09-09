@@ -1,4 +1,5 @@
 import { writePresetStore } from '../platform/store.js';
+import { normalizeCustomSettingValues } from './setting-items.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createStore(ctx) {
@@ -28,7 +29,7 @@ export function createStore(ctx) {
     return /^-?\d+$/u.test(normalized) ? normalized : fallback;
   }
 
-  function sanitizeManagedValues(value) {
+  function sanitizeManagedValues(value, preset = null) {
     const source = value && typeof value === 'object' ? value : {};
     const person = ['first', 'second', 'third'].includes(source.narration_person)
       ? source.narration_person
@@ -41,7 +42,7 @@ export function createStore(ctx) {
       narration_person: person,
       body_language: sanitizeLanguageSetting(source.body_language, ctx.DEFAULT_MANAGED_VALUES.body_language),
       thinking_language: sanitizeLanguageSetting(source.thinking_language, ctx.DEFAULT_MANAGED_VALUES.thinking_language),
-      global_preference: typeof source.global_preference === 'string' ? source.global_preference : ctx.DEFAULT_MANAGED_VALUES.global_preference,
+      ...normalizeCustomSettingValues(source, preset),
     };
   }
 
@@ -67,7 +68,7 @@ export function createStore(ctx) {
       ...raw,
       managed_values_version: Number(raw.managed_values_version) || 0,
       style_structure_version: Number(raw.style_structure_version) || 0,
-      managed_values: sanitizeManagedValues(raw.managed_values),
+      managed_values: {},
       entry_points: sanitizeEntryPoints(raw.entry_points),
       connection_link: {
         enabled: source.enabled === true,
@@ -81,6 +82,13 @@ export function createStore(ctx) {
     };
     try {
       delete result.configuration_error;
+      result.managed_values = sanitizeManagedValues(raw.managed_values);
+      // Before managed values v2, the prompt body was authoritative. Do not turn
+      // an old default string into a "new" array before that body can be read.
+      if (result.managed_values_version < 2 && !Object.hasOwn(raw.managed_values ?? {}, 'global_settings')) {
+        delete result.managed_values.global_settings;
+        if (typeof raw.managed_values?.global_preference === 'string') result.managed_values.global_preference = raw.managed_values.global_preference;
+      }
       result.custom_models = ctx.validateCustomModels(raw.custom_models ?? []);
       result.configuration_library = ctx.validateLibrary(raw.configuration_library ?? ctx.emptyLibrary());
       result.model_tail_modes = { Gemini: 'no-prefill', ...raw.model_tail_modes };
@@ -113,9 +121,13 @@ export function createStore(ctx) {
     return enqueueScriptConfigSave(message);
   }
 
-  async function commitScriptConfig(label) {
+  async function commitScriptConfig(label, guard = null, prepare = null) {
+    ctx.syncSettingContext?.();
+    if (ctx.destroyed || (guard && !guard())) throw new Error('上下文已变化，已停止保存');
+    if (ctx.state.config.configuration_error) throw new Error(ctx.state.config.configuration_error);
     setSaveStatus('saving', `正在保存：${label}`);
     try {
+      prepare?.();
       writePresetStore(ctx.state.config);
       ctx.savedScriptConfig = clone(ctx.state.config);
       ctx.rebuildModelRegistry();
@@ -130,9 +142,9 @@ export function createStore(ctx) {
     }
   }
 
-  function enqueueScriptConfigSave(label, debounceKey = null) {
+  function enqueueScriptConfigSave(label, debounceKey = null, guard = null, prepare = null) {
     const enqueueConfig = () => {
-      const task = ctx.saveChain.then(() => commitScriptConfig(label));
+      const task = ctx.saveChain.then(() => commitScriptConfig(label, guard, prepare));
       ctx.saveChain = task.catch(error => console.error(`[${ctx.SCRIPT_NAME}] ${label} 失败。`, error));
       return task;
     };
@@ -343,10 +355,18 @@ export function createStore(ctx) {
     try {
       const next = clone(getPreset('in_use'));
       const nextFingerprint = fingerprintPresetValue(next);
+      const settingContext = ctx.syncSettingContext?.();
+      const contextChanged = ctx.state.settingContextKey && settingContext !== ctx.state.settingContextKey;
+      ctx.state.settingContextKey = settingContext;
       if (ctx.state.promptEditor && ctx.state.promptEditor.presetName !== getLoadedPresetName()) ctx.renderStyleEditorLayer();
-      if (nextFingerprint === ctx.presetFingerprint) return;
+      if (nextFingerprint === ctx.presetFingerprint) {
+        if (contextChanged && ctx.state.open) ctx.renderActiveContent(true);
+        return;
+      }
       ctx.state.preset = next;
       ctx.presetFingerprint = nextFingerprint;
+      ctx.syncSettingContext?.();
+      ctx.initializeManagedSettings?.().catch(ctx.showErrorToast);
       if (ctx.state.open) {
         ctx.renderActiveContent(true);
         ctx.ensurePromptMetadata();

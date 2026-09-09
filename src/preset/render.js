@@ -38,16 +38,19 @@ export function createRender(ctx) {
     }
     if (!slot.querySelector('.panel')) { slot.innerHTML = renderPanel(); if(ctx.state.activeTab === 'summary') summary.mount(slot.querySelector('.summary-slot')); }
     else renderActiveContent(true);
+    ctx.resizeSettingInputs();
     ctx.applyPanelGeometry();
     renderStyleEditorLayer();
     renderStatus();
   }
 
   function renderActiveContent(preserveScroll = false) {
+    if (preserveScroll && ctx.isSettingComposing()) return;
     ctx.cancelPromptSort();
     if (!ctx.state.open || !ctx.shadow) return;
     const content = ctx.shadow.querySelector('.content');
     if (!content) return;
+    if (ctx.state.activeTab === 'configurations') ctx.state.activeTab = 'settings';
     if (!['advanced','configurations','settings','summary'].includes(ctx.state.activeTab) && !ctx.authorLayout().pages.some(p=>p.id===ctx.state.activeTab&&!p.hidden)) ctx.state.activeTab='daily';
     const nav = ctx.shadow.querySelector('.tabs');
     if (nav) nav.innerHTML = ctx.renderPlacementNavigation();
@@ -67,6 +70,7 @@ export function createRender(ctx) {
     if (ctx.state.activeTab === 'summary' && content.querySelector('.summary-slot')) { summary.refresh(); return; }
     summary.detach();
     content.innerHTML = ctx.state.preset ? renderActiveTab() : '<div class="empty">无法读取当前预设。</div>';
+    ctx.resizeSettingInputs();
     if (ctx.state.activeTab === 'summary') summary.mount(content.querySelector('.summary-slot'));
     restoreContentScroll(content, scrollTop);
     for (const button of ctx.shadow.querySelectorAll('[data-action="tab"]')) {
@@ -168,7 +172,7 @@ export function createRender(ctx) {
   function renderActiveTab() {
     if (ctx.state.activeTab === 'summary') return '<div class="summary-slot"></div>';
     if (ctx.state.activeTab === 'settings') return renderSettingsTab();
-    if (ctx.state.activeTab === 'configurations') return ctx.renderConfigurationsTab();
+    if (ctx.state.activeTab === 'configurations') return renderSettingsTab();
     if (ctx.state.activeTab === 'advanced') return renderAdvancedTab();
     return ctx.renderPlacementPage(ctx.state.activeTab);
   }
@@ -179,7 +183,8 @@ export function createRender(ctx) {
 
   function renderSettingsTab() {
     const entryBlock = ctx.authorLayout().blocks.find(block => block.id === 'entry-points');
-    return renderSectionHeader('设置', '调整界面外观与打开方式。')
+    return renderSectionHeader('设置', '管理配置，调整界面外观与打开方式。')
+      + '<section data-settings-configurations>' + ctx.renderConfigurationsTab() + '</section>'
       + '<article class="card appearance-card"><div class="card-title"><div><h4>界面外观</h4><p>主题与透明度仅保存在当前浏览器。</p></div></div>' + ctx.renderThemeControl() + '<p class="appearance-note">透明度越低，背景越实；0% 为完全不透明。</p></article>'
       + (entryBlock ? ctx.renderPlacementBlock(entryBlock) : renderEntryPointSettings());
   }

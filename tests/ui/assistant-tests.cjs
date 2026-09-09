@@ -27,7 +27,7 @@ module.exports=async(cdp,evaluate)=>{
   const added=ui.summary.capture().promptBlocks.at(-1);check('新增提示词名称保存',added.name==='自建总结规则');
   q('[data-block-edit="'+added.id+'"]').click();await pause(30);click('.dj-dialog-actions button:nth-child(2)');await pause(30);click('.dj-dialog-actions button');await pause(900);check('删除提示词自动保存',ui.summary.capture().promptBlocks.length===before);
   await ui.summary.flush();
-  click('.tabs [data-tab="configurations"]');
+  click('.tabs [data-tab="settings"]');
   q('[data-action="configuration-scope"][data-kind="save"][data-key="preset"]').click();
   q('[data-action="configuration-name"]').value='仅总结';q('[data-action="configuration-name"]').dispatchEvent(new Event('input',{bubbles:true}));
   click('[data-action="configuration-save-new"]');await ui.settle();

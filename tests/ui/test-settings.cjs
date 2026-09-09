@@ -31,6 +31,7 @@ const run=async(cdp,evaluate)=>{
   }
  }
  console.log('四套主题 × 双端：新增基调、主文风弹窗在最大透明度下仍完全不透明，可正常关闭，无溢出');
+ await require('./setting-list-tests.cjs')(cdp,evaluate);
 };
 source=source.slice(0,start)+`await (${run.toString()})(cdp,evaluate);\n`+source.slice(end);
 source=source.replaceAll('.ui-review/preview.html','.ui-review/settings-preview.html').replace("path.resolve('.ui-review/chrome-profile')","path.resolve('.ui-review/chrome-settings-profile')");

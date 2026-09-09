@@ -2,8 +2,27 @@
 import { promptDescription } from './descriptions.js';
 
 export function createPlacement(ctx) {
+  function migrateAuthorLayout(value) {
+    const layout = ctx.clone(value);
+    if (layout?.version !== 1 || !Array.isArray(layout.pages) || !Array.isArray(layout.blocks)) return layout;
+    const move = layout.blocks.filter(block => block.page === 'style' && ((block.id === 'preference' && ['长期叙事偏好', '全局设定'].includes(block.label)) || (block.id === 'user-additional' && block.label === '用户附加设定')));
+    if (move.length && !layout.pages.some(page => page.id === 'custom-settings')) {
+      const pages = [...layout.pages].sort((a, b) => a.order - b.order);
+      const after = pages.findIndex(page => page.id === 'daily');
+      pages.splice(after + 1, 0, { id: 'custom-settings', label: '自定义设定', order: 0, hidden: false });
+      pages.forEach((page, order) => { page.order = order; });
+      layout.pages = pages;
+    }
+    for (const block of move) block.page = 'custom-settings';
+    const style = layout.pages.find(page => page.id === 'style');
+    if (style?.label === '文风与偏好') style.label = '文风与表达';
+    const preference = layout.blocks.find(block => block.id === 'preference');
+    if (preference?.label === '长期叙事偏好') preference.label = '全局设定';
+    return layout;
+  }
+
   function defaultAuthorLayout() {
-    const pages = [['daily', '日常调整'], ['style', '文风与偏好'], ['tools', '模型与工具']].map(([id, label], order) => ({ id, label, order, hidden: false }));
+    const pages = [['daily', '日常调整'], ['custom-settings', '自定义设定'], ['style', '文风与表达'], ['tools', '模型与工具']].map(([id, label], order) => ({ id, label, order, hidden: false }));
     const definitions = [
       ['variable', 'daily', '变量处理模式', 'builtin'], ['reply', 'daily', '回复篇幅与对话', 'builtin'],
       ['plot-pace', 'daily', '剧情推进', 'single'], ['person', 'daily', '叙事人称', 'builtin'],
@@ -12,7 +31,7 @@ export function createPlacement(ctx) {
       ['event-chain', 'daily', '配合世界书事件链', 'builtin'], ['after-body', 'daily', '正文后附加内容', 'toggles'],
       ['base-tone', 'style', '基调', 'single'], ['main-style', 'style', '主文风', 'single'],
       ['style-extra', 'style', '风格增强', 'toggles'], ['beautify', 'style', '美化', 'toggles'],
-      ['preference', 'style', '长期叙事偏好', 'builtin'], ['user-additional', 'style', '用户附加设定', 'builtin'],
+      ['preference', 'custom-settings', '全局设定', 'builtin'], ['user-additional', 'custom-settings', '用户附加设定', 'builtin'],
       ['adult-mode', 'style', '成人内容适配', 'single'], ['content-extra', 'style', '内容偏好与表达约束', 'toggles'],
       ['models', 'tools', '模型与连接', 'builtin'], ['streaming', 'tools', '流式输出', 'builtin'],
       ['helpers', 'tools', '回复辅助', 'toggles'], ['cache', 'tools', '重置命中缓存', 'builtin'],
@@ -38,6 +57,7 @@ export function createPlacement(ctx) {
   }
 
   function validateAuthorLayout(value) {
+    value = migrateAuthorLayout(value);
     ctx.assertData(ctx.plainObject(value) && value.version === 1, '不支持的作者布局版本');
     ctx.assertData(Array.isArray(value.pages) && value.pages.length <= 40 && Array.isArray(value.blocks) && value.blocks.length <= 200, '页面或板块数量无效');
     const base = defaultAuthorLayout();
@@ -212,7 +232,7 @@ export function createPlacement(ctx) {
 
   function renderPlacementNavigation() {
     const pages=authorLayout().pages.filter(p=>!p.hidden).sort((a,b)=>a.order-b.order);
-    return [...pages,{id:'summary',label:'总结'},{id:'configurations',label:'配置管理'},{id:'settings',label:'设置'}].map((p,index)=>`<button type="button" data-action="tab" data-tab="${ctx.escapeHtml(p.id)}" class="${ctx.state.activeTab===p.id?'active':''}" aria-current="${ctx.state.activeTab===p.id?'page':'false'}"><span class="nav-index" aria-hidden="true">${String(index+1).padStart(2,'0')}</span><strong>${ctx.escapeHtml(p.label)}</strong></button>`).join('');
+    return [...pages,{id:'summary',label:'总结设置'},{id:'settings',label:'设置'}].map((p,index)=>`<button type="button" data-action="tab" data-tab="${ctx.escapeHtml(p.id)}" class="${ctx.state.activeTab===p.id?'active':''}" aria-current="${ctx.state.activeTab===p.id?'page':'false'}"><span class="nav-index" aria-hidden="true">${String(index+1).padStart(2,'0')}</span><strong>${ctx.escapeHtml(p.label)}</strong></button>`).join('');
   }
 
   function placementEdit(prompt) {
@@ -235,8 +255,8 @@ export function createPlacement(ctx) {
     else if(group)return '<article class="placed-choice" data-placement-id="'+ctx.escapeHtml(prompt.id)+'">'+ctx.choiceButton('group',prompt.id,title,prompt.enabled,false,group)+edit+(description?'<small class="entry-description">'+ctx.escapeHtml(description)+'</small>':'')+'</article>';
     else control=ctx.toggleHtml('prompt:'+prompt.id,prompt.enabled,options.disabled===true);
     if(prompt.id===ctx.IDS.narration)content='<div class="segmented">'+[['first','第一人称'],['second','第二人称'],['third','第三人称']].map(([v,l])=>ctx.choiceButton('person',v,l,ctx.state.config.managed_values.narration_person===v,!ctx.hasManagedMacro(ctx.IDS.narration,ctx.MANAGED_MACROS.narrationPerson)||!ctx.hasManagedMacro(ctx.IDS.narration,ctx.MANAGED_MACROS.narrationRequirement))).join('')+'</div>';
-    else if(prompt.id===ctx.IDS.globalPreference){const p=ctx.readGlobalPreference();content='<textarea aria-label="长期叙事偏好" data-action="global-preference" rows="4" '+(p.ok?'':'disabled')+'>'+ctx.escapeHtml(p.value)+'</textarea><div class="field-error" data-preference-error>'+(p.ok?'':'全局偏好短宏缺失或格式异常。')+'</div>';}
-    else if(prompt.id===ctx.IDS.userAdditional){const p=ctx.readUserAdditionalSetting();content='<textarea aria-label="用户附加设定" data-action="user-additional" rows="4" '+(p.ok?'':'disabled')+'>'+ctx.escapeHtml(p.value)+'</textarea><div class="editor-actions"><button class="text-button" data-action="reset-user-additional">恢复默认</button></div><div class="field-error" data-user-additional-error>'+ctx.escapeHtml(p.error)+'</div>';}
+    else if(prompt.id===ctx.IDS.globalPreference)content=ctx.renderSettingList('global_settings');
+    else if(prompt.id===ctx.IDS.userAdditional)content=ctx.renderSettingList('user_additional_settings');
     return '<article class="placed-prompt '+(content?'placed-wide':'')+'" data-placement-id="'+ctx.escapeHtml(prompt.id)+'"><div class="placed-head"><div class="placed-label"><strong>'+ctx.escapeHtml(title)+'</strong>'+(description?'<small>'+ctx.escapeHtml(description)+'</small>':'')+'</div><div class="placed-actions">'+control+edit+'</div></div>'+content+'</article>';
   }
 

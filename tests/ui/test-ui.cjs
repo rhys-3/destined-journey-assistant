@@ -45,7 +45,7 @@ console.log(await evaluate('({errors:window.errors,ready:!!window.ui,url:locatio
 const results=[];const check=(name,ok)=>{if(!ok)throw Error(name);results.push(name)};const q=s=>ui.shadow.querySelector(s);const click=s=>{const e=q(s);if(!e)throw Error('Missing '+s);e.click()};await ui.settle();
 check('默认日常页与六个主导航',ui.state.activeTab==='daily'&&ui.shadow.querySelectorAll('.tabs button').length===6);
   check('四项数值设置完整',ui.shadow.querySelectorAll('[data-action="field-number"]').length===4);
-  check('正文与思维链语言设置完整',ui.shadow.querySelectorAll('[data-action="language-input"]').length===2&&vars.managed_values_version===2&&vars.managed_values.body_language==='简体中文'&&vars.managed_values.thinking_language==='简体中文');
+  check('正文与思维链语言设置完整',ui.shadow.querySelectorAll('[data-action="language-input"]').length===2&&vars.managed_values_version===3&&vars.managed_values.body_language==='简体中文'&&vars.managed_values.thinking_language==='简体中文');
   click('[data-action="language-preset"][data-language="body"][data-value="English"]');await ui.settle();check('正文语言快捷选择自动保存',vars.managed_values.body_language==='English');
   let language=q('[data-action="language-input"][data-language="thinking"]');language.value='Deutsch';language.dispatchEvent(new Event('input',{bubbles:true}));await ui.settle();check('思维链语言支持自定义并自动保存',vars.managed_values.thinking_language==='Deutsch');
   check('语言短宏分别展开',ui.expandManagedMacros('<|正文语言|>|<|思维链语言|>')==='English|Deutsch');
@@ -62,9 +62,10 @@ let input=q('[data-action="field-number"][data-field="hanzi"]');input.focus();in
 await ui.setNumericField('hanzi','1500');ui.renderActiveContent();
 click('[data-action="person"][data-value="second"]');await ui.settle();check('叙事人称保存',vars.managed_values.narration_person==='second');
 const pace=ui.GROUPS['plot-pace'].options[0][0];ui.applyGroup('plot-pace',pace);await ui.settle();check('剧情单选互斥并保存双份',data.prompts.filter(p=>ui.GROUPS['plot-pace'].options.some(([id])=>id===p.id)&&p.enabled).length===1&&stored.prompts.find(p=>p.id===pace).enabled);
-click('[data-tab="style"]');check('文风与两项偏好同页',!!q('[data-action="global-preference"]')&&!!q('[data-action="user-additional"]'));
+click('[data-tab="custom-settings"]');check('两种设定位于独立分类',!!q('[data-setting-list="global_settings"]')&&!!q('[data-setting-list="user_additional_settings"]'));
+click('[data-tab="style"]');check('文风页不再放置自定义设定',!q('[data-setting-list]'));
 const fold=q('[data-disclosure="content-options"]');fold.open=true;ui.renderActiveContent(true);check('异步刷新保留展开',q('[data-disclosure="content-options"]').open);
-await ui.setGlobalPreference('测试偏好');await ui.setUserAdditionalSetting('测试附加要求');await ui.settle();check('偏好与附加设定保存',vars.managed_values.global_preference==='测试偏好'&&ui.readUserAdditionalSetting().value==='测试附加要求');
+await ui.setGlobalPreference('测试设定');await ui.setUserAdditionalSetting('测试附加要求');await ui.settle();check('两种设定保存为条目列表',vars.managed_values.global_settings[0].text==='测试设定'&&ui.readUserAdditionalSetting().value==='- 测试附加要求');
 ui.state.editorUnlocked=true;ui.openStyleEditor('','main-style');q('[data-action="style-title"]').value='回归测试风格';q('[data-action="style-content"]').value='克制地描写。';await ui.saveStyleEditor();await ui.settle();const created=data.prompts.find(p=>p.name.includes('回归测试风格'));check('自建文风保留 XML 包装',created&&created.content.includes('<main_writing_style>'));
 const styleDeletion=ui.deleteUserStyle(created.id);check('自建文风删除使用前端确认',!!q('.dj-dialog'));click('.dj-dialog-actions button:first-child');await styleDeletion;await ui.settle();ui.state.editorUnlocked=false;check('自建文风删除',!data.prompts.some(p=>p.id===created.id));
 click('[data-tab="tools"]');check('模型卡片完整',ui.shadow.querySelectorAll('[data-action="model"]').length===3);

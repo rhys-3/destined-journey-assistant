@@ -54,7 +54,7 @@ test('unknown names and retired region names remain blocked without removing val
 
 test('recursive managed values still cannot leave short macros in outgoing content', t => {
   const managed = setup(t, { global_preference: '<|字数|>' });
-  assert.equal(managed.expandManagedMacros(`${markers[0]}<|全局偏好|>${markers[5]}`, true), markers[0] + markers[5]);
+  assert.equal(managed.expandManagedMacros(`${markers[0]}<|全局偏好|>${markers[5]}`, true), markers[0] + '- ' + markers[5]);
   assert.equal(managed.notices.length, 1);
   assert.match(managed.notices[0], /短宏递归残留/);
 });

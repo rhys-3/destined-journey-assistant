@@ -1,5 +1,6 @@
 import * as summary from '../summary/service.js';
 import { DESCRIPTION_KEYS, DESCRIPTION_LIMIT } from './descriptions.js';
+import { migrateCustomSettingPrompts } from './setting-items.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createConfigurationSchema(ctx) {
@@ -116,13 +117,13 @@ export function createConfigurationSchema(ctx) {
     return result;
   }
 
-  function snapshotConfig(config) {
+  function snapshotConfig(config, preset = null) {
     assertData(!config.configuration_error, config.configuration_error);
     const custom_models = validateCustomModels(config.custom_models ?? []);
     const bindings = {};
     for (const id of Object.keys(modelRegistry({ custom_models }))) bindings[id] = ctx.sanitizeBinding(config.connection_link?.bindings?.[id]);
     return {
-      managed_values: ctx.sanitizeManagedValues(config.managed_values),
+      managed_values: ctx.sanitizeManagedValues(config.managed_values, preset),
       entry_points: ctx.sanitizeEntryPoints(config.entry_points),
       custom_models,
       connection_link: { enabled: config.connection_link?.enabled === true, bindings },
@@ -134,7 +135,7 @@ export function createConfigurationSchema(ctx) {
     const result = {
       version: 1, settings: pickSettings(preset.settings),
       prompts: preset.prompts.map(snapshotPrompt), prompts_unused: (preset.prompts_unused ?? []).map(snapshotPrompt),
-      config: snapshotConfig(config),
+      config: snapshotConfig(config, preset),
       author: preset.extensions?.destined_author ? ctx.validateAuthorLayout(preset.extensions.destined_author) : null,
     };
     const tail = ctx.getGeminiTail(preset);
@@ -148,7 +149,7 @@ export function createConfigurationSchema(ctx) {
     const result = {
       version: 1, settings: pickSettings(value.settings),
       prompts: value.prompts.map(snapshotPrompt), prompts_unused: value.prompts_unused.map(snapshotPrompt),
-      config: snapshotConfig(value.config),
+      config: snapshotConfig(value.config, value),
       author: value.author == null ? null : ctx.validateAuthorLayout(value.author),
     };
     const seen = new Set();
@@ -162,7 +163,7 @@ export function createConfigurationSchema(ctx) {
     }
     const mode = ctx.variablePresetMode(result);
     assertData(mode === 'main' || mode === 'extra', '配置中的变量模式必须二选一');
-    return result;
+    return migrateCustomSettingPrompts(result);
   }
 
   function selectedScopes(snapshot) { return { preset: !!snapshot.preset, summary: !!snapshot.summary }; }

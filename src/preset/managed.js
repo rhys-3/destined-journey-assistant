@@ -1,3 +1,5 @@
+import { legacySettingItems, serializeSettingItems, readSettingTemplate, migrateCustomSettingPrompts } from './setting-items.js';
+
 // These structural markers are consumed by the preset's message processor.
 // They must survive both assistant macro passes until that processor runs.
 const MESSAGE_PROCESSING_MARKERS = new Set([
@@ -7,6 +9,7 @@ const MESSAGE_PROCESSING_MARKERS = new Set([
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createManaged(ctx) {
+  let migrationTask = null;
   function countOccurrences(content, token) {
     return String(content ?? '').split(token).length - 1;
   }
@@ -25,7 +28,8 @@ export function createManaged(ctx) {
   }
 
   function managedMacroValues() {
-    const values = ctx.sanitizeManagedValues(ctx.state.config.managed_values);
+    ctx.syncSettingContext?.();
+    const values = ctx.sanitizeManagedValues(ctx.state.config.managed_values, ctx.state.preset);
     return {
       字数: values.min_hanzi,
       对白比例: values.dialogue_ratio,
@@ -35,7 +39,9 @@ export function createManaged(ctx) {
       人称要求: narrationRequirement(values.narration_person),
       正文语言: values.body_language,
       思维链语言: values.thinking_language,
-      全局偏好: values.global_preference,
+      全局设定: serializeSettingItems(values.global_settings, 'global_settings'),
+      全局偏好: serializeSettingItems(values.global_settings, 'global_settings'),
+      用户附加设定: serializeSettingItems(values.user_additional_settings, 'user_additional_settings'),
     };
   }
 
@@ -67,14 +73,13 @@ export function createManaged(ctx) {
 
   function readGlobalPreference() {
     return {
-      ok: hasManagedMacro(ctx.IDS.globalPreference, ctx.MANAGED_MACROS.globalPreference),
-      value: ctx.state.config.managed_values.global_preference,
+      ...readSettingTemplate(ctx.state.preset, 'global_settings'),
+      value: serializeSettingItems(ctx.state.config.managed_values.global_settings, 'global_settings'),
     };
   }
 
   function setGlobalPreference(value) {
-    ctx.state.config.managed_values.global_preference = String(value ?? '').replace(/\r\n?/gu, '\n');
-    return ctx.enqueueScriptConfigSave('全局偏好', 'global-preference');
+    return ctx.setSettingItems('global_settings', legacySettingItems(value, 'global'));
   }
 
   function buildUserAdditionalContent(value) {
@@ -83,6 +88,11 @@ export function createManaged(ctx) {
   }
 
   function readUserAdditionalSetting(preset = ctx.state.preset) {
+    const template = readSettingTemplate(preset, 'user_additional_settings');
+    if (template.ok && template.managed) return {
+      ...template,
+      value: serializeSettingItems(ctx.sanitizeManagedValues(ctx.state.config.managed_values, preset).user_additional_settings, 'user_additional_settings'),
+    };
     const prompt = ctx.getPrompt(preset, ctx.IDS.userAdditional);
     if (!prompt) return { ok: false, value: '', error: '找不到“用户附加设定”条目。' };
     const content = String(prompt.content ?? '').replace(/\r\n?/gu, '\n');
@@ -97,30 +107,11 @@ export function createManaged(ctx) {
   }
 
   function setUserAdditionalSetting(value) {
-    const normalized = String(value ?? '').replace(/\r\n?/gu, '\n');
-    if (normalized.includes('{{/setvar}}')) {
-      return Promise.reject(new Error('用户附加设定不能包含 {{/setvar}}，否则会截断受管区域。'));
-    }
-    if (!readUserAdditionalSetting().ok) {
-      return Promise.reject(new Error('用户附加设定的受管包装缺失或格式异常，请先恢复默认。'));
-    }
-    return ctx.queuePresetMutation('用户附加设定', preset => {
-      const prompt = ctx.requirePrompt(preset, ctx.IDS.userAdditional);
-      if (!readUserAdditionalSetting(preset).ok) throw new Error('用户附加设定的受管包装缺失或格式异常，请先恢复默认。');
-      prompt.content = buildUserAdditionalContent(normalized);
-    }, 'user-additional-setting');
+    return ctx.setSettingItems('user_additional_settings', legacySettingItems(value, 'additional'));
   }
 
   function resetUserAdditionalSetting() {
-    const pending = ctx.debounceTimers.get('user-additional-setting');
-    if (pending) {
-      clearTimeout(pending.timer);
-      pending.resolve({ superseded: true });
-      ctx.debounceTimers.delete('user-additional-setting');
-    }
-    return ctx.queuePresetMutation('恢复用户附加设定', preset => {
-      ctx.requirePrompt(preset, ctx.IDS.userAdditional).content = buildUserAdditionalContent(ctx.USER_ADDITIONAL_DEFAULT);
-    });
+    return ctx.setSettingItems('user_additional_settings', legacySettingItems(ctx.USER_ADDITIONAL_DEFAULT, 'additional-default'));
   }
 
   function languagePromptIds(key, preset = ctx.state.preset) {
@@ -220,7 +211,7 @@ export function createManaged(ctx) {
 
     const preference = ctx.getPrompt(preset, ctx.IDS.globalPreference);
     const match = String(preference?.content ?? '').match(/<VOID_likes\b[^>]*>([\s\S]*?)<\/VOID_likes>/iu);
-    if (match && !match[1].includes(ctx.MANAGED_MACROS.globalPreference)) {
+    if (match && !match[1].includes(ctx.MANAGED_MACROS.globalPreference) && !match[1].includes('<|全局偏好|>')) {
       let content = match[1].replace(/\r\n?/gu, '\n');
       if (content.startsWith('\n')) content = content.slice(1);
       if (content.endsWith('\n')) content = content.slice(0, -1);
@@ -280,26 +271,43 @@ export function createManaged(ctx) {
 
   function needsManagedPromptMigration(preset) {
     if (ctx.state.config.managed_values_version !== ctx.MANAGED_VALUES_VERSION) return true;
+    if ((preset.prompts ?? []).some(prompt => /<\|全局偏好\|>|\{\{(?:#setvar 偏好|getvar::偏好|setvar::偏好::)\}\}/u.test(String(prompt.content ?? '')))) return true;
     return [ctx.IDS.dialogue, ctx.IDS.outputLength, ctx.IDS.narration, ctx.IDS.globalPreference, ...languagePromptIds('thinking', preset)]
       .some(id => String(ctx.getPrompt(preset, id)?.content ?? '').includes('data-destined-ui='));
   }
 
-  async function initializeManagedSettings() {
+  function initializeManagedSettings() {
+    if (migrationTask) return migrationTask;
+    migrationTask = migrateManagedSettings().finally(() => { migrationTask = null; });
+    return migrationTask;
+  }
+
+  async function migrateManagedSettings() {
     if (!ctx.state.preset || !needsManagedPromptMigration(ctx.state.preset)) return;
+    if (ctx.state.config.configuration_error) throw new Error(ctx.state.config.configuration_error);
+    const name = getLoadedPresetName(), context = ctx.workspaceContextKey();
+    const current = () => !ctx.destroyed && getLoadedPresetName() === name && ctx.workspaceContextKey() === context;
     const legacyValues = readLegacyManagedValues(ctx.state.preset);
     ctx.state.config.managed_values = ctx.sanitizeManagedValues({
       ...ctx.state.config.managed_values,
       ...(ctx.state.config.managed_values_version === ctx.MANAGED_VALUES_VERSION ? {} : legacyValues),
-    });
-    ctx.state.config.managed_values_version = ctx.MANAGED_VALUES_VERSION;
-    await ctx.enqueueScriptConfigSave('迁移预设设置');
+    }, ctx.state.preset);
+    await ctx.enqueueScriptConfigSave('迁移预设设置', null, current);
+    if (!current()) throw new Error('上下文已变化，设定迁移已停止。');
     await ctx.queuePresetMutation('迁移命定短宏', preset => {
-      for (const id of [ctx.IDS.dialogue, ctx.IDS.outputLength, ctx.IDS.narration, ctx.IDS.globalPreference, ...languagePromptIds('thinking', preset)]) {
+      if (!current()) throw new Error('上下文已变化，设定迁移已停止。');
+      for (const id of [ctx.IDS.dialogue, ctx.IDS.outputLength, ctx.IDS.narration, ...languagePromptIds('thinking', preset)]) {
         const prompt = ctx.getPrompt(preset, id);
         if (!prompt) continue;
         prompt.content = migrateManagedPromptContent(id, prompt.content);
       }
+      migrateCustomSettingPrompts(preset);
+      if (preset.extensions?.destined_author) preset.extensions.destined_author = ctx.validateAuthorLayout(preset.extensions.destined_author);
     });
+    ctx.state.config.managed_values_version = ctx.MANAGED_VALUES_VERSION;
+    if (!current()) throw new Error('上下文已变化，设定迁移已停止。');
+    await ctx.enqueueScriptConfigSave('设定列表迁移完成', null, current);
+    ctx.renderActiveContent(true);
   }
 
   function registerManagedMacros() {

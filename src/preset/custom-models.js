@@ -123,7 +123,7 @@ export function createCustomModels(ctx) {
     return '<label>当前配置 <select aria-label="切换配置" data-action="configuration-switch"><option value="">未命名的当前设置</option>'
       + library.items.map(item => '<option value="' + ctx.escapeHtml(item.id) + '" ' + (item.id === library.activeId ? 'selected' : '') + '>' + ctx.escapeHtml(item.name) + '</option>').join('')
       + '</select></label><span>' + (configurationIsDirty() ? '已修改' : '') + '</span>'
-      + '<button type="button" class="text-button" data-action="tab" data-tab="configurations">配置管理</button>';
+      + '<button type="button" class="text-button" data-action="tab" data-tab="settings" data-anchor="configurations">配置管理</button>';
   }
 
   function configButton(action, label, id = '') {

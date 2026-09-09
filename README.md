@@ -8,7 +8,7 @@
 
 ## 功能
 
-- 预设设置：字数、语言、叙事人称、文风、偏好和功能开关，与酒馆原生预设界面双向同步。
+- 预设设置：字数、语言、叙事人称、文风、自定义设定和功能开关，与酒馆原生预设界面双向同步。
 - 模型与连接：模型适配、Connection Profile 联动、自定义模型、变量世界书模式联动。
 - 条目编辑：正文、界面简介、角色、启停、位置与顺序，支持桌面拖动和触屏排序。
 - 聊天总结：支持自动、手动和指定楼层生成普通总结，以及自动和手动生成大总结；提供后台任务提示、停止与恢复、独立总结书和原生楼层显隐。
@@ -26,7 +26,7 @@
 在预设的酒馆助手脚本列表中，将 **命定预设助手**（旧版名为“【命定之诗】预设设置”） 的内容替换为 [loader.js](loader.js)，保留脚本 UUID 和已有变量。标准 UUID 为 `3a01f9c2-f6e8-4754-ad75-347741051662`。加载器通过固定版本地址载入助手：
 
 ```text
-https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.2.0/dist/destined-journey-assistant.js
+https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.3.0/dist/destined-journey-assistant.js
 ```
 
 加载失败时会显示版本、原因和重试按钮。重试使用同一个版本，不会切换到开发分支。
@@ -35,7 +35,7 @@ https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.2.0/dist/destin
 
 可用版本见 [Git 标签](https://github.com/rhys-3/destined-journey-assistant/tags)。安装指定版本时使用该标签下的加载器；`main` 可能包含尚未发布的改动。更新固定版本需要替换加载器，已安装脚本不会自动跟随 `main`。
 
-总结新装默认关闭，在“总结”页面启用并绑定当前聊天的总结世界书。由旧独立总结脚本升级时，可迁移的参数与启用状态会被保留。详见 [迁移说明](docs/MIGRATION.md)。
+总结新装默认关闭，在“总结设置”页面启用并绑定当前聊天的总结世界书。由旧独立总结脚本升级时，可迁移的参数与启用状态会被保留。详见 [迁移说明](docs/MIGRATION.md)。
 
 ## 数据与总结机制
 

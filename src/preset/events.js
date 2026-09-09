@@ -13,6 +13,7 @@ export function createEvents(ctx) {
     }
     const action = target.dataset.action;
     if (ctx.state.workspaceBusy) return;
+    if (action.startsWith('setting-') && !['setting-text', 'setting-enabled'].includes(action)) return ctx.handleSettingAction(action, target);
     if (action === 'entry-edit') { if(ctx.state.editorUnlocked)return ctx.openPromptEditor(target.dataset.id);return; }
     if (action === 'entry-new-here') {if(!ctx.state.editorUnlocked)return;return ctx.openPromptEditor('',{block:target.dataset.block});}
     if (action === 'entry-copy' || action === 'entry-delete') return ctx.editEntryAction(action).catch(ctx.showErrorToast);
@@ -52,8 +53,11 @@ export function createEvents(ctx) {
       return ctx.renderStyleEditorLayer();
     }
     if (action === 'tab') {
-      ctx.state.activeTab = target.dataset.tab;
-      return ctx.renderActiveContent(false);
+      const configurations = target.dataset.tab === 'configurations' || target.dataset.anchor === 'configurations';
+      ctx.state.activeTab = target.dataset.tab === 'configurations' ? 'settings' : target.dataset.tab;
+      ctx.renderActiveContent(false);
+      if (configurations) ctx.shadow.querySelector('[data-settings-configurations]')?.scrollIntoView({ block: 'start' });
+      return;
     }
     if (action === 'variable-mode') return ctx.selectVariableMode(target.dataset.value);
     if (action === 'refresh-worldbook') {
@@ -120,14 +124,7 @@ export function createEvents(ctx) {
       return ctx.renderStyleEditorLayer();
     }
     if (action === 'reset-user-additional') {
-      const textarea = ctx.shadow.querySelector('[data-action="user-additional"]');
-      const error = ctx.shadow.querySelector('[data-user-additional-error]');
-      if (textarea) {
-        textarea.disabled = false;
-        textarea.value = ctx.USER_ADDITIONAL_DEFAULT;
-      }
-      if (error) error.textContent = '';
-      return ctx.resetUserAdditionalSetting().catch(ctx.showErrorToast);
+      return ctx.handleSettingAction('setting-reset', { dataset: { key: 'user_additional_settings' } });
     }
     if (action === 'refresh-profiles') return ctx.loadProfiles();
   }
@@ -139,6 +136,7 @@ export function createEvents(ctx) {
     if (action === 'ui-theme') return ctx.applyTheme(target.value, true);
     if (action === 'ui-transparency') return ctx.applyTransparency(Number(target.value), true);
     if (ctx.state.workspaceBusy) return;
+    if (action === 'setting-enabled') return ctx.handleSettingAction(action, target);
     if (action === 'placement-field') return ctx.setPlacementField(target.dataset.field,target.value);
     if (action === 'model-draft') { ctx.state.modelDraft[target.dataset.field] = target.value; return; }
     if (action === 'configuration-switch') { if (target.value) ctx.applyConfiguration(target.value).catch(ctx.showErrorToast); else ctx.updateWorkspaceUi(); return; }
@@ -189,6 +187,7 @@ export function createEvents(ctx) {
     const action = target.dataset.action;
     if (action === 'ui-transparency') return ctx.applyTransparency(Number(target.value));
     if (ctx.state.workspaceBusy) return;
+    if (action === 'setting-text') return ctx.handleSettingInput(target, event.isComposing || ctx.isSettingComposing());
     if (action === 'configuration-name') { ctx.state.configurationName = target.value; return; }
     if (action === 'model-draft') { ctx.state.modelDraft[target.dataset.field] = target.value; return; }
     if (action === 'prompt-field') {
@@ -320,6 +319,8 @@ export function createEvents(ctx) {
     ctx.app.addEventListener('click', handleClick);
     ctx.app.addEventListener('change', handleChange);
     ctx.app.addEventListener('input', handleInput);
+    ctx.app.addEventListener('compositionstart', ctx.handleSettingComposition);
+    ctx.app.addEventListener('compositionend', ctx.handleSettingComposition);
     ctx.app.addEventListener('toggle', event => {
       if (event.target.classList?.contains('editor-properties') && event.target.isConnected && ctx.state.promptEditor) ctx.state.promptEditor.propertiesOpen = event.target.open;
       const id = event.target.dataset?.disclosure;

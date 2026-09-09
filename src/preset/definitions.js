@@ -18,7 +18,7 @@ export const PROFILE_TIMEOUT = 5000;
 
 export const PRESET_SYNC_INTERVAL = 1500;
 
-export const MANAGED_VALUES_VERSION = 2;
+export const MANAGED_VALUES_VERSION = 3;
 
 export const STYLE_STRUCTURE_VERSION = 1;
 
@@ -38,7 +38,6 @@ export const DEFAULT_MANAGED_VALUES = Object.freeze({
   narration_person: 'third',
   body_language: '简体中文',
   thinking_language: '简体中文',
-  global_preference: '',
 });
 
 export const MANAGED_MACROS = Object.freeze({
@@ -50,10 +49,11 @@ export const MANAGED_MACROS = Object.freeze({
   narrationRequirement: '<|人称要求|>',
   bodyLanguage: '<|正文语言|>',
   thinkingLanguage: '<|思维链语言|>',
-  globalPreference: '<|全局偏好|>',
+  globalPreference: '<|全局设定|>',
+  userAdditional: '<|用户附加设定|>',
 });
 
-export const MANAGED_MACRO_PATTERN = /<\|(字数|对白比例|对白轮次|战斗回合|人称|人称要求|正文语言|思维链语言|全局偏好)\|>/gu;
+export const MANAGED_MACRO_PATTERN = /<\|(字数|对白比例|对白轮次|战斗回合|人称|人称要求|正文语言|思维链语言|全局设定|全局偏好|用户附加设定)\|>/gu;
 
 export const UNKNOWN_DESTINED_MACRO_PATTERN = /<\|命定[^|>]*\|>/gu;
 

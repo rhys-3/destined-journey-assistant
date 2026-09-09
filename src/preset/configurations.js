@@ -8,6 +8,7 @@ export function createConfigurations(ctx) {
     ctx.assertData(!ctx.state.connectionRequest, '连接请求尚未结束，请等待完成后再操作。');
     ctx.assertData(!ctx.state.config.configuration_error, ctx.state.config.configuration_error);
     ctx.assertData(!ctx.state.promptEditor && !ctx.state.styleEditor, '请先保存或关闭条目编辑器，再操作配置。');
+    ctx.assertData(!ctx.hasSettingDraftErrors(), '请先修正或重新保存设定列表中的未保存内容。');
     ctx.assertData(![...(ctx.shadow?.querySelectorAll('[data-action="field-number"]') ?? [])].some(input => !/^-?\d+$/u.test(input.value.trim())), '请先修正当前页面尚未保存的无效数值。');
     ctx.assertData(!ctx.worldLink.busy && !ctx.worldWrites.size, '世界书同步尚未完成，请稍候。');
     const name = getLoadedPresetName();
@@ -217,6 +218,7 @@ export function createConfigurations(ctx) {
           if(complete.summary && current()) { try { await summary.apply(previousSummary); } catch(rollback) { error.message += '；总结配置回滚失败：' + rollback.message; } }
           throw error;
         }
+        ctx.clearSettingDrafts();
         ctx.state.reorderUndo = null; ctx.state.editorUnlocked = false;
       };
       if(snapshot) await withLinkedConnection(snapshot.config, modelId, current, apply);

@@ -35,7 +35,7 @@ module.exports=async(cdp,evaluate)=>{
   assert.equal(await evaluate('ui.shadow.querySelector(".destined-root").dataset.theme'),theme);
   for(const [width,height] of [[1280,960],[768,1024],[390,844],[320,640],[844,390]]){
    await cdp('Emulation.setDeviceMetricsOverride',{width,height,screenWidth:width,screenHeight:height,deviceScaleFactor:1,mobile:width<720||height<500});
-   for(const tab of ['daily','style','tools','configurations','settings','advanced','editor']){
+   for(const tab of ['daily','custom-settings','style','tools','settings','advanced','editor']){
     await evaluate(`ui.closePromptEditor(true);ui.state.activeTab=${JSON.stringify(tab==='editor'?'advanced':tab)};ui.render();${tab==='editor'?'ui.openPromptEditor(ui.IDS.eventChain);':''}`);
     await new Promise(r=>setTimeout(r,35));
     const bounds=await evaluate(`(()=>{const root=ui.shadow,p=root.querySelector('.panel').getBoundingClientRect();const containers=[...root.querySelectorAll('.content,.panel-head,.head-actions,.configuration-shortcut,.prompt-editor-body')];return{outside:p.left<0||p.top<0||p.right>innerWidth+1||p.bottom>innerHeight+1,overflow:containers.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.className),space:root.querySelector('.content').clientHeight}})()`);

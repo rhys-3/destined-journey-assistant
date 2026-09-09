@@ -9,6 +9,7 @@
 | src/preset/definitions.js | 预设条目 UUID、受管字段和界面默认值 |
 | src/preset/store.js | 预设读写队列、同步、失败回滚 |
 | src/preset/models.js、connections.js、managed.js | 模型选择、连接、受管宏和字段 |
+| src/preset/setting-items.js、setting-lists.js | 自定义设定列表、兼容迁移、文本展开与内联编辑 |
 | src/preset/worldbook.js | 变量世界书与预设模式联动 |
 | src/preset/styles-editor.js、prompt-editor.js、placement.js | 文风、条目编辑、排序与分区位置 |
 | src/preset/descriptions.js | 条目及专用卡片简介、旧说明回退与编辑字段 |
@@ -89,3 +90,5 @@ api 直接将编译好的自然 role、顺序和内容交给 generateRaw，不�
 保存先建立未提交的来源记录，再写世界书；大总结启用和父记录停用在同一世界书更新内完成。读回通过后提交来源状态，随后同步显隐。显隐先记受管楼层，再用 refresh: affected 分批更新，避免 all 触发 CHAT_CHANGED；部分写入可按原阶段重试。详情见 [后台总结说明](SUMMARY.md)。
 
 命名快照 v2 含可选 preset／summary，内部配置库版本仍为 1，分享文件外层版本为 2。v1 快照规范化为 preset 部分。所有分享路径采用白名单；Key、世界书、绑定、聊天、总结和隐藏记录不进入命名配置或恢复点。
+
+受管设置版本 3 将 `managed_values.global_settings` 与 `user_additional_settings` 保存为 `{ id, text, enabled }` 数组，数组顺序即输出顺序。总开关仍属于原预设条目。短宏只序列化已启用的非空内容；旧 `global_preference` 在读取时迁移，缺少附加设定字段时先从对应预设正文提取，再替换受管区域。读取新版空数组不会恢复默认内容。列表编辑和配置切换共用保存队列，写入前验证编辑上下文，失败保留草稿；中文组合输入期间暂缓保存和内容重建。
