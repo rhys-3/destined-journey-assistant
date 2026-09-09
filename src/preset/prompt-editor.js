@@ -1,3 +1,5 @@
+import { DESCRIPTION_LIMIT, descriptionFields, descriptionSnapshot } from './descriptions.js';
+
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createPromptEditor(ctx) {
   function findEditorPrompt(preset, id) {
@@ -9,12 +11,12 @@ export function createPromptEditor(ctx) {
     if (!prompt) return null;
     const index = (preset.prompts ?? []).findIndex(item => item.id === id);
     return { name: prompt.name, content: prompt.content ?? '', role: prompt.role ?? 'system', enabled: !!prompt.enabled,
-      position: ctx.clone(prompt.position ?? { type: 'relative' }), included: index >= 0, ordinal: index >= 0 ? index + 1 : preset.prompts.length + 1, authorUi: ctx.placementSnapshot(preset,id) };
+      position: ctx.clone(prompt.position ?? { type: 'relative' }), included: index >= 0, ordinal: index >= 0 ? index + 1 : preset.prompts.length + 1, authorUi: ctx.placementSnapshot(preset,id), descriptions: descriptionSnapshot(prompt) };
   }
 
   function openPromptEditor(id = '', { block } = {}) {
     ctx.refreshPreset(false);
-    const base = id ? editorSnapshot(ctx.state.preset, id) : { name: '⚙️ 新条目', content: '', role: 'system', enabled: false, position: { type: 'relative' }, included: true, ordinal: ctx.state.preset.prompts.length + 1, authorUi: {block:'unclassified',before:''} };
+    const base = id ? editorSnapshot(ctx.state.preset, id) : { name: '⚙️ 新条目', content: '', role: 'system', enabled: false, position: { type: 'relative' }, included: true, ordinal: ctx.state.preset.prompts.length + 1, authorUi: {block:'unclassified',before:''}, descriptions: {description:''}, controlType:'toggle' };
     if (!base || (!id && !ctx.state.editorUnlocked)) return;
     ctx.state.promptEditor = { id, presetName: getLoadedPresetName(), base, draft: ctx.clone(base), order: ctx.state.preset.prompts.map(p => p.id), dirty: false, saving: false, message: '', contextChanged: false };
     ctx.state.promptEditor.authorLayout = JSON.stringify(ctx.state.preset.extensions?.destined_author ?? null);
@@ -50,7 +52,16 @@ export function createPromptEditor(ctx) {
   function setEditorField(field, value) {
     const editor = ctx.state.promptEditor;
     if (!editor || !ctx.state.editorUnlocked || editor.saving || editor.contextChanged) return;
-    if (field === 'positionType') editor.draft.position = value === 'in_chat' ? { type: 'in_chat', depth: 4, order: 100 } : { type: 'relative' };
+    if(field==='controlType'){
+      if(editor.id||!['toggle','single'].includes(value))return;
+      editor.controlTypeChosen=true;
+    }
+    if (field.startsWith('description:')) {
+      const key=field.slice('description:'.length);
+      if (!Object.hasOwn(editor.draft.descriptions,key)) return;
+      editor.draft.descriptions[key]=value;
+    }
+    else if (field === 'positionType') editor.draft.position = value === 'in_chat' ? { type: 'in_chat', depth: 4, order: 100 } : { type: 'relative' };
     else if (field === 'depth' || field === 'order') editor.draft.position[field] = value;
     else editor.draft[field] = value;
     editor.dirty = JSON.stringify(editor.draft) !== JSON.stringify(editor.initialDraft ?? editor.base);
@@ -95,6 +106,14 @@ export function createPromptEditor(ctx) {
       draft.ordinal = Number(draft.ordinal);
       const live = editor.id ? editorSnapshot(latest, editor.id) : null;
       if (editor.id && !live) throw new Error('该条目已被外部移除，未覆盖。');
+      const descriptionKeys=descriptionFields(editor.id).map(({key})=>key);
+      for (const key of descriptionKeys) {
+        if (typeof draft.descriptions[key]!=='string'||draft.descriptions[key].length>DESCRIPTION_LIMIT) throw new Error(`每段界面简介最多 ${DESCRIPTION_LIMIT} 字。`);
+      }
+      const changedDescriptions=descriptionKeys.filter(key=>!editor.id||draft.descriptions[key]!==editor.base.descriptions[key]);
+      for (const key of changedDescriptions) {
+        if (live && live.descriptions[key]!==editor.base.descriptions[key] && live.descriptions[key]!==draft.descriptions[key]) throw new Error('该卡片的界面简介已被其他操作修改。草稿已保留，请重新载入后编辑。');
+      }
       const fields = ['name', 'content', 'role', 'enabled', 'position', 'included', 'ordinal', 'authorUi'];
       const changed = fields.filter(key => !editor.id || JSON.stringify(draft[key]) !== JSON.stringify(editor.base[key]));
       if (findEditorPrompt(latest,editor.id)?.extra?.destined_ui?.version !== 3 && !changed.includes('authorUi')) changed.push('authorUi');
@@ -107,9 +126,18 @@ export function createPromptEditor(ctx) {
       if (changed.includes('authorUi') && JSON.stringify(latest.extensions?.destined_author ?? null) !== editor.authorLayout) throw new Error('页面或分组已变化，请重新载入条目后调整展示设置。');
       if (editor.id && (moving||placementMoving) && JSON.stringify(latest.prompts.map(p => p.id)) !== JSON.stringify(editor.order)) throw new Error('列表顺序已在酒馆中改变，请重新载入后调整顺序。');
       if (ctx.PROTECTED_IDS.has(editor.id) && (!draft.enabled || !draft.included)) throw new Error('此项是必需基础条目，必须保留并启用。');
-      const groupId = editor.id ? ctx.getPromptGroupId(findEditorPrompt(latest, editor.id)) : null;
+      let groupId = editor.id ? ctx.getPromptGroupId(findEditorPrompt(latest, editor.id)) : null;
+      if(!editor.id){
+        if(!['toggle','single'].includes(draft.controlType))throw new Error('请选择独立开关或单选项。');
+        if(draft.controlType==='single'){
+          const block=ctx.authorLayout(latest).blocks.find(b=>b.id===draft.authorUi.block);
+          if(!block)throw new Error('单选项需要一个显示板块，请先选择板块。');
+          if(['base-tone','main-style'].includes(block.id))throw new Error('基调和主文风请使用对应板块的专用新增入口，以保留提示词格式。');
+          groupId=block.id;
+        }
+      }
       if ((ctx.MODEL_IDS.has(editor.id) || groupId === 'variable-mode') && (changed.includes('enabled') || changed.includes('included'))) throw new Error('模型和变量模式请通过对应的联动选项切换。');
-      if (groupId && changed.includes('enabled') && !draft.enabled) throw new Error('互斥组选项请通过选择另一项关闭。');
+      if (editor.id && groupId && changed.includes('enabled') && !draft.enabled) throw new Error('互斥组选项请通过选择另一项关闭。');
       if (groupId && changed.includes('included') && ctx.authorDependency(findEditorPrompt(latest,editor.id))) throw new Error('互斥组条目需要保留在发送列表中。');
       const id = editor.id || ctx.createPromptId();
       const maxOrdinal = latest.prompts.length + (live?.included ? 0 : 1);
@@ -140,6 +168,12 @@ export function createPromptEditor(ctx) {
         }
         if(draft.included&&placementMoving)ctx.savePlacement(preset,prompt,draft.authorUi);
         if(changed.includes('included'))ctx.repairPlacementGroup(preset,groupId);
+        if(changedDescriptions.length){
+          prompt.extra??={};
+          prompt.extra.destined_ui??={};
+          prompt.extra.destined_ui.descriptions??={};
+          for(const key of changedDescriptions)prompt.extra.destined_ui.descriptions[key]=draft.descriptions[key].trim();
+        }
       }, guard, true);
       editor.id = id;
       editor.base = editorSnapshot(ctx.state.preset, id); editor.draft = ctx.clone(editor.base); editor.order = ctx.state.preset.prompts.map(p => p.id);
@@ -175,8 +209,10 @@ export function createPromptEditor(ctx) {
 ${required||placeholder?`<p class="editor-note">${required?'必需条目 · 保持启用':'酒馆动态占位符'}</p>`:''}
         ${linked ? '<p class="editor-note">模型与变量开关由联动选项管理，请在日常调整或模型与工具中切换。</p>' : ''}
         <label class="field-label"><span>条目名称</span><input data-action="prompt-field" data-field="name" value="${ctx.escapeHtml(d.name)}" ${readonly}></label>
+        ${linked?'':`<section class="editor-descriptions" aria-label="界面简介"><div class="description-heading"><strong>界面简介</strong><span>可选 · 清空后隐藏</span></div><p class="subtle">显示在卡片名称下方，仅供界面阅读。建议一两句话；完整规则请写在正文中。</p><div class="description-grid">${descriptionFields(editor.id).map(({key,label})=>`<div class="description-field" data-description-key="${key}"><label class="field-label"><span>${label}<small data-description-count>${d.descriptions[key].length}/${DESCRIPTION_LIMIT}</small></span><textarea rows="2" maxlength="${DESCRIPTION_LIMIT}" data-action="prompt-field" data-field="description:${key}" ${readonly} placeholder="填写这张卡片的用途或使用提示">${ctx.escapeHtml(d.descriptions[key])}</textarea></label><div class="description-preview"><span>预览</span><strong data-description-title>${ctx.escapeHtml(key==='description'?d.name:label)}</strong><small data-description-preview ${d.descriptions[key].trim()?'':'hidden'}>${ctx.escapeHtml(d.descriptions[key])}</small><span data-description-empty ${d.descriptions[key].trim()?'hidden':''}>不显示简介</span></div></div>`).join('')}</div></section>`}
         <div class="editor-checks"><label><input type="checkbox" aria-label="启用条目" data-action="prompt-field" data-field="enabled" ${d.enabled?'checked':''} ${enabledLocked?'disabled':''}>启用条目</label></div>
         ${ctx.renderPlacementFields(editor,locked)}
+        ${editor.id?'':`<div class="new-entry-control"><label class="field-label"><span>控件类型</span><select data-action="prompt-field" data-field="controlType" ${attr}><option value="toggle" ${d.controlType==='toggle'?'selected':''}>独立开关</option><option value="single" ${d.controlType==='single'?'selected':''} ${['hidden','base-tone','main-style'].includes(d.authorUi.block)?'disabled':''}>单选项</option></select></label><p class="subtle">${['base-tone','main-style'].includes(d.authorUi.block)?'新增基调或主文风请使用板块上的专用新增按钮，自动补齐提示词格式。这里可以添加独立开关。':d.controlType==='single'?'与同板块的单选项互斥，不影响独立开关。勾选“启用条目”会切换到新条目；未勾选则保留已有选择。组内尚无选择时会自动补选一项。':'每个条目独立启停，可以同时开启多个。'}</p></div>`}
         <label class="field-label prompt-content-label"><span>完整正文${placeholder?' · 由酒馆在发送时填入':''}</span><textarea spellcheck="false" data-action="prompt-field" data-field="content" ${locked||placeholder?'readonly':''} placeholder="${placeholder?'这是动态占位符，实际内容来自角色卡、世界书或聊天记录。':'输入提示词正文；宏和模板代码会原样保存。'}">${ctx.escapeHtml(d.content)}</textarea></label>
         <div class="entry-operations">${editor.id ? `<button type="button" class="secondary-button" data-action="entry-copy" ${locked||placeholder?'disabled':''}>复制条目</button><button type="button" class="danger-button" data-action="entry-delete" ${locked||ctx.authorDependency(findEditorPrompt(ctx.state.preset,editor.id))?'disabled':''}>删除条目</button>` : ''}</div>
         <details class="editor-properties" ${editor.propertiesOpen ? 'open' : ''}><summary>发送设置 <small>${ctx.escapeHtml(d.role)} · ${d.included ? `列表第 ${ctx.escapeHtml(d.ordinal)} 项` : '未加入列表'}${d.position.type === 'in_chat' ? ` · 深度 ${ctx.escapeHtml(d.position.depth)}` : ''}</small></summary>

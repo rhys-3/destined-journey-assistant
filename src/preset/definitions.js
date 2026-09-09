@@ -82,7 +82,6 @@ export const IDS = Object.freeze({
   actionOptions: 'e8ead062-215f-419a-bfe1-95620672533b',
   antiEmpty: 'fda70f73-997d-480f-83da-1e6e76e8071a',
   outputSummary: 'fae61edb-c404-4640-8371-71fa654f81e6',
-  adultVocabulary: 'a48ce6ca-bb4a-459e-a18e-214ac82b35b0',
   writingEnd: 'a1acb123-3786-41d4-9287-ff3499d7895a',
   resetCache: '72c1e074-152f-424f-818a-adcf32c58779',
   sceneInfo: '49524930-ad3f-4499-a300-564c5e995159',
@@ -232,7 +231,6 @@ export const CURATED_TOGGLES = Object.freeze({
     '09e69bd8-1576-4e1e-87a2-5daeb49ea4a3',
   ],
   content: [
-    IDS.adultVocabulary,
     'e22d0082-c28b-4105-b787-5d9555eacd14',
     'f81de893-dc60-4682-96e4-6a374bde513d',
     '928d98d6-2128-4f9d-8406-440fa2d70f87',

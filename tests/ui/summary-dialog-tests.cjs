@@ -8,6 +8,8 @@ module.exports = async (cdp, evaluate) => {
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const check = async (name, expression) => { assert(await evaluate(expression), name); results.push(name); };
   async function click(selector) {
+    // Let the panel finish its two-frame scroll restoration before measuring the hit target.
+    await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     const point = await evaluate(`(()=>{const e=ui.shadow.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing click target');e.scrollIntoView({block:'center',inline:'nearest'});const r=e.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=ui.shadow.elementFromPoint(x,y);return{x,y,reachable:!!r.width&&!!r.height&&!e.disabled&&(hit===e||e.contains(hit)),hit:hit?.className,pointer:getComputedStyle(e).pointerEvents};})()`);
     assert(point.reachable, selector + ' is not reachable: ' + JSON.stringify(point));
     await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 });

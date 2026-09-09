@@ -1,0 +1,40 @@
+(async()=>{
+ const results=[],check=(name,ok)=>{if(!ok)throw Error(name);results.push(name)},q=s=>ui.shadow.querySelector(s);
+ ui.closePromptEditor(true);await ui.settle();
+ const before={data:structuredClone(data),stored:structuredClone(stored),vars:structuredClone(vars)};
+ const newEntry=block=>{ui.state.editorUnlocked=true;ui.openPromptEditor('',{block});};
+ const type=value=>{const e=q('[data-field="controlType"]');e.value=value;e.dispatchEvent(new Event('change',{bubbles:true}));};
+ const save=async name=>{ui.setEditorField('name',name);ui.setEditorField('content','正文原样保留');const id=await ui.savePromptEditor();check('新建控件保存并关闭 '+name,!!id&&!ui.state.promptEditor);return id;};
+ const group=id=>ui.getPromptGroupId(data.prompts.find(p=>p.id===id));
+ const enabled=id=>data.prompts.find(p=>p.id===id).enabled;
+ try{
+  const styles=data.prompts.filter(p=>['base-tone','main-style'].includes(ui.getPromptGroupId(p))),styleSnapshot=JSON.stringify(styles);
+  const selectedPace=ui.getGroupOptions('plot-pace').find(([id])=>enabled(id))[0];
+  newEntry('plot-pace');check('单选板块新增默认单选且默认值不产生草稿',q('[data-field="controlType"]').value==='single'&&!ui.state.promptEditor.dirty);ui.closePromptEditor();check('未编辑的新建单选可以直接关闭',!ui.state.promptEditor);
+  newEntry('plot-pace');ui.setEditorField('description:description','新增单选简介');const choice=await save('新的剧情选项');
+  check('新增单选加入原组并保留已有选择',group(choice)==='plot-pace'&&!enabled(choice)&&enabled(selectedPace));ui.state.activeTab='daily';ui.render();
+  check('新单选显示单选按钮及简介',!!q('[data-placement-id="'+choice+'"] [data-action="group"]')&&q('[data-placement-id="'+choice+'"] small').textContent==='新增单选简介');
+  q('[data-placement-id="'+choice+'"] [data-action="group"]').click();await ui.settle();check('新旧单选实际互斥并持久保存',enabled(choice)&&!enabled(selectedPace)&&stored.prompts.find(p=>p.id===choice).enabled);
+  newEntry('plot-pace');type('toggle');ui.setEditorField('enabled',true);const independent=await save('单选板块的独立开关');
+  check('在单选板块选择开关不加入互斥组',group(independent)===null&&enabled(choice)&&enabled(independent));ui.state.activeTab='daily';ui.render();check('独立开关使用开关面板',!!q('[data-placement-id="'+independent+'"] [data-action="toggle"]'));
+  newEntry('narrative-extra');check('开关板块新增默认独立开关',q('[data-field="controlType"]').value==='toggle');ui.setEditorField('enabled',true);const toggle=await save('保持独立的开关');
+  newEntry('narrative-extra');type('single');const one=await save('开关板块的单选一');newEntry('narrative-extra');type('single');const two=await save('开关板块的单选二');
+  check('开关板块的新单选形成互斥组且首次补选',group(one)==='narrative-extra'&&group(two)==='narrative-extra'&&enabled(one)&&!enabled(two)&&enabled(toggle));
+  ui.state.activeTab='daily';ui.render();q('[data-placement-id="'+two+'"] [data-action="group"]').click();await ui.settle();check('同板块单选互斥而独立开关不受影响',enabled(two)&&!enabled(one)&&enabled(toggle)&&enabled(independent)&&enabled(choice));
+  newEntry('plot-pace');type('toggle');ui.setPlacementField('block','ending');check('手动类型选择不被后续普通板块选择覆盖',ui.state.promptEditor.draft.controlType==='toggle');ui.closePromptEditor(true);
+  newEntry('narrative-extra');ui.setPlacementField('block','plot-pace');check('尚未手选类型时默认跟随板块',ui.state.promptEditor.draft.controlType==='single');ui.closePromptEditor(true);
+  ui.state.editorUnlocked=true;ui.openPromptEditor(two);check('已建条目不暴露会改变已有关系的类型切换',!q('[data-field="controlType"]'));ui.setPlacementField('block','style-extra');await ui.savePromptEditor();check('移动单选条目仍保留原单选组',group(two)==='narrative-extra');
+  ui.openPromptEditor(two);await ui.editEntryAction('entry-copy');const copy=ui.state.promptEditor.id;check('复制保留单选类型且不抢当前选择',group(copy)==='narrative-extra'&&!enabled(copy)&&enabled(two));ui.closePromptEditor(true);
+  const snap=ui.validateSnapshot(JSON.parse(JSON.stringify(ui.captureConfiguration())));check('配置导出导入保留两种类型',snap.prompts.find(p=>p.id===two).extra.destined_ui.group==='narrative-extra'&&snap.prompts.find(p=>p.id===toggle).extra.destined_ui.group==='');
+  newEntry('plot-pace');const snapshot=JSON.stringify(stored);window.failWrite='in_use';ui.setEditorField('name','失败单选');await ui.savePromptEditor();check('新单选保存失败不改变原选择且保留草稿',!!ui.state.promptEditor&&JSON.stringify(stored)===snapshot);ui.closePromptEditor(true);
+  newEntry('plot-pace');ui.setPlacementField('block','base-tone');check('普通新增不能绕过基调专用格式流程',ui.state.promptEditor.draft.controlType==='toggle'&&q('[data-field="controlType"] option[value="single"]').disabled);ui.setEditorField('controlType','single');await ui.savePromptEditor();check('保存层也保护基调专用创建流程',ui.state.promptEditor.message.includes('专用新增入口'));ui.closePromptEditor(true);
+  check('普通控件新建选择移动复制均不改变现有文风基调',JSON.stringify(data.prompts.filter(p=>styles.some(s=>s.id===p.id)))===styleSnapshot);
+  for(const kind of ['base-tone','main-style']){
+   ui.state.editorUnlocked=true;ui.state.activeTab='style';ui.render();q('[data-action="new-style"][data-group="'+kind+'"]').click();check(kind+' 保留专用新增编辑器',!!ui.state.styleEditor&&!ui.state.promptEditor&&!q('[data-field="controlType"]'));
+   q('[data-action="style-title"]').value='控件回归 '+kind;q('[data-action="style-content"]').value='专用风格正文';await ui.saveStyleEditor();await ui.settle();
+   const added=data.prompts.find(p=>p.name.includes('控件回归 '+kind));const tag=kind==='base-tone'?'base_tone':'main_writing_style';
+   check(kind+' 新建保留格式与单选互斥',!!added&&group(added.id)===kind&&enabled(added.id)&&ui.getGroupOptions(kind).filter(([id])=>enabled(id)).length===1&&added.content.includes('<'+tag+'>')&&added.content.includes('专用风格正文'));
+  }
+ }finally{window.failWrite=null;data=before.data;stored=before.stored;vars=before.vars;ui.state.config=ui.loadScriptConfig();ui.rebuildModelRegistry();ui.state.styleEditor=null;ui.closePromptEditor(true);ui.state.activeTab='daily';ui.reconcilePreset('new entry controls restored');ui.render();await ui.settle();}
+ return results;
+})()

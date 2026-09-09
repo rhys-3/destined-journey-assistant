@@ -1,0 +1,43 @@
+(async()=>{
+ const results=[],check=(name,ok)=>{if(!ok)throw Error(name);results.push(name)},q=s=>ui.shadow.querySelector(s);
+ ui.closePromptEditor(true);await ui.settle();
+ const before={data:structuredClone(data),stored:structuredClone(stored),vars:structuredClone(vars)};
+ const open=id=>{ui.state.editorUnlocked=true;ui.openPromptEditor(id)};
+ const type=(key,value)=>{const el=q('[data-field="description:'+key+'"]');el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));};
+ const desc=(id,key='description')=>stored.prompts.find(p=>p.id===id).extra.destined_ui.descriptions[key];
+ const save=async()=>{await ui.savePromptEditor();check('简介保存后关闭编辑器',!ui.state.promptEditor);};
+ try{
+  const id=ui.IDS.eventChain,original=data.prompts.find(p=>p.id===id).content,order=JSON.stringify(data.prompts.map(p=>p.id));
+  open(id);check('旧条目编辑器显示原默认简介且没有草稿改动',q('[data-field="description:description"]').value.includes('配合世界书')&&!ui.state.promptEditor.dirty);
+  const text='<img src=x onerror=alert(1)>\n{{setvar::test::不要执行}} & 简介';
+  type('description',text);check('简介输入实时预览且不解析HTML',q('[data-description-preview]').textContent===text&&!q('.description-preview img')&&!q('[data-action="prompt-save"]').disabled);await save();
+  check('简介只存显示元数据且不改变正文顺序',desc(id)===text&&data.prompts.find(p=>p.id===id).content===original&&JSON.stringify(data.prompts.map(p=>p.id))===order);
+  ui.state.activeTab='daily';ui.render();check('卡片完整显示转义后的简介',q('[data-placement-id="'+id+'"] small').textContent===text&&!q('[data-placement-id="'+id+'"] img'));
+  open(id);type('description','');await save();check('清空隐藏简介并覆盖默认说明',desc(id)===''&&!q('[data-placement-id="'+id+'"] small'));open(id);check('重新打开保留空简介',q('[data-field="description:description"]').value==='');
+  type('description','未保存');ui.closePromptEditor();check('简介草稿关闭时保护',ui.state.promptEditor.confirmClose&&desc(id)==='');ui.closePromptEditor(true);
+  open(ui.IDS.dialogue);check('对白条目提供两个独立说明',ui.shadow.querySelectorAll('[data-description-key]').length===2&&q('[data-field="description:dialogueRatio"]').value==='对白在正文中的占比');
+  type('dialogueRatio','对白占比自定义');type('dialogueRounds','');await save();
+  check('数字卡片独立自定义及清空生效',q('[data-action="field-number"][data-field="dialogueRatio"]').closest('.card').querySelector('p').textContent==='对白占比自定义'&&!q('[data-action="field-number"][data-field="dialogueRounds"]').closest('.card').querySelector('p'));
+  open(ui.IDS.outputLength);check('输出条目提供四张卡片的简介',ui.shadow.querySelectorAll('[data-description-key]').length===4);
+  for(const key of ['body','thinking','hanzi','combatRounds'])type(key,'自定义 '+key);await save();
+  check('字数回合与两种语言简介都可显示',['hanzi','combatRounds'].every(key=>q('[data-action="field-number"][data-field="'+key+'"]').closest('.card').querySelector('p').textContent==='自定义 '+key)&&['body','thinking'].every(key=>q('[data-action="language-input"][data-language="'+key+'"]').closest('.card').querySelector('p').textContent==='自定义 '+key));
+  open(ui.IDS.dialogue);type('dialogueRatio','本地比例');data.prompts.find(p=>p.id===ui.IDS.dialogue).extra.destined_ui.descriptions.dialogueRounds='外部轮次';await save();check('同时修改不同卡片简介可合并',desc(ui.IDS.dialogue,'dialogueRatio')==='本地比例'&&desc(ui.IDS.dialogue,'dialogueRounds')==='外部轮次');
+  open(id);type('description','本地草稿');data.prompts.find(p=>p.id===id).extra.destined_ui.descriptions.description='外部简介';await ui.savePromptEditor();check('同一简介冲突保留草稿且停止覆盖',ui.state.promptEditor?.message.includes('已被其他操作修改')&&ui.state.promptEditor.draft.descriptions.description==='本地草稿');ui.closePromptEditor(true);
+  open(id);ui.setEditorField('content',original+'\n正文更新');data.prompts.find(p=>p.id===id).extra.destined_ui.descriptions.description='再更新的外部简介';await save();check('只改正文保留外部简介更新',desc(id)==='再更新的外部简介');
+  open(id);type('description','失败的保存');window.failWrite='in_use';await ui.savePromptEditor();check('保存失败保留简介草稿且持久内容不变',ui.state.promptEditor?.draft.descriptions.description==='失败的保存'&&desc(id)==='再更新的外部简介');ui.closePromptEditor(true);
+  open(id);type('description','x'.repeat(2001));await ui.savePromptEditor();check('超过长度上限拒绝保存',ui.state.promptEditor?.message.includes('2000'));ui.closePromptEditor(true);
+  ui.state.editorUnlocked=false;ui.openPromptEditor(id);check('只读模式仍可阅读但不可修改简介',q('[data-field="description:description"]').readOnly);ui.setEditorField('description:description','越权编辑');check('只读编辑被忽略',ui.state.promptEditor.draft.descriptions.description==='再更新的外部简介');ui.closePromptEditor(true);
+  const pace=ui.GROUPS['plot-pace'].options[0][0];open(pace);type('description','单选条目也有简介');await save();ui.state.activeTab='daily';ui.render();check('单选项显示简介并保留选择按钮',q('[data-placement-id="'+pace+'"] small').textContent==='单选条目也有简介'&&!!q('[data-placement-id="'+pace+'"] [data-action="group"]'));
+  ui.state.editorUnlocked=true;ui.openPromptEditor('',{block:'style-extra'});ui.setEditorField('name','带简介的新条目');ui.setEditorField('content','新正文');type('description','新增说明');const added=await ui.savePromptEditor();check('新条目可直接添加简介',desc(added)==='新增说明');
+  open(added);ui.setPlacementField('block','narrative-extra');await save();check('移动条目保留简介',desc(added)==='新增说明');open(added);await ui.editEntryAction('entry-copy');const copy=ui.state.promptEditor.id;check('复制条目保留简介',copy!==added&&desc(copy)==='新增说明');ui.closePromptEditor(true);
+  open(id);type('description','');await save();
+  const snap=ui.captureConfiguration(),roundtrip=ui.validateSnapshot(JSON.parse(JSON.stringify(snap)));check('配置导出校验保留全部简介及空字符串',roundtrip.prompts.find(p=>p.id===added).extra.destined_ui.descriptions.description==='新增说明'&&roundtrip.prompts.find(p=>p.id===ui.IDS.outputLength).extra.destined_ui.descriptions.thinking==='自定义 thinking'&&roundtrip.prompts.find(p=>p.id===id).extra.destined_ui.descriptions.description==='');
+  const invalid=structuredClone(snap);invalid.prompts.find(p=>p.id===added).extra.destined_ui.descriptions.secret='不得携带未知字段';let rejected=false;try{ui.validateSnapshot(invalid)}catch{rejected=true}check('导入简介字段使用白名单',rejected);
+  const master='928d98d6-2128-4f9d-8406-440fa2d70f87';data.extensions??={};data.extensions.destined_author=ui.defaultAuthorLayout();data.extensions.destined_author.blocks.push({id:'expression-constraints',page:'style',label:'表达设置',kind:'toggles',order:12.5,hidden:false,allowNone:false,defaultId:''});
+  data.prompts=data.prompts.filter(p=>p.id!==master);data.prompts.push({id:master,name:'表达约束',content:'测试正文',enabled:true,role:'system',position:{type:'relative'},extra:{destined_ui:{version:3,block:'expression-constraints',order:1,group:'',label:'',description:''}}});stored=structuredClone(data);ui.reconcilePreset('description expression test');
+  open(added);ui.setPlacementField('block','expression-constraints');await save();open(master);type('description','可自定义的总开关简介');await save();ui.state.activeTab='style';ui.render();
+  check('表达总开关简介可修改且固定细则说明保持原样',q('.expression-master small').textContent==='可自定义的总开关简介'&&q('.expression-options legend').textContent==='可选细则'&&q('#expression-help').textContent==='以下细则随表达约束一同生效。');
+  open(master);type('description','');await save();check('清空总开关简介不删除固定说明',!q('.expression-master small')&&q('#expression-help').textContent==='以下细则随表达约束一同生效。');
+ }finally{window.failWrite=null;data=before.data;stored=before.stored;vars=before.vars;ui.state.config=ui.loadScriptConfig();ui.rebuildModelRegistry();ui.closePromptEditor(true);ui.state.activeTab='daily';ui.reconcilePreset('descriptions restored');ui.render();await ui.settle();}
+ return results;
+})()

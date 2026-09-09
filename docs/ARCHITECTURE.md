@@ -11,6 +11,7 @@
 | src/preset/models.js、connections.js、managed.js | 模型选择、连接、受管宏和字段 |
 | src/preset/worldbook.js | 变量世界书与预设模式联动 |
 | src/preset/styles-editor.js、prompt-editor.js、placement.js | 文风、条目编辑、排序与分区位置 |
+| src/preset/descriptions.js | 条目及专用卡片简介、旧说明回退与编辑字段 |
 | src/preset/configuration-schema.js、configurations.js、custom-models.js | 配置白名单、导入导出、恢复与自定义模型 |
 | src/preset/render.js、appearance.js、events.js | 页面渲染、主题与布局、交互与清理 |
 | src/summary/service.js | 一次迁移、事件、嵌入页面、聊天切换 |

@@ -194,6 +194,15 @@ export function createEvents(ctx) {
     if (action === 'prompt-field') {
       ctx.setEditorField(target.dataset.field, target.type === 'checkbox' ? target.checked : target.value);
       const editor = ctx.state.promptEditor;
+      if (!editor) return;
+      for (const field of ctx.shadow.querySelectorAll('[data-description-key]')) {
+        const key=field.dataset.descriptionKey, value=editor.draft.descriptions[key];
+        field.querySelector('[data-description-count]').textContent=value.length+'/2000';
+        const preview=field.querySelector('[data-description-preview]');
+        preview.textContent=value;preview.hidden=!value.trim();
+        field.querySelector('[data-description-empty]').hidden=!!value.trim();
+        if(key==='description')field.querySelector('[data-description-title]').textContent=editor.draft.name;
+      }
       const button = ctx.shadow.querySelector('[data-action="prompt-save"]');
       if (button) button.disabled = !ctx.state.editorUnlocked || editor.saving || editor.contextChanged || (!editor.dirty && !!editor.id);
       const feedback = ctx.shadow.querySelector('.editor-feedback');

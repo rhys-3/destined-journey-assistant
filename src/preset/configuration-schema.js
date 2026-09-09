@@ -1,4 +1,5 @@
 import * as summary from '../summary/service.js';
+import { DESCRIPTION_KEYS, DESCRIPTION_LIMIT } from './descriptions.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createConfigurationSchema(ctx) {
@@ -106,6 +107,11 @@ export function createConfigurationSchema(ctx) {
           .filter(key => Object.hasOwn(ui,key) && ['string','number','boolean'].includes(typeof ui[key]))
           .map(key => [key,ui[key]])
       );
+      if (ui?.descriptions !== undefined) {
+        assertData(plainObject(ui.descriptions), '界面简介格式无效：'+prompt.name);
+        assertData(Object.entries(ui.descriptions).every(([key,value])=>DESCRIPTION_KEYS.includes(key)&&typeof value==='string'&&value.length<=DESCRIPTION_LIMIT), '界面简介字段或长度无效：'+prompt.name);
+        result.extra.destined_ui.descriptions={...ui.descriptions};
+      }
     }
     return result;
   }

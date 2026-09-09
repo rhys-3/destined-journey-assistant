@@ -27,7 +27,7 @@ export function createModels(ctx) {
     const options = getGroupOptions(groupId);
     const customGroup = ctx.authorLayout().blocks.find(b => b.id === groupId && b.kind === 'single');
     if (!options.some(([id]) => id === selectedId) && !(selectedId === '' && customGroup?.allowNone)) return;
-    const task = ctx.queuePresetMutation(group?.label ?? groupId, preset => {
+    const task = ctx.queuePresetMutation(group?.label ?? ctx.authorLayout().blocks.find(b=>b.id===groupId)?.label ?? groupId, preset => {
       for (const [id] of getGroupOptions(groupId, preset)) ctx.requirePrompt(preset, id).enabled = id === selectedId;
     });
     for (const button of ctx.shadow.querySelectorAll('[data-action="group"]')) {

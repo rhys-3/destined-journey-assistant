@@ -345,6 +345,7 @@ export function createManaged(ctx) {
     ctx.queuePresetMutation(ctx.normalizeName(current.name), preset => {
       ctx.requirePrompt(preset, id).enabled = enabled;
     }).catch(ctx.showErrorToast);
+    if (id === '928d98d6-2128-4f9d-8406-440fa2d70f87') ctx.renderActiveContent(true);
   }
 
   function isUserCreatedGroupPrompt(prompt, groupId = '') {

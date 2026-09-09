@@ -1,4 +1,5 @@
 import * as summary from '../summary/service.js';
+import { promptDescription } from './descriptions.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createRender(ctx) {
@@ -235,11 +236,12 @@ export function createRender(ctx) {
 
   function renderNumericControl(key) {
     const definition = ctx.FIELD_DEFINITIONS[key];
+    const description = promptDescription(ctx.getPrompt(ctx.state.preset, definition.promptId), key);
     const current = ctx.readNumericField(key);
     const mode = current.ok ? ctx.getNumericMode(key, current.value) : 'custom';
     return `
       <article class="card numeric-card">
-        <div class="card-title"><div><h4>${ctx.escapeHtml(definition.label)}</h4><p>${ctx.escapeHtml(({ hanzi: '每次回复的正文篇幅要求', dialogueRatio: '对白在正文中的占比', dialogueRounds: '角色之间至少来回几轮对白', combatRounds: '每次回复推进几回合战斗' })[key])}</p></div>${['hanzi', 'dialogueRatio'].includes(key) && ctx.getPrompt(ctx.state.preset, definition.promptId) ? toggleHtml(`prompt:${definition.promptId}`, ctx.getPrompt(ctx.state.preset, definition.promptId).enabled) : ''}</div>
+        <div class="card-title"><div><h4>${ctx.escapeHtml(definition.label)}</h4>${description?`<p class="entry-description">${ctx.escapeHtml(description)}</p>`:''}</div>${['hanzi', 'dialogueRatio'].includes(key) && ctx.getPrompt(ctx.state.preset, definition.promptId) ? toggleHtml(`prompt:${definition.promptId}`, ctx.getPrompt(ctx.state.preset, definition.promptId).enabled) : ''}</div>
         <div class="chips">
           ${definition.presets.map(value => `<button type="button" data-action="field-preset" data-field="${key}" data-value="${value}" class="${current.ok && mode === 'preset' && current.value === String(value) ? 'selected' : ''}" ${current.ok ? disabledAttribute() : 'disabled'}>${value}${key === 'dialogueRatio' ? '%' : ''}</button>`).join('')}
           <button type="button" data-action="field-custom" data-field="${key}" class="${mode === 'custom' ? 'selected' : ''}" ${current.ok ? disabledAttribute() : 'disabled'}>自定义</button>
@@ -252,11 +254,12 @@ export function createRender(ctx) {
 
   function renderLanguageControl(key) {
     const definition = ctx.LANGUAGE_DEFINITIONS[key];
+    const description = promptDescription(ctx.getPrompt(ctx.state.preset, ctx.IDS.outputLength), key);
     const current = ctx.readLanguageField(key);
     const preset = ctx.LANGUAGE_PRESETS.find(([value]) => value === current.value);
     return `
       <article class="card language-card">
-        <div class="card-title"><div><h4>${ctx.escapeHtml(definition.label)}</h4><p>${ctx.escapeHtml(definition.description)}</p></div></div>
+        <div class="card-title"><div><h4>${ctx.escapeHtml(definition.label)}</h4>${description?`<p class="entry-description">${ctx.escapeHtml(description)}</p>`:''}</div></div>
         <div class="chips">
           ${ctx.LANGUAGE_PRESETS.map(([value, label]) => `<button type="button" data-action="language-preset" data-language="${key}" data-value="${ctx.escapeHtml(value)}" class="${current.ok && preset?.[0] === value ? 'selected' : ''}" ${current.ok ? disabledAttribute() : 'disabled'}>${ctx.escapeHtml(label)}</button>`).join('')}
           <button type="button" data-action="language-custom" data-language="${key}" class="${current.ok && !preset ? 'selected' : ''}" ${current.ok ? disabledAttribute() : 'disabled'}>自定义</button>

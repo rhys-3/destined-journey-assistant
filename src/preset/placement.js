@@ -1,4 +1,6 @@
 // Dependencies use live accessors so asynchronous operations share the current state.
+import { promptDescription } from './descriptions.js';
+
 export function createPlacement(ctx) {
   function defaultAuthorLayout() {
     const pages = [['daily', '日常调整'], ['style', '文风与偏好'], ['tools', '模型与工具']].map(([id, label], order) => ({ id, label, order, hidden: false }));
@@ -60,7 +62,8 @@ export function createPlacement(ctx) {
       ctx.assertData(typeof item.allowNone === 'boolean' && typeof item.defaultId === 'string', '单选组设置无效');
       return { ...result, page: item.page, kind: item.kind, allowNone: item.allowNone, defaultId: item.defaultId };
     });
-    for (const block of base.blocks) ctx.assertData(blocks.some(b => b.id === block.id), '内置板块可以隐藏，不能删除：' + block.label);
+    // Current presets may omit the retired content-preference section; old layouts still load.
+    for (const block of base.blocks) if(block.id!=='content-extra') ctx.assertData(blocks.some(b => b.id === block.id), '内置板块可以隐藏，不能删除：' + block.label);
     ctx.assertData(Array.isArray(value.trash ?? []) && (value.trash ?? []).length <= 100, '回收站最多保留 100 项，请先清理或导出');
     const trashIds = new Set();
     const trash = (value.trash ?? []).map(item => {
@@ -131,7 +134,7 @@ export function createPlacement(ctx) {
     ctx.assertData(block==='hidden'||authorLayout(preset).blocks.some(b=>b.id===block),'所选板块已不存在，请重新选择');
     const group=ctx.getPromptGroupId(prompt,preset), previous=prompt.extra?.destined_ui??{};
     prompt.extra??={};
-    prompt.extra.destined_ui={version:3,block,order,group:group??'',label:previous.label??'',description:previous.description??'',...(previous.created_by?{created_by:previous.created_by}:{})};
+    prompt.extra.destined_ui={version:3,block,order,group:group??'',label:previous.label??'',description:previous.description??'',...(previous.descriptions?{descriptions:ctx.clone(previous.descriptions)}:{}),...(previous.created_by?{created_by:previous.created_by}:{})};
   }
 
   function inferNativePlacement(prompt,preset) {
@@ -194,7 +197,13 @@ export function createPlacement(ctx) {
   function setPlacementField(field,value) {
     const editor=ctx.state.promptEditor;
     if(!editor||!ctx.state.editorUnlocked||editor.saving||editor.contextChanged)return;
-    ctx.setEditorField('authorUi',{...editor.draft.authorUi,[field]:value,...(field==='block'?{before:''}:{})});
+    const expressionMaster=!editor.id&&field==='block'&&['expression-constraints','expression-planning'].includes(value)?placementMembers(value).find(p=>p.id==='928d98d6-2128-4f9d-8406-440fa2d70f87'):null;
+    ctx.setEditorField('authorUi',{...editor.draft.authorUi,[field]:value,...(field==='block'?{before:expressionMaster?.id??''}:{})});
+    if(!editor.id&&field==='block'){
+      const special=['hidden','base-tone','main-style'].includes(value);
+      if(special)editor.draft.controlType='toggle';
+      else if(!editor.controlTypeChosen)editor.draft.controlType=authorLayout().blocks.find(b=>b.id===value)?.kind==='single'?'single':'toggle';
+    }
     editor.placementRequested=true;
     if(!editor.id)editor.draft.ordinal=nativePlacementIndex(ctx.state.preset,editor.draft.authorUi.block,editor.draft.authorUi.before,'')+1;
     editor.dirty=JSON.stringify(editor.draft)!==JSON.stringify(editor.initialDraft??editor.base);
@@ -211,9 +220,9 @@ export function createPlacement(ctx) {
     return `<button type="button" class="text-button placement-edit" data-action="entry-edit" data-id="${ctx.escapeHtml(prompt.id)}" aria-label="编辑 ${ctx.escapeHtml(prompt.name)}" title="编辑内容与显示位置">编辑</button>`;
   }
 
-  function renderPlacedPrompt(prompt) {
+  function renderPlacedPrompt(prompt, options = {}) {
     const meta=placementEntry(prompt),title=meta.label||prompt.name,group=ctx.getPromptGroupId(prompt);
-    const description=meta.description||(prompt.id===ctx.IDS.eventChain?'配合世界书事件链使用；此处只切换预设条目。':prompt.id===ctx.IDS.resetCache?'排查命中异常时启用，恢复正常后关闭。':'');
+    const description=promptDescription(prompt);
     const edit=placementEdit(prompt);
     if(prompt.id===ctx.IDS.dialogue||prompt.id===ctx.IDS.outputLength){
       const keys=prompt.id===ctx.IDS.dialogue?['dialogueRatio','dialogueRounds']:['hanzi','combatRounds'];
@@ -223,8 +232,8 @@ export function createPlacement(ctx) {
     let control='',content='';
     if(ctx.PROTECTED_IDS.has(prompt.id))control='<span class="badge">必需</span>';
     else if(ctx.MODEL_IDS.has(prompt.id)||group==='variable-mode')control='<span class="badge">联动管理</span>';
-    else if(group)return '<article class="placed-choice" data-placement-id="'+ctx.escapeHtml(prompt.id)+'">'+ctx.choiceButton('group',prompt.id,title,prompt.enabled,false,group)+edit+'</article>';
-    else control=ctx.toggleHtml('prompt:'+prompt.id,prompt.enabled);
+    else if(group)return '<article class="placed-choice" data-placement-id="'+ctx.escapeHtml(prompt.id)+'">'+ctx.choiceButton('group',prompt.id,title,prompt.enabled,false,group)+edit+(description?'<small class="entry-description">'+ctx.escapeHtml(description)+'</small>':'')+'</article>';
+    else control=ctx.toggleHtml('prompt:'+prompt.id,prompt.enabled,options.disabled===true);
     if(prompt.id===ctx.IDS.narration)content='<div class="segmented">'+[['first','第一人称'],['second','第二人称'],['third','第三人称']].map(([v,l])=>ctx.choiceButton('person',v,l,ctx.state.config.managed_values.narration_person===v,!ctx.hasManagedMacro(ctx.IDS.narration,ctx.MANAGED_MACROS.narrationPerson)||!ctx.hasManagedMacro(ctx.IDS.narration,ctx.MANAGED_MACROS.narrationRequirement))).join('')+'</div>';
     else if(prompt.id===ctx.IDS.globalPreference){const p=ctx.readGlobalPreference();content='<textarea aria-label="长期叙事偏好" data-action="global-preference" rows="4" '+(p.ok?'':'disabled')+'>'+ctx.escapeHtml(p.value)+'</textarea><div class="field-error" data-preference-error>'+(p.ok?'':'全局偏好短宏缺失或格式异常。')+'</div>';}
     else if(prompt.id===ctx.IDS.userAdditional){const p=ctx.readUserAdditionalSetting();content='<textarea aria-label="用户附加设定" data-action="user-additional" rows="4" '+(p.ok?'':'disabled')+'>'+ctx.escapeHtml(p.value)+'</textarea><div class="editor-actions"><button class="text-button" data-action="reset-user-additional">恢复默认</button></div><div class="field-error" data-user-additional-error>'+ctx.escapeHtml(p.error)+'</div>';}
@@ -246,6 +255,13 @@ export function createPlacement(ctx) {
     if(!dedicated&&!prompts.length&&!style&&!ctx.state.editorUnlocked)return '';
     const canAddEntry = !['models', 'streaming', 'entry-points'].includes(block.id);
     const add=!ctx.state.editorUnlocked||!canAddEntry?'':style?`<button class="text-button" data-action="new-style" data-group="${block.id}">＋ 新增${block.id==='base-tone'?'基调':'主文风'}</button>`:`<button class="text-button" data-action="entry-new-here" data-block="${ctx.escapeHtml(block.id)}">＋ 新增条目</button>`;
+    const expressionMaster=['expression-constraints','expression-planning'].includes(block.id)&&prompts.find(p=>p.id==='928d98d6-2128-4f9d-8406-440fa2d70f87');
+    if(expressionMaster){
+      const children=prompts.filter(p=>p!==expressionMaster);
+      const disabled=!expressionMaster.enabled;
+      // Presentation order does not move the variable writers behind their reader.
+      return `<section class="placement-section" data-placement-block="${ctx.escapeHtml(block.id)}"><div class="card-title"><h4>${ctx.escapeHtml(block.label)}</h4>${add}</div><div class="expression-master">${renderPlacedPrompt(expressionMaster)}</div>${children.length?`<fieldset class="expression-options" aria-describedby="expression-help" ${disabled?'disabled':''}><legend>可选细则</legend><p id="expression-help">${disabled?'表达约束已关闭，以下选择保留但不生效。':'以下细则随表达约束一同生效。'}</p><div class="placement-list">${children.map(p=>renderPlacedPrompt(p,{disabled})).join('')}</div></fieldset>`:''}</section>`;
+    }
     return `<section class="placement-section" data-placement-block="${ctx.escapeHtml(block.id)}"><div class="card-title"><h4>${ctx.escapeHtml(block.label)}</h4>${add}</div>${dedicated}${prompts.length?`<div class="placement-list">${prompts.map(renderPlacedPrompt).join('')}</div>`:''}</section>`;
   }
 
