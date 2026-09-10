@@ -139,7 +139,7 @@ export function createStylesEditor(ctx) {
     if (/变量\s*[｜|].*API/i.test(name)) return { section: 'system', control: 'single-option', group: 'variable-mode', order: 10 };
     if (/主文风|基调|风格|文笔|书籍参考|美化/.test(name)) return { section: 'style', control: 'toggle', order: 100 };
     if (/剧情推进|叙事|视角|抢话|转述|结尾|对话量|全局设置/.test(name)) return { section: 'narrative', control: 'toggle', order: 100 };
-    if (/成人内容|用户设定|防|禁用词|表达约束/.test(name)) return { section: 'content', control: 'toggle', order: 100 };
+    if (/NSFW内容|用户提示|用户设定|防|禁用词|表达约束/.test(name)) return { section: 'content', control: 'toggle', order: 100 };
     if (/变量|事件链|摘要|总结|行动选项|输出协议|核心|宏与变量|排障|自查/.test(name)) return { section: 'system', control: 'toggle', order: 100 };
     if (/模型|Gemini|Claude|DeepSeek|思维链|头部|尾部/.test(name)) return { section: 'model', control: 'toggle', order: 100 };
     if (/语言与字数|时间 · 地点 · 天气/.test(name)) return { section: 'output', control: 'toggle', order: 100 };

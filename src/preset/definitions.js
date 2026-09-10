@@ -85,7 +85,30 @@ export const IDS = Object.freeze({
   writingEnd: 'a1acb123-3786-41d4-9287-ff3499d7895a',
   resetCache: '72c1e074-152f-424f-818a-adcf32c58779',
   sceneInfo: '49524930-ad3f-4499-a300-564c5e995159',
+  nsfwStart: '00918aed-b248-4afc-8ea1-8a83b82e86e4',
+  nsfwEnd: '03475ef8-1216-4f4f-93b2-f26e58ccf353',
+  nsfwGeneral: 'ccd244e5-ae1a-40b9-b937-ebedbc3f9af4',
+  nsfwMale: '9f88c31c-5a0e-4ec3-835f-f072a90ed0b6',
+  nsfwFemale: '6ca3ad39-0a35-475d-a645-8d2893868872',
+  nsfwGuard: 'dcca437d-5a75-4f56-ba91-ed69f849031c',
+  nsfwSfw: '1b480929-a5dc-496f-bc02-529f0e896b2e',
+  nsfwPace: '557fbc3b-f7f6-4474-8ace-9e9d5ef457e6',
+  nsfwWords: '21fe18e4-98fd-4f91-bf58-2291ad182b15',
 });
+
+export const NSFW_GROUP = 'nsfw-mode';
+
+export const NSFW_EXTRA = 'nsfw-extra';
+
+// 1.3.1 及更早的预设使用 adult 命名，读取时归一化到当前板块标识。
+export const LEGACY_BLOCK_ALIASES = Object.freeze({
+  'adult-mode': NSFW_GROUP,
+  'adult-extra': NSFW_EXTRA,
+});
+
+export function normalizeBlockId(id) {
+  return LEGACY_BLOCK_ALIASES[id] ?? id;
+}
 
 export const BUILTIN_MODEL_ADAPTERS = Object.freeze({
   Gemini: {
@@ -174,13 +197,14 @@ export const GROUPS = Object.freeze({
       ['87053b89-8f2f-4f4d-9096-9c750ecc4e27', '非用户角色结尾'],
     ],
   },
-  'adult-mode': {
-    label: '成人内容适配',
+  'nsfw-mode': {
+    label: 'NSFW模式',
     section: 'content',
     options: [
-      ['ccd244e5-ae1a-40b9-b937-ebedbc3f9af4', '通用适配'],
-      ['9f88c31c-5a0e-4ec3-835f-f072a90ed0b6', '男性向'],
-      ['6ca3ad39-0a35-475d-a645-8d2893868872', '女性向'],
+      [IDS.nsfwGeneral, '通用'],
+      [IDS.nsfwMale, '男性向'],
+      [IDS.nsfwFemale, '女性向'],
+      [IDS.nsfwGuard, '防发情'],
     ],
   },
   'variable-mode': {
@@ -206,6 +230,7 @@ export const PROTECTED_IDS = new Set([
   '900cb71c-f6a6-441f-a78c-056ddfc8db10',
   'a7c417bc-d976-414f-a507-f142833d1b3e',
   IDS.writingEnd,
+  IDS.nsfwStart, IDS.nsfwEnd,
 ]);
 
 export const SECTION_LABELS = Object.freeze({
@@ -257,6 +282,7 @@ export const FIXED_UI_IDS = new Set([IDS.globalPreference, IDS.userAdditional, .
 export const DEFAULT_GROUP_OPTION_IDS = Object.freeze({
   'base-tone': 'e50a8252-ed29-43a9-9f32-636bfb867c1e',
   'main-style': '3e3e6335-662b-4b0d-bd86-8d7195f7363e',
+  'nsfw-mode': IDS.nsfwGeneral,
 });
 
 export const USER_CREATABLE_GROUPS = Object.freeze({

@@ -1,0 +1,204 @@
+{
+  "prompts": [
+    {
+      "id": "00918aed-b248-4afc-8ea1-8a83b82e86e4",
+      "name": "📚 NSFW板块开始",
+      "enabled": true,
+      "role": "system",
+      "position": {
+        "type": "relative"
+      },
+      "extra": {
+        "destined_ui": {
+          "control": "readonly",
+          "order": 0,
+          "protected": true,
+          "section": "system",
+          "version": 1
+        }
+      },
+      "content": "<NSFW_content>\n结构测试"
+    },
+    {
+      "id": "ccd244e5-ae1a-40b9-b937-ebedbc3f9af4",
+      "name": "🔥 NSFW模式·通用",
+      "enabled": true,
+      "role": "system",
+      "position": {
+        "type": "relative"
+      },
+      "extra": {
+        "destined_ui": {
+          "version": 3,
+          "block": "nsfw-mode",
+          "order": 0,
+          "group": "nsfw-mode",
+          "label": "通用",
+          "description": ""
+        }
+      },
+      "content": "界面测试正文 1"
+    },
+    {
+      "id": "9f88c31c-5a0e-4ec3-835f-f072a90ed0b6",
+      "name": "🔥 NSFW模式·男性向",
+      "enabled": false,
+      "role": "system",
+      "position": {
+        "type": "relative"
+      },
+      "extra": {
+        "destined_ui": {
+          "version": 3,
+          "block": "nsfw-mode",
+          "order": 1,
+          "group": "nsfw-mode",
+          "label": "男性向",
+          "description": ""
+        }
+      },
+      "content": "界面测试正文 2"
+    },
+    {
+      "id": "6ca3ad39-0a35-475d-a645-8d2893868872",
+      "name": "🔥 NSFW模式·女性向",
+      "enabled": false,
+      "role": "system",
+      "position": {
+        "type": "relative"
+      },
+      "extra": {
+        "destined_ui": {
+          "version": 3,
+          "block": "nsfw-mode",
+          "order": 2,
+          "group": "nsfw-mode",
+          "label": "女性向",
+          "description": ""
+        }
+      },
+      "content": "界面测试正文 3"
+    },
+    {
+      "id": "dcca437d-5a75-4f56-ba91-ed69f849031c",
+      "name": "🔥 NSFW模式·防发情",
+      "enabled": false,
+      "role": "system",
+      "position": {
+        "type": "relative"
+      },
+      "extra": {
+        "destined_ui": {
+          "version": 3,
+          "block": "nsfw-mode",
+          "order": 3,
+          "group": "nsfw-mode",
+          "label": "防发情",
+          "description": ""
+        }
+      },
+      "content": "界面测试正文 4"
+    },
+    {
+      "id": "1b480929-a5dc-496f-bc02-529f0e896b2e",
+      "name": "🔧 NSFW可选·SFW描写",
+      "enabled": false,
+      "role": "system",
+      "position": {
+        "type": "relative"
+      },
+      "extra": {
+        "destined_ui": {
+          "version": 3,
+          "block": "nsfw-extra",
+          "order": 0,
+          "group": "",
+          "label": "SFW描写",
+          "description": ""
+        }
+      },
+      "content": "界面测试正文 5"
+    },
+    {
+      "id": "557fbc3b-f7f6-4474-8ace-9e9d5ef457e6",
+      "name": "🔧 NSFW可选·亲密节奏",
+      "enabled": false,
+      "role": "system",
+      "position": {
+        "type": "relative"
+      },
+      "extra": {
+        "destined_ui": {
+          "version": 3,
+          "block": "nsfw-extra",
+          "order": 1,
+          "group": "",
+          "label": "亲密节奏",
+          "description": ""
+        }
+      },
+      "content": "界面测试正文 6"
+    },
+    {
+      "id": "21fe18e4-98fd-4f91-bf58-2291ad182b15",
+      "name": "🔧 NSFW可选·描写约束",
+      "enabled": false,
+      "role": "system",
+      "position": {
+        "type": "relative"
+      },
+      "extra": {
+        "destined_ui": {
+          "version": 3,
+          "block": "nsfw-extra",
+          "order": 2,
+          "group": "",
+          "label": "描写约束",
+          "description": ""
+        }
+      },
+      "content": "界面测试正文 7"
+    },
+    {
+      "id": "03475ef8-1216-4f4f-93b2-f26e58ccf353",
+      "name": "📚 NSFW板块结束",
+      "enabled": true,
+      "role": "system",
+      "position": {
+        "type": "relative"
+      },
+      "extra": {
+        "destined_ui": {
+          "control": "readonly",
+          "order": 0,
+          "protected": true,
+          "section": "system",
+          "version": 1
+        }
+      },
+      "content": "</NSFW_content>"
+    }
+  ],
+  "blocks": [
+    {
+      "id": "nsfw-mode",
+      "page": "style",
+      "label": "NSFW模式",
+      "kind": "single",
+      "order": 17,
+      "hidden": false,
+      "allowNone": false,
+      "defaultId": "ccd244e5-ae1a-40b9-b937-ebedbc3f9af4"
+    },
+    {
+      "id": "nsfw-extra",
+      "page": "style",
+      "label": "NSFW可选描写",
+      "kind": "toggles",
+      "order": 18,
+      "hidden": false,
+      "allowNone": false,
+      "defaultId": ""
+    }
+  ]
+}

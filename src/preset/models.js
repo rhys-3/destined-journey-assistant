@@ -1,4 +1,6 @@
 // Dependencies use live accessors so asynchronous operations share the current state.
+import { NSFW_GROUP, normalizeBlockId } from './definitions.js';
+
 export function createModels(ctx) {
   function getGroupOptions(groupId, preset = ctx.state.preset) {
     const options = [];
@@ -12,7 +14,12 @@ export function createModels(ctx) {
   function getPromptGroupId(prompt, preset = ctx.state.preset) {
     if (!prompt) return null;
     const meta=prompt.extra?.destined_ui;
-    if(meta?.version===3)return meta.group||null;
+    if(meta?.version===3){
+      // Early NSFW-section presets shipped these built-in modes with an empty group and an adult block id.
+      const block=normalizeBlockId(meta.block);
+      if(!meta.group&&block===NSFW_GROUP&&ctx.ID_TO_GROUP.get(prompt.id)===NSFW_GROUP)return NSFW_GROUP;
+      return meta.group||null;
+    }
     if(meta?.version===2&&!ctx.authorDependency(prompt))return ctx.authorLayout(preset).blocks.find(b=>b.id===meta.block)?.kind==='single'?meta.block:null;
     return ctx.ID_TO_GROUP.get(prompt.id) ?? (ctx.inferPromptMeta(prompt).control==='single-option'?ctx.inferPromptMeta(prompt).group:ctx.legacyAuthorBlock(prompt)==='unclassified'?ctx.inferNativePlacement(prompt,preset).group:null);
   }

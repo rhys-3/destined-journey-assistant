@@ -135,6 +135,7 @@ export function createRender(ctx) {
 
   function renderStatus() {
     ctx.updateWorkspaceUi();
+    ctx.refreshNsfwSummary();
     const status = ctx.shadow?.querySelector('.status');
     if (!status) return;
     for (const button of ctx.shadow.querySelectorAll('button[aria-pressed]')) button.setAttribute('aria-pressed', String(button.classList.contains('selected')));

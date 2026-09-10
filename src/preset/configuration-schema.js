@@ -157,7 +157,13 @@ export function createConfigurationSchema(ctx) {
       assertData(!seen.has(prompt.id), '配置包含重复条目 ID');
       seen.add(prompt.id);
     }
-    for (const id of ctx.PROTECTED_IDS) assertData(result.prompts.some(p => p.id === id && p.enabled), '配置缺少或禁用了基础条目：' + id);
+    const nsfwBoundaries = [ctx.IDS.nsfwStart, ctx.IDS.nsfwEnd];
+    const usesNsfwSection = [...nsfwBoundaries, ctx.IDS.nsfwGuard, ctx.IDS.nsfwSfw, ctx.IDS.nsfwPace, ctx.IDS.nsfwWords].some(id => seen.has(id));
+    for (const id of ctx.PROTECTED_IDS) {
+      // Legacy three-mode presets predate the enclosing section; do not invent its entries.
+      if (nsfwBoundaries.includes(id) && !usesNsfwSection) continue;
+      assertData(result.prompts.some(p => p.id === id && p.enabled), nsfwBoundaries.includes(id) ? 'NSFW 板块起始和结束条目必须一同保留并启用。' : '配置缺少或禁用了基础条目：' + id);
+    }
     for (const adapter of Object.values(modelRegistry(result.config))) {
       for (const id of [...adapter.ids, ...adapter.tails]) assertData(result.prompts.some(p => p.id === id), '配置缺少模型条目：' + id);
     }

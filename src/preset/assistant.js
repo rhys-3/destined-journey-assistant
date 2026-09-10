@@ -37,7 +37,10 @@ import {
   LANGUAGE_DEFINITIONS,
   LANGUAGE_PRESETS,
   PLACEHOLDER_IDS,
-  SYSTEM_PROMPT_IDS
+  SYSTEM_PROMPT_IDS,
+  NSFW_GROUP,
+  NSFW_EXTRA,
+  normalizeBlockId
 } from './definitions.js';
 import { createStore } from './store.js';
 import { createWorldbook } from './worldbook.js';
@@ -218,6 +221,7 @@ export async function startPresetAssistant() {
     get renderPlacementFields() { return renderPlacementFields; },
     get renderPlacementNavigation() { return renderPlacementNavigation; },
     get renderPlacementPage() { return renderPlacementPage; },
+    get refreshNsfwSummary() { return refreshNsfwSummary; },
     get renderPromptEditor() { return renderPromptEditor; },
     get renderSectionHeader() { return renderSectionHeader; },
     get renderStatus() { return renderStatus; },
@@ -438,6 +442,7 @@ export async function startPresetAssistant() {
     renderPlacedPrompt,
     renderPlacementBlock,
     renderPlacementPage,
+    refreshNsfwSummary,
     repairPlacementGroup,
     editEntryAction
   } = createPlacement(ctx);

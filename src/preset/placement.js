@@ -1,5 +1,6 @@
 // Dependencies use live accessors so asynchronous operations share the current state.
 import { promptDescription } from './descriptions.js';
+import { NSFW_GROUP, NSFW_EXTRA, normalizeBlockId } from './definitions.js';
 
 export function createPlacement(ctx) {
   function migrateAuthorLayout(value) {
@@ -18,6 +19,18 @@ export function createPlacement(ctx) {
     if (style?.label === '文风与偏好') style.label = '文风与表达';
     const preference = layout.blocks.find(block => block.id === 'preference');
     if (preference?.label === '长期叙事偏好') preference.label = '全局设定';
+    const adult = layout.blocks.find(block => normalizeBlockId(block.id) === NSFW_GROUP);
+    if (adult) {
+      if (adult.id !== NSFW_GROUP) { adult.id = NSFW_GROUP; adult.label = 'NSFW模式'; }
+      else if (adult.label === '成人内容适配' || adult.label === '成人模式') adult.label = 'NSFW模式';
+    }
+    if (adult && !layout.blocks.some(block => normalizeBlockId(block.id) === NSFW_EXTRA)) {
+      layout.blocks.splice(layout.blocks.indexOf(adult) + 1, 0, {
+        id: NSFW_EXTRA, page: adult.page, label: 'NSFW可选', kind: 'toggles',
+        order: adult.order + 0.5, hidden: false, allowNone: false, defaultId: '',
+      });
+    }
+    for (const block of layout.blocks) if (block.id === 'adult-extra') block.id = NSFW_EXTRA;
     return layout;
   }
 
@@ -32,7 +45,8 @@ export function createPlacement(ctx) {
       ['base-tone', 'style', '基调', 'single'], ['main-style', 'style', '主文风', 'single'],
       ['style-extra', 'style', '风格增强', 'toggles'], ['beautify', 'style', '美化', 'toggles'],
       ['preference', 'custom-settings', '全局设定', 'builtin'], ['user-additional', 'custom-settings', '用户附加设定', 'builtin'],
-      ['adult-mode', 'style', '成人内容适配', 'single'], ['content-extra', 'style', '内容偏好与表达约束', 'toggles'],
+      ['nsfw-mode', 'style', 'NSFW模式', 'single'], ['nsfw-extra', 'style', 'NSFW可选', 'toggles'],
+      ['content-extra', 'style', '内容偏好与表达约束', 'toggles'],
       ['models', 'tools', '模型与连接', 'builtin'], ['streaming', 'tools', '流式输出', 'builtin'],
       ['helpers', 'tools', '回复辅助', 'toggles'], ['cache', 'tools', '重置命中缓存', 'builtin'],
       ['entry-points', 'tools', '设置入口', 'builtin'], ['unclassified', 'tools', '未分类条目', 'toggles'],
@@ -117,6 +131,7 @@ export function createPlacement(ctx) {
     if (ctx.ID_TO_GROUP.has(prompt.id)) return ctx.ID_TO_GROUP.get(prompt.id) === 'variable-mode' ? 'variable' : ctx.ID_TO_GROUP.get(prompt.id);
     const special = { [ctx.IDS.dialogue]: 'reply', [ctx.IDS.outputLength]: 'reply', [ctx.IDS.narration]: 'person', [ctx.IDS.globalPreference]: 'preference', [ctx.IDS.userAdditional]: 'user-additional', [ctx.IDS.eventChain]: 'event-chain', [ctx.IDS.resetCache]: 'cache' };
     if (special[prompt.id]) return special[prompt.id];
+    if ([ctx.IDS.nsfwSfw, ctx.IDS.nsfwPace, ctx.IDS.nsfwWords].includes(prompt.id)) return NSFW_EXTRA;
     if (ctx.AFTER_BODY_IDS.includes(prompt.id)) return 'after-body';
     if (ctx.BEAUTIFY_IDS.includes(prompt.id)) return 'beautify';
     for (const [section, list] of Object.entries(ctx.CURATED_TOGGLES)) if (list.includes(prompt.id)) return { narrative:'narrative-extra', style:'style-extra', content:'content-extra', system:'helpers' }[section];
@@ -129,7 +144,7 @@ export function createPlacement(ctx) {
     const meta = prompt?.extra?.destined_ui;
     let original = prompt ? legacyAuthorBlock(prompt) : 'unclassified';
     if(prompt&&original==='unclassified')original=inferNativePlacement(prompt,preset).block;
-    let block = [2,3].includes(meta?.version) ? meta.block : original;
+    let block = [2,3].includes(meta?.version) ? normalizeBlockId(meta.block) : original;
     if (block !== 'hidden' && !authorLayout(preset).blocks.some(b=>b.id===block)) block='unclassified';
     return {
     block,
@@ -250,6 +265,7 @@ export function createPlacement(ctx) {
       return '<div class="placed-fields" data-placement-id="'+ctx.escapeHtml(prompt.id)+'">'+(edit?'<div class="numeric-edit">'+edit+'</div>':'')+languages+'<div class="field-grid">'+keys.map(ctx.renderNumericControl).join('')+'</div></div>';
     }
     let control='',content='';
+    if(group===NSFW_GROUP&&normalizeBlockId(meta.block)===NSFW_GROUP)return `<article class="placed-choice" data-placement-id="${ctx.escapeHtml(prompt.id)}"><button type="button" data-action="group" data-group="${NSFW_GROUP}" data-value="${ctx.escapeHtml(prompt.id)}" aria-pressed="${prompt.enabled}" class="${prompt.enabled?'selected':''}"><strong>${ctx.escapeHtml(title)}</strong>${description?`<small>${ctx.escapeHtml(description)}</small>`:''}</button>${edit}</article>`;
     if(ctx.PROTECTED_IDS.has(prompt.id))control='<span class="badge">必需</span>';
     else if(ctx.MODEL_IDS.has(prompt.id)||group==='variable-mode')control='<span class="badge">联动管理</span>';
     else if(group)return '<article class="placed-choice" data-placement-id="'+ctx.escapeHtml(prompt.id)+'">'+ctx.choiceButton('group',prompt.id,title,prompt.enabled,false,group)+edit+(description?'<small class="entry-description">'+ctx.escapeHtml(description)+'</small>':'')+'</article>';
@@ -282,15 +298,52 @@ export function createPlacement(ctx) {
       // Presentation order does not move the variable writers behind their reader.
       return `<section class="placement-section" data-placement-block="${ctx.escapeHtml(block.id)}"><div class="card-title"><h4>${ctx.escapeHtml(block.label)}</h4>${add}</div><div class="expression-master">${renderPlacedPrompt(expressionMaster)}</div>${children.length?`<fieldset class="expression-options" aria-describedby="expression-help" ${disabled?'disabled':''}><legend>可选细则</legend><p id="expression-help">${disabled?'表达约束已关闭，以下选择保留但不生效。':'以下细则随表达约束一同生效。'}</p><div class="placement-list">${children.map(p=>renderPlacedPrompt(p,{disabled})).join('')}</div></fieldset>`:''}</section>`;
     }
-    return `<section class="placement-section" data-placement-block="${ctx.escapeHtml(block.id)}"><div class="card-title"><h4>${ctx.escapeHtml(block.label)}</h4>${add}</div>${dedicated}${prompts.length?`<div class="placement-list">${prompts.map(renderPlacedPrompt).join('')}</div>`:''}</section>`;
+    const nsfwClass = block.id === NSFW_GROUP ? ' nsfw-modes' : block.id === NSFW_EXTRA ? ' nsfw-options' : '';
+    const label = block.id === NSFW_EXTRA && ['成人可选描写','附加描写'].includes(block.label) ? 'NSFW可选' : block.label;
+    const help = block.id === NSFW_GROUP ? '选择一种模式，切换后自动保存。' : block.id === NSFW_EXTRA ? '各项独立开关，切换模式时保留选择。' : '';
+    return `<section class="placement-section${nsfwClass}" data-placement-block="${ctx.escapeHtml(block.id)}"><div class="card-title"><h4>${ctx.escapeHtml(label)}</h4>${add}</div>${help?`<p class="nsfw-section-help">${help}</p>`:''}${dedicated}${prompts.length?`<div class="placement-list">${prompts.map(renderPlacedPrompt).join('')}</div>`:''}</section>`;
+  }
+
+  function nsfwSelectionSummary(includeExtras) {
+    const selected = ctx.getGroupOptions(NSFW_GROUP).map(([id]) => ctx.getPrompt(ctx.state.preset, id)).filter(p => p.enabled);
+    const title = selected.length === 1
+      ? placementEntry(selected[0]).label || ctx.GROUPS[NSFW_GROUP].options.find(([id]) => id === selected[0].id)?.[1] || selected[0].name
+      : selected.length ? '已选多个模式，请重新选择' : '请选择模式';
+    if (!includeExtras) return title;
+    const extra = placementMembers(NSFW_EXTRA);
+    return `${title} · 附加描写 ${extra.filter(p => p.enabled).length}/${extra.length}`;
+  }
+
+  function refreshNsfwSummary() {
+    const mode = ctx.shadow?.querySelector(`[data-disclosure="${NSFW_GROUP}"]`);
+    const summary = mode?.querySelector('summary small');
+    if (summary) summary.textContent = nsfwSelectionSummary(!!mode.querySelector('.nsfw-options'));
+    const extraSummary = ctx.shadow?.querySelector(`[data-disclosure="${NSFW_EXTRA}"] summary small`);
+    if (extraSummary) {
+      const extra = placementMembers(NSFW_EXTRA);
+      extraSummary.textContent = `已开启 ${extra.filter(p => p.enabled).length}/${extra.length}`;
+    }
   }
 
   function renderPlacementPage(pageId) {
     const layout=authorLayout(),page=layout.pages.find(p=>p.id===pageId);
     if(!page)return '';
     let html=ctx.renderSectionHeader(page.label,ctx.state.editorUnlocked?'编辑模式已开启 · 可新增、修改和删除条目':'');
-    const blocks=layout.blocks.filter(b=>b.page===pageId&&b.id!=='entry-points').sort((a,b)=>a.order-b.order);
-    for(const block of blocks){const content=renderPlacementBlock(block);html+=['after-body','content-extra','adult-mode','entry-points','helpers'].includes(block.id)&&content?ctx.renderFold(block.id==='content-extra'?'content-options':block.id,block.label,'按需展开',content):content;}
+    const blocks=layout.blocks.filter(b=>b.page===pageId&&b.id!=='entry-points'&&!b.hidden).sort((a,b)=>a.order-b.order);
+    for(let index=0;index<blocks.length;index++){
+      const block=blocks[index];
+      let content=renderPlacementBlock(block);
+      if(block.id===NSFW_GROUP&&content){
+        const extra=blocks[index+1]&&normalizeBlockId(blocks[index+1].id)===NSFW_EXTRA?blocks[index+1]:null;
+        const extraContent=extra?renderPlacementBlock(extra):'';
+        if(extra){content+=extraContent;index++;}
+        const title=['成人模式','成人内容适配','NSFW模式'].includes(block.label)?'NSFW内容':block.label;
+        html+=ctx.renderFold(NSFW_GROUP,title,nsfwSelectionSummary(!!extraContent),`<div class="nsfw-content-panel">${content}</div>`);
+      }else if(normalizeBlockId(block.id)===NSFW_EXTRA&&content){
+        const extra=placementMembers(block.id);
+        html+=ctx.renderFold(block.id,block.label,`已开启 ${extra.filter(p=>p.enabled).length}/${extra.length}`,content);
+      }else html+=['after-body','content-extra','entry-points','helpers'].includes(block.id)&&content?ctx.renderFold(block.id==='content-extra'?'content-options':block.id,block.label,'按需展开',content):content;
+    }
     return html;
   }
 
@@ -362,6 +415,7 @@ export function createPlacement(ctx) {
     renderPlacedPrompt,
     renderPlacementBlock,
     renderPlacementPage,
+    refreshNsfwSummary,
     repairPlacementGroup,
     editEntryAction
   };
