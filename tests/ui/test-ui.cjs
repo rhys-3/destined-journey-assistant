@@ -84,6 +84,7 @@ console.log(JSON.stringify(result,null,2));fs.writeFileSync('.ui-review/test-res
 const worldResults=await evaluate(fs.readFileSync('tests/ui/worldbook-tests.txt','utf8'));console.log(JSON.stringify(worldResults,null,2));fs.writeFileSync('.ui-review/worldbook-test-results.json',JSON.stringify(worldResults,null,2));
 const editorResults=await evaluate(fs.readFileSync('tests/ui/editor-tests.txt','utf8'));console.log(JSON.stringify(editorResults,null,2));fs.writeFileSync('.ui-review/editor-test-results.json',JSON.stringify(editorResults,null,2));
 const sortResults=await require('./sort-tests.cjs')(cdp,evaluate);console.log(JSON.stringify(sortResults,null,2));fs.writeFileSync('.ui-review/sort-test-results.json',JSON.stringify(sortResults,null,2));
+const orbResults=await require('./orb-tests.cjs')(cdp,evaluate);console.log(JSON.stringify(orbResults,null,2));fs.writeFileSync('.ui-review/orb-test-results.json',JSON.stringify(orbResults,null,2));
 const configurationResults=await evaluate(fs.readFileSync('tests/ui/configuration-tests.txt','utf8'));console.log(JSON.stringify(configurationResults,null,2));fs.writeFileSync('.ui-review/configuration-test-results.json',JSON.stringify(configurationResults,null,2));
 const placementResults=await evaluate(fs.readFileSync('tests/ui/placement-tests.txt','utf8'));console.log(JSON.stringify(placementResults,null,2));fs.writeFileSync('.ui-review/placement-test-results.json',JSON.stringify(placementResults,null,2));
 console.log(await require('./placement-layout-tests.cjs')(cdp,evaluate));

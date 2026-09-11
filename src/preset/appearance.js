@@ -289,6 +289,23 @@ export function createAppearance(ctx) {
       saveOrbPosition(x, y);
       // 某些移动端在 pointerdown 被阻止后不会派发 click；轻触在这里直接打开。
       if (!moved && !cancelled) {
+        // 面板出现后，兼容 click 可能改为命中新出现的关闭按钮。
+        // 只吞掉本次手势的尾随点击；下一次按下立即恢复正常交互。
+        const parentDocument = parentWindow.document;
+        const clearOpeningClick = () => {
+          parentDocument.removeEventListener('click', swallowOpeningClick, true);
+          parentDocument.removeEventListener('pointerdown', clearOpeningClick, true);
+          parentWindow.clearTimeout(clickTimer);
+        };
+        const swallowOpeningClick = clickEvent => {
+          if (clickEvent.detail === 0) return;
+          clickEvent.preventDefault();
+          clickEvent.stopImmediatePropagation();
+          clearOpeningClick();
+        };
+        const clickTimer = parentWindow.setTimeout(clearOpeningClick, 700);
+        parentDocument.addEventListener('click', swallowOpeningClick, true);
+        parentDocument.addEventListener('pointerdown', clearOpeningClick, true);
         ctx.suppressOrbClick = true;
         openPanel();
         window.setTimeout(() => { ctx.suppressOrbClick = false; }, 0);
