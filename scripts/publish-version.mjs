@@ -15,7 +15,7 @@ if (git('tag', '--list', tag)) {
   const changelog = await readFile('CHANGELOG.md', 'utf8');
   if (!changelog.split(/\r?\n/).includes(`## ${pkg.version}`)) throw new Error('更新日志缺少待发布版本');
   const bundle = await readFile('dist/destined-journey-assistant.js', 'utf8');
-  if (!bundle.startsWith(`/* 命定预设助手 v${pkg.version} |`)) throw new Error('构建产物版本不一致');
+  if (!bundle.startsWith(`${JSON.stringify(`命定预设助手 v${pkg.version}`)};`)) throw new Error('构建产物版本不一致或仍包含已移除的顶部注释');
   git('tag', tag);
   git('push', 'origin', `refs/tags/${tag}`);
   if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, 'check_cdn=true\n');

@@ -61,7 +61,7 @@ test('tag publication includes the committed bundle and never moves an existing 
   await writeFile(join(root, '.gitignore'), 'remote.git/\n');
   await mkdir(join(root, 'dist'));
   const bundlePath = join(root, 'dist/destined-journey-assistant.js');
-  await writeFile(bundlePath, '/* 命定预设助手 v3.0.0 | MIT */\nconsole.log("verified");');
+  await writeFile(bundlePath, '"命定预设助手 v3.0.0";\nconsole.log("verified");');
   git('add', '.'); git('commit', '-m', 'verified bundle');
   const original = git('rev-parse', 'HEAD');
   const script = fileURLToPath(new URL('../scripts/publish-version.mjs', import.meta.url));
