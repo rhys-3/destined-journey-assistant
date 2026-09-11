@@ -209,6 +209,8 @@ export async function startPresetAssistant() {
     get renameConfiguration() { return renameConfiguration; },
     get render() { return render; },
     get renderActiveContent() { return renderActiveContent; },
+    get renderEntryResults() { return renderEntryResults; },
+    get isSearchComposing() { return isSearchComposing; },
     get renderConfigurationShortcut() { return renderConfigurationShortcut; },
     get renderConfigurationsTab() { return renderConfigurationsTab; },
     get renderCustomModelControls() { return renderCustomModelControls; },
@@ -418,6 +420,7 @@ export async function startPresetAssistant() {
     renderStyleEditor,
     renderEntryPointSettings,
     renderAdvancedTab,
+    renderEntryResults,
     toggleHtml,
     choiceButton,
     disabledAttribute
@@ -486,7 +489,7 @@ export async function startPresetAssistant() {
     handleOrbPointerDown,
     handlePanelPointerDown
   } = createAppearance(ctx);
-  const { handleClick, handleChange, handleInput, handleKeydown, createUi, subscribe, subscribeLast, cleanup } = createEvents(ctx);
+  const { isSearchComposing, handleClick, handleChange, handleInput, handleKeydown, createUi, subscribe, subscribeLast, cleanup } = createEvents(ctx);
   const {
     emptyLibrary,
     plainObject,

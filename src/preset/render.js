@@ -1,5 +1,5 @@
 import * as summary from '../summary/service.js';
-import { promptDescription } from './descriptions.js';
+import { promptDescription, descriptionSnapshot } from './descriptions.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createRender(ctx) {
@@ -45,7 +45,7 @@ export function createRender(ctx) {
   }
 
   function renderActiveContent(preserveScroll = false) {
-    if (preserveScroll && ctx.isSettingComposing()) return;
+    if (preserveScroll && (ctx.isSettingComposing() || ctx.isSearchComposing())) return;
     ctx.cancelPromptSort();
     if (!ctx.state.open || !ctx.shadow) return;
     const content = ctx.shadow.querySelector('.content');
@@ -319,20 +319,36 @@ export function createRender(ctx) {
   }
 
   function renderAdvancedTab() {
-    const query = ctx.state.search.trim().toLocaleLowerCase('zh-CN');
+    const normalize = value => String(value ?? '').normalize('NFKC').toLocaleLowerCase('zh-CN');
+    const terms = normalize(ctx.state.search).trim().split(/\s+/u).filter(Boolean);
     const sortable = ctx.canSortPrompts();
     const used = (ctx.state.preset.prompts ?? []).map((prompt, nativeIndex) => ({ prompt, nativeIndex }));
     const unused = (ctx.state.preset.prompts_unused ?? []).map(prompt => ({ prompt, nativeIndex: -1 }));
     const source = ctx.state.entryFilter === 'unused' ? unused : used;
-    const prompts = source.filter(({ prompt }) => !['enabled','disabled'].includes(ctx.state.entryFilter) || !!prompt.enabled === (ctx.state.entryFilter === 'enabled'))
-      .filter(({ prompt }) => !query || `${prompt.name} ${prompt.id} ${prompt.content ?? ''}`.toLocaleLowerCase('zh-CN').includes(query));
+    const filtered = source.filter(({ prompt }) => !['enabled','disabled'].includes(ctx.state.entryFilter) || !!prompt.enabled === (ctx.state.entryFilter === 'enabled'));
+    const prompts = filtered.filter(({ prompt }) => {
+      const fields = [prompt.name, prompt.id, prompt.content, ...Object.values(descriptionSnapshot(prompt))].map(normalize);
+      return terms.every(term => fields.some(field => field.includes(term)));
+    });
     return `${renderSectionHeader('预设条目', `按酒馆发送列表排列 · ${used.length} 项，未加入 ${unused.length} 项`)}
 
       <div class="entry-filters segmented wrap">${[['all','发送列表'],['enabled','已启用'],['disabled','已关闭'],['unused','未加入']].map(([value,label])=>choiceButton('entry-filter',value,label,ctx.state.entryFilter===value)).join('')}${ctx.state.editorUnlocked?'<button type="button" data-action="prompt-new">＋ 新建条目</button>':''}</div>
-      <label class="search"><span aria-hidden="true">⌕</span><input aria-label="搜索预设条目" type="search" data-action="search" value="${ctx.escapeHtml(ctx.state.search)}" placeholder="搜索名称或完整正文"></label>
-      <div class="sort-help"><span>${ctx.state.reorderSaving ? '正在同步顺序…' : !ctx.state.editorUnlocked ? '顶部开启编辑模式后可修改条目。' : sortable ? '拖动左侧手柄排序；手机按住手柄再移动，文字区域可正常滑动。' : '排序需显示完整发送列表，避免遗漏隐藏条目。'}</span>${ctx.state.editorUnlocked && !sortable && !ctx.state.reorderSaving ? '<button type="button" class="text-button" data-action="sort-show-all">显示完整列表</button>' : ''}</div><div class="sort-live sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
-      <div class="advanced-list">${prompts.map(({prompt,nativeIndex})=>`<article class="advanced-item prompt-sort-row" data-sort-id="${ctx.escapeHtml(prompt.id)}">${ctx.state.editorUnlocked && nativeIndex >= 0 ? `<button type="button" class="sort-handle" data-action="sort-grip" data-id="${ctx.escapeHtml(prompt.id)}" aria-label="拖动排序：${ctx.escapeHtml(prompt.name)}" title="拖动排序；键盘可用 Alt + ↑ / ↓" ${sortable?'':'disabled'}><span aria-hidden="true">⠿</span></button>` : ''}<button type="button" class="prompt-row" data-action="prompt-open" data-id="${ctx.escapeHtml(prompt.id)}"><span class="prompt-index">${nativeIndex<0?'—':String(nativeIndex+1).padStart(2,'0')}</span><span class="entry-state ${nativeIndex>=0&&prompt.enabled?'on':'off'}"></span><span class="entry-title"><strong>${ctx.escapeHtml(prompt.name)}</strong><small>${nativeIndex<0?'未加入':prompt.enabled?'已启用':'已关闭'} · ${ctx.escapeHtml(prompt.role??'system')}${prompt.position?.type==='in_chat'?` · 深度 ${ctx.escapeHtml(prompt.position.depth)}`:''}</small></span>${ctx.PROTECTED_IDS.has(prompt.id)?'<span class="badge">必需</span>':''}<span class="row-arrow" aria-hidden="true">↗</span></button></article>`).join('')||'<div class="empty">没有匹配的条目。</div>'}</div>`;
+      <label class="search"><span aria-hidden="true">⌕</span><input aria-label="搜索预设条目" type="search" data-action="search" value="${ctx.escapeHtml(ctx.state.search)}" placeholder="搜索名称、正文、简介或 ID；空格分隔多个关键词"></label>
+      <div data-entry-results><p class="search-results-count" role="status" aria-live="polite">找到 ${prompts.length} 项 · 当前范围 ${filtered.length} 项</p><div class="sort-help"><span>${ctx.state.reorderSaving ? '正在同步顺序…' : !ctx.state.editorUnlocked ? '顶部开启编辑模式后可修改条目。' : sortable ? '拖动左侧手柄排序；手机按住手柄再移动，文字区域可正常滑动。' : '排序需显示完整发送列表，避免遗漏隐藏条目。'}</span>${ctx.state.editorUnlocked && !sortable && !ctx.state.reorderSaving ? '<button type="button" class="text-button" data-action="sort-show-all">显示完整列表</button>' : ''}</div><div class="sort-live sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+      <div class="advanced-list">${prompts.map(({prompt,nativeIndex})=>`<article class="advanced-item prompt-sort-row" data-sort-id="${ctx.escapeHtml(prompt.id)}">${ctx.state.editorUnlocked && nativeIndex >= 0 ? `<button type="button" class="sort-handle" data-action="sort-grip" data-id="${ctx.escapeHtml(prompt.id)}" aria-label="拖动排序：${ctx.escapeHtml(prompt.name)}" title="拖动排序；键盘可用 Alt + ↑ / ↓" ${sortable?'':'disabled'}><span aria-hidden="true">⠿</span></button>` : ''}<button type="button" class="prompt-row" data-action="prompt-open" data-id="${ctx.escapeHtml(prompt.id)}"><span class="prompt-index">${nativeIndex<0?'—':String(nativeIndex+1).padStart(2,'0')}</span><span class="entry-state ${nativeIndex>=0&&prompt.enabled?'on':'off'}"></span><span class="entry-title"><strong>${ctx.escapeHtml(prompt.name)}</strong><small>${nativeIndex<0?'未加入':prompt.enabled?'已启用':'已关闭'} · ${ctx.escapeHtml(prompt.role??'system')}${prompt.position?.type==='in_chat'?` · 深度 ${ctx.escapeHtml(prompt.position.depth)}`:''}</small></span>${ctx.PROTECTED_IDS.has(prompt.id)?'<span class="badge">必需</span>':''}<span class="row-arrow" aria-hidden="true">↗</span></button></article>`).join('')||'<div class="empty">没有匹配的条目，请尝试减少关键词或切换筛选范围。</div>'}</div></div>`;
 
+  }
+
+  // Keep the input node and its native IME/selection state while updating results.
+  function renderEntryResults() {
+    if (ctx.state.activeTab !== 'advanced' || !ctx.state.preset) return;
+    const results = ctx.shadow?.querySelector('[data-entry-results]');
+    if (!results) return;
+    ctx.cancelPromptSort();
+    const template = results.ownerDocument.createElement('template');
+    template.innerHTML = renderAdvancedTab();
+    results.replaceChildren(...template.content.querySelector('[data-entry-results]').childNodes);
+    ctx.updateWorkspaceUi();
   }
 
   function toggleHtml(key, checked, disabled = false) {
@@ -368,6 +384,7 @@ export function createRender(ctx) {
     renderStyleEditor,
     renderEntryPointSettings,
     renderAdvancedTab,
+    renderEntryResults,
     toggleHtml,
     choiceButton,
     disabledAttribute

@@ -2,6 +2,13 @@ import * as summary from '../summary/service.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createEvents(ctx) {
+  let searchCompositionTarget = null;
+  function isSearchComposing() { return !!searchCompositionTarget?.isConnected; }
+  function handleSearchComposition(event) {
+    if (event.target.dataset?.action !== 'search') return;
+    searchCompositionTarget = event.type === 'compositionstart' ? event.target : null;
+    if (!searchCompositionTarget) handleInput(event);
+  }
   function handleClick(event) {
     if(event.target.closest('.summary-slot, .dj-dialog-backdrop')) return;
     const target = event.target.closest('[data-action], .orb');
@@ -210,7 +217,8 @@ export function createEvents(ctx) {
     }
     if (action === 'search') {
       ctx.state.search = target.value;
-      return ctx.renderActiveContent(true);
+      if (event.isComposing || isSearchComposing()) return;
+      return ctx.renderEntryResults();
     }
     if (action === 'field-number') {
       const key = target.dataset.field;
@@ -262,6 +270,7 @@ export function createEvents(ctx) {
   }
 
   function handleKeydown(event) {
+    if (event.isComposing || isSearchComposing()) return;
     if(ctx.shadow?.querySelector('.dj-dialog-backdrop')) return;
     if (event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key) && event.target.closest('.sort-handle') && ctx.canSortPrompts()) {
       event.preventDefault();
@@ -319,6 +328,8 @@ export function createEvents(ctx) {
     ctx.app.addEventListener('click', handleClick);
     ctx.app.addEventListener('change', handleChange);
     ctx.app.addEventListener('input', handleInput);
+    ctx.app.addEventListener('compositionstart', handleSearchComposition);
+    ctx.app.addEventListener('compositionend', handleSearchComposition);
     ctx.app.addEventListener('compositionstart', ctx.handleSettingComposition);
     ctx.app.addEventListener('compositionend', ctx.handleSettingComposition);
     ctx.app.addEventListener('toggle', event => {
@@ -380,5 +391,5 @@ export function createEvents(ctx) {
     window.parent.visualViewport?.removeEventListener('scroll', ctx.handleViewportResize);
   }
 
-  return { handleClick, handleChange, handleInput, handleKeydown, createUi, subscribe, subscribeLast, cleanup };
+  return { isSearchComposing, handleClick, handleChange, handleInput, handleKeydown, createUi, subscribe, subscribeLast, cleanup };
 }

@@ -75,6 +75,41 @@ ui.state.config.connection_link.enabled=true;ui.state.profiles=[];ui.renderActiv
 click('[data-tab="advanced"]');const total=ui.shadow.querySelectorAll('.advanced-item').length;check('全部条目数量不丢失',total===data.prompts.length);
 click('[data-action="entry-filter"][data-value="enabled"]');check('已启用筛选',ui.shadow.querySelectorAll('.advanced-item').length===data.prompts.filter(p=>p.enabled).length);
 input=q('[data-action="search"]');input.value='不存在的测试项xyz';input.dispatchEvent(new Event('input',{bubbles:true}));check('搜索空结果',!!q('.empty'));input=q('[data-action="search"]');input.value='';input.dispatchEvent(new Event('input',{bubbles:true}));click('[data-action="entry-filter"][data-value="all"]');
+const searchFixture={data:structuredClone(data),stored:structuredClone(stored),filter:ui.state.entryFilter,search:ui.state.search,unlocked:ui.state.editorUnlocked};
+try{
+  const addSearchPrompt=(id,name,content,description,enabled=true)=>data.prompts.push({id,name,content,enabled,role:'system',position:{type:'relative'},extra:{destined_ui:{descriptions:{description}}}});
+  addSearchPrompt('search-name-needle','名称检索针','普通正文','普通简介');
+  addSearchPrompt('search-id-needle','普通名称','普通正文','普通简介');
+  addSearchPrompt('search-content-needle','普通名称','全文检索正文针','普通简介');
+  addSearchPrompt('search-description-needle','普通名称','普通正文','简介检索说明针');
+  addSearchPrompt('search-cross-fields','月光条目','海岸正文','普通简介');
+  addSearchPrompt('search-width-needle','ＡＢＣ１２３ 名称','普通正文','普通简介');
+  addSearchPrompt('search-compose-needle','普通名称','中文组合命中','普通简介');
+  addSearchPrompt('search-disabled-needle','关闭筛选针','普通正文','普通简介',false);
+  stored=structuredClone(data);ui.reconcilePreset('search test fixtures');ui.state.entryFilter='all';ui.state.search='';ui.state.editorUnlocked=true;ui.renderActiveContent();
+  const resultIds=()=>[...q('[data-entry-results]').querySelectorAll('[data-action="prompt-open"]')].map(item=>item.dataset.id);
+  const enterSearch=(value,event={})=>{const field=q('[data-action="search"]');field.focus();field.value=value;field.dispatchEvent(new InputEvent('input',{bubbles:true,...event}));return field;};
+  check('搜索结果提供稳定容器和计数',!!q('[data-entry-results]')&&!!q('.search-results-count'));
+  let searchInput=enterSearch('名称检索针');check('名称搜索命中',resultIds().length===1&&resultIds()[0]==='search-name-needle');
+  check('搜索输入不重建且保留焦点',q('[data-action="search"]')===searchInput&&ui.shadow.activeElement===searchInput);
+  enterSearch('search-id-needle');check('ID 搜索命中',resultIds().length===1&&resultIds()[0]==='search-id-needle');
+  enterSearch('全文检索正文针');check('完整正文搜索命中',resultIds().length===1&&resultIds()[0]==='search-content-needle');
+  enterSearch('简介检索说明针');check('简介搜索命中',resultIds().length===1&&resultIds()[0]==='search-description-needle');
+  enterSearch('月光 海岸');check('空白分词按 AND 跨字段命中',resultIds().length===1&&resultIds()[0]==='search-cross-fields');
+  enterSearch('abc123');check('NFKC 与大小写归一',resultIds().length===1&&resultIds()[0]==='search-width-needle');
+  enterSearch(' \u3000 ');check('纯空白视为无搜索并恢复完整列表',resultIds().length===data.prompts.length&&[...q('[data-entry-results]').querySelectorAll('.sort-handle')].every(handle=>!handle.disabled));
+  enterSearch('不存在搜索针');check('搜索空结果显示零计数',!!q('.empty')&&/0/.test(q('.search-results-count').textContent));
+  const composingInput=enterSearch('名称检索针');const beforeCompositionIds=resultIds().join(',');composingInput.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));composingInput.value='中文组合命中';composingInput.dispatchEvent(new InputEvent('input',{bubbles:true,isComposing:true}));
+  ui.renderActiveContent(true);
+  check('组合输入中暂缓刷新并保留输入节点',q('[data-action="search"]')===composingInput&&ui.shadow.activeElement===composingInput&&resultIds().join(',')===beforeCompositionIds);
+  composingInput.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));check('组合结束后中文搜索刷新',resultIds().length===1&&resultIds()[0]==='search-compose-needle');
+  enterSearch('全文检索正文针');check('组合结束后普通输入继续刷新',resultIds().length===1&&resultIds()[0]==='search-content-needle');
+  ui.state.entryFilter='disabled';ui.renderActiveContent();enterSearch('筛选针');check('搜索保留当前筛选条件',ui.state.entryFilter==='disabled'&&resultIds().length===1&&resultIds()[0]==='search-disabled-needle');
+  ui.state.entryFilter='all';ui.renderActiveContent();enterSearch('普通名称');const expectedOrder=data.prompts.filter(prompt=>prompt.name==='普通名称').map(prompt=>prompt.id);check('搜索保持原有发送列表顺序',JSON.stringify(resultIds())===JSON.stringify(expectedOrder));
+  check('搜索时保持排序保护',[...q('[data-entry-results]').querySelectorAll('.sort-handle')].every(handle=>handle.disabled)&&!!q('[data-action="sort-show-all"]'));
+}finally{
+  data=searchFixture.data;stored=searchFixture.stored;ui.state.entryFilter=searchFixture.filter;ui.state.search=searchFixture.search;ui.state.editorUnlocked=searchFixture.unlocked;ui.reconcilePreset('search test fixtures restored');ui.renderActiveContent();
+}
 check('核心保护开关不暴露',[...ui.PROTECTED_IDS].every(id=>!q('[data-key="prompt:'+id+'"]')));
 const before=structuredClone(stored);window.failWrite='in_use';ui.applyGroup('plot-pace',ui.GROUPS['plot-pace'].options[1][0]);await ui.settle();check('保存失败回滚持久预设',JSON.stringify(stored)===JSON.stringify(before)&&ui.state.saveState==='error');
 check('所有开关可访问名称完整',[...ui.shadow.querySelectorAll('input[type="checkbox"]')].every(e=>e.getAttribute('aria-label')));
