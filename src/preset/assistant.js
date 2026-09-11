@@ -571,6 +571,7 @@ export async function startPresetAssistant() {
     saveMessage: '修改后自动保存，下次生成时使用',
     saveState: 'idle',
     search: '',
+    searchFields: ['name'],
     styleEditor: null,
     promptEditor: null,
     editorUnlocked: false,

@@ -1,4 +1,5 @@
 import * as summary from '../summary/service.js';
+import { SEARCH_FIELDS, searchFields, searchPlaceholder } from './search.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createEvents(ctx) {
@@ -80,6 +81,23 @@ export function createEvents(ctx) {
         anchor.setAttribute('tabindex', '-1');
         anchor.focus({ preventScroll: true });
       }
+      return;
+    }
+    if (action === 'search-field') {
+      const key = target.dataset.value;
+      if (!SEARCH_FIELDS.some(([field]) => field === key)) return;
+      const selected = searchFields(ctx.state);
+      if (selected.includes(key) && selected.length === 1) return;
+      ctx.state.searchFields = selected.includes(key) ? selected.filter(field => field !== key) : [...selected, key];
+      for (const button of ctx.shadow.querySelectorAll('[data-action="search-field"]')) {
+        const active = ctx.state.searchFields.includes(button.dataset.value);
+        button.classList.toggle('selected', active);
+        button.setAttribute('aria-pressed', String(active));
+        button.disabled = active && ctx.state.searchFields.length === 1;
+      }
+      const input = ctx.shadow.querySelector('[data-action="search"]');
+      if (input) input.placeholder = searchPlaceholder(ctx.state);
+      if (!isSearchComposing()) ctx.renderEntryResults();
       return;
     }
     if (action === 'entry-filter') {

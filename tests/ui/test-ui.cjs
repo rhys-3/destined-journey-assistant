@@ -75,7 +75,7 @@ ui.state.config.connection_link.enabled=true;ui.state.profiles=[];ui.renderActiv
 click('[data-tab="advanced"]');const total=ui.shadow.querySelectorAll('.advanced-item').length;check('全部条目数量不丢失',total===data.prompts.length);
 click('[data-action="entry-filter"][data-value="enabled"]');check('已启用筛选',ui.shadow.querySelectorAll('.advanced-item').length===data.prompts.filter(p=>p.enabled).length);
 input=q('[data-action="search"]');input.value='不存在的测试项xyz';input.dispatchEvent(new Event('input',{bubbles:true}));check('搜索空结果',!!q('.empty'));input=q('[data-action="search"]');input.value='';input.dispatchEvent(new Event('input',{bubbles:true}));click('[data-action="entry-filter"][data-value="all"]');
-const searchFixture={data:structuredClone(data),stored:structuredClone(stored),filter:ui.state.entryFilter,search:ui.state.search,unlocked:ui.state.editorUnlocked};
+const searchFixture={data:structuredClone(data),stored:structuredClone(stored),filter:ui.state.entryFilter,search:ui.state.search,searchFields:structuredClone(ui.state.searchFields),unlocked:ui.state.editorUnlocked};
 try{
   const addSearchPrompt=(id,name,content,description,enabled=true)=>data.prompts.push({id,name,content,enabled,role:'system',position:{type:'relative'},extra:{destined_ui:{descriptions:{description}}}});
   addSearchPrompt('search-name-needle','名称检索针','普通正文','普通简介');
@@ -86,17 +86,30 @@ try{
   addSearchPrompt('search-width-needle','ＡＢＣ１２３ 名称','普通正文','普通简介');
   addSearchPrompt('search-compose-needle','普通名称','中文组合命中','普通简介');
   addSearchPrompt('search-disabled-needle','关闭筛选针','普通正文','普通简介',false);
-  stored=structuredClone(data);ui.reconcilePreset('search test fixtures');ui.state.entryFilter='all';ui.state.search='';ui.state.editorUnlocked=true;ui.renderActiveContent();
+  stored=structuredClone(data);ui.reconcilePreset('search test fixtures');ui.state.entryFilter='all';ui.state.search='';ui.state.searchFields=['name'];ui.state.editorUnlocked=true;ui.renderActiveContent();
   const resultIds=()=>[...q('[data-entry-results]').querySelectorAll('[data-action="prompt-open"]')].map(item=>item.dataset.id);
   const enterSearch=(value,event={})=>{const field=q('[data-action="search"]');field.focus();field.value=value;field.dispatchEvent(new InputEvent('input',{bubbles:true,...event}));return field;};
+  const searchField=value=>q('[data-action="search-field"][data-value="'+value+'"]');
+  const selectedSearchFields=()=>['name','content','description','id'].filter(value=>searchField(value).getAttribute('aria-pressed')==='true');
   check('搜索结果提供稳定容器和计数',!!q('[data-entry-results]')&&!!q('.search-results-count'));
+  check('搜索字段默认仅名称',JSON.stringify(ui.state.searchFields)===JSON.stringify(['name'])&&JSON.stringify(selectedSearchFields())===JSON.stringify(['name'])&&['content','description','id'].every(value=>searchField(value).getAttribute('aria-pressed')==='false'&&!searchField(value).classList.contains('selected'))&&searchField('name').classList.contains('selected'));
   let searchInput=enterSearch('名称检索针');check('名称搜索命中',resultIds().length===1&&resultIds()[0]==='search-name-needle');
   check('搜索输入不重建且保留焦点',q('[data-action="search"]')===searchInput&&ui.shadow.activeElement===searchInput);
-  enterSearch('search-id-needle');check('ID 搜索命中',resultIds().length===1&&resultIds()[0]==='search-id-needle');
-  enterSearch('全文检索正文针');check('完整正文搜索命中',resultIds().length===1&&resultIds()[0]==='search-content-needle');
-  enterSearch('简介检索说明针');check('简介搜索命中',resultIds().length===1&&resultIds()[0]==='search-description-needle');
-  enterSearch('月光 海岸');check('空白分词按 AND 跨字段命中',resultIds().length===1&&resultIds()[0]==='search-cross-fields');
-  enterSearch('abc123');check('NFKC 与大小写归一',resultIds().length===1&&resultIds()[0]==='search-width-needle');
+  enterSearch('search-id-needle');check('默认名称搜索排除 ID',resultIds().length===0);
+  enterSearch('全文检索正文针');check('默认名称搜索排除正文',resultIds().length===0);
+  enterSearch('简介检索说明针');check('默认名称搜索排除简介',resultIds().length===0);
+  const stableSearchInput=q('[data-action="search"]');const contentButton=searchField('content');contentButton.focus();contentButton.click();
+  check('点击字段立即重筛选并保留输入和按钮焦点',q('[data-action="search"]')===stableSearchInput&&stableSearchInput.value==='简介检索说明针'&&ui.shadow.activeElement===contentButton&&resultIds().length===0&&contentButton.getAttribute('aria-pressed')==='true'&&contentButton.classList.contains('selected'));
+  searchField('name').click();enterSearch('全文检索正文针');check('单独正文搜索命中',JSON.stringify(selectedSearchFields())===JSON.stringify(['content'])&&resultIds().length===1&&resultIds()[0]==='search-content-needle');
+  searchField('description').click();searchField('content').click();enterSearch('简介检索说明针');check('单独简介搜索命中',JSON.stringify(selectedSearchFields())===JSON.stringify(['description'])&&resultIds().length===1&&resultIds()[0]==='search-description-needle');
+  searchField('id').click();searchField('description').click();enterSearch('search-id-needle');check('单独 ID 搜索命中',JSON.stringify(selectedSearchFields())===JSON.stringify(['id'])&&resultIds().length===1&&resultIds()[0]==='search-id-needle');
+  searchField('name').click();searchField('content').click();searchField('id').click();enterSearch('月光 海岸');check('多字段 OR 与分词 AND 跨字段命中',JSON.stringify(selectedSearchFields())===JSON.stringify(['name','content'])&&resultIds().length===1&&resultIds()[0]==='search-cross-fields');
+  searchField('content').click();enterSearch('abc123');check('NFKC 与大小写归一',resultIds().length===1&&resultIds()[0]==='search-width-needle');
+  check('最后一个搜索字段不可取消',selectedSearchFields().length===1&&searchField('name').disabled);
+  searchField('name').click();check('禁用的最后字段不改变选择',JSON.stringify(selectedSearchFields())===JSON.stringify(['name'])&&searchField('name').disabled);
+  searchField('content').click();check('字段选择在切换标签后保留',JSON.stringify(ui.state.searchFields)===JSON.stringify(['name','content']));click('[data-tab="daily"]');click('[data-tab="advanced"]');check('字段选择在标签切换后保留',JSON.stringify(selectedSearchFields())===JSON.stringify(['name','content']));
+  ui.closePanel();ui.openPanel();check('字段选择在重开面板后保留',JSON.stringify(ui.state.searchFields)===JSON.stringify(['name','content']));ui.state.editorUnlocked=true;ui.renderActiveContent();
+  searchField('name').click();
   enterSearch(' \u3000 ');check('纯空白视为无搜索并恢复完整列表',resultIds().length===data.prompts.length&&[...q('[data-entry-results]').querySelectorAll('.sort-handle')].every(handle=>!handle.disabled));
   enterSearch('不存在搜索针');check('搜索空结果显示零计数',!!q('.empty')&&/0/.test(q('.search-results-count').textContent));
   const composingInput=enterSearch('名称检索针');const beforeCompositionIds=resultIds().join(',');composingInput.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));composingInput.value='中文组合命中';composingInput.dispatchEvent(new InputEvent('input',{bubbles:true,isComposing:true}));
@@ -104,11 +117,11 @@ try{
   check('组合输入中暂缓刷新并保留输入节点',q('[data-action="search"]')===composingInput&&ui.shadow.activeElement===composingInput&&resultIds().join(',')===beforeCompositionIds);
   composingInput.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));check('组合结束后中文搜索刷新',resultIds().length===1&&resultIds()[0]==='search-compose-needle');
   enterSearch('全文检索正文针');check('组合结束后普通输入继续刷新',resultIds().length===1&&resultIds()[0]==='search-content-needle');
-  ui.state.entryFilter='disabled';ui.renderActiveContent();enterSearch('筛选针');check('搜索保留当前筛选条件',ui.state.entryFilter==='disabled'&&resultIds().length===1&&resultIds()[0]==='search-disabled-needle');
-  ui.state.entryFilter='all';ui.renderActiveContent();enterSearch('普通名称');const expectedOrder=data.prompts.filter(prompt=>prompt.name==='普通名称').map(prompt=>prompt.id);check('搜索保持原有发送列表顺序',JSON.stringify(resultIds())===JSON.stringify(expectedOrder));
+  searchField('name').click();ui.state.entryFilter='disabled';ui.renderActiveContent();enterSearch('筛选针');check('搜索与状态筛选组合',ui.state.entryFilter==='disabled'&&resultIds().length===1&&resultIds()[0]==='search-disabled-needle');
+  ui.state.entryFilter='all';ui.renderActiveContent();searchField('content').click();enterSearch('普通名称');const expectedOrder=data.prompts.filter(prompt=>prompt.name==='普通名称').map(prompt=>prompt.id);check('搜索保持原有发送列表顺序',JSON.stringify(resultIds())===JSON.stringify(expectedOrder));
   check('搜索时保持排序保护',[...q('[data-entry-results]').querySelectorAll('.sort-handle')].every(handle=>handle.disabled)&&!!q('[data-action="sort-show-all"]'));
 }finally{
-  data=searchFixture.data;stored=searchFixture.stored;ui.state.entryFilter=searchFixture.filter;ui.state.search=searchFixture.search;ui.state.editorUnlocked=searchFixture.unlocked;ui.reconcilePreset('search test fixtures restored');ui.renderActiveContent();
+  data=searchFixture.data;stored=searchFixture.stored;ui.state.entryFilter=searchFixture.filter;ui.state.search=searchFixture.search;ui.state.searchFields=searchFixture.searchFields;ui.state.editorUnlocked=searchFixture.unlocked;ui.reconcilePreset('search test fixtures restored');ui.renderActiveContent();
 }
 check('核心保护开关不暴露',[...ui.PROTECTED_IDS].every(id=>!q('[data-key="prompt:'+id+'"]')));
 const before=structuredClone(stored);window.failWrite='in_use';ui.applyGroup('plot-pace',ui.GROUPS['plot-pace'].options[1][0]);await ui.settle();check('保存失败回滚持久预设',JSON.stringify(stored)===JSON.stringify(before)&&ui.state.saveState==='error');
@@ -127,6 +140,7 @@ const descriptionResults=await evaluate(fs.readFileSync('tests/ui/description-te
 console.log(await require('./description-layout-tests.cjs')(cdp,evaluate));
 const controlResults=await evaluate(fs.readFileSync('tests/ui/new-entry-control-tests.txt','utf8'));console.log(controlResults);fs.writeFileSync('.ui-review/new-entry-control-results.json',JSON.stringify(controlResults,null,2));
 console.log(await require('./new-entry-control-layout.cjs')(cdp,evaluate));
+console.log(await require('./search-fields-layout.cjs')(cdp,evaluate));
 const syncResults=await evaluate(fs.readFileSync('tests/ui/entry-sync-tests.txt','utf8'));console.log(syncResults);fs.writeFileSync('.ui-review/entry-sync-results.json',JSON.stringify(syncResults,null,2));
 console.log(await require('./nsfw-tests.cjs')(cdp,evaluate));
 for(const [name,width,height,tab] of [['desktop',1280,960,'daily'],['desktop-style',1280,960,'style'],['mobile',390,844,'daily'],['mobile-tools',390,844,'tools'],['desktop-configurations',1280,960,'configurations'],['mobile-configurations',320,640,'configurations'],['small-mobile',320,640,'style'],['desktop-entries',1280,960,'advanced'],['mobile-entries',390,844,'advanced'],['desktop-editor',1280,960,'editor'],['mobile-editor',390,844,'editor'],['small-editor',320,640,'editor']]){
