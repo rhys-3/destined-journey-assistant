@@ -11,8 +11,9 @@
   window.getCharWorldbookNames = () => ({ primary: bound[0] ?? null, additional: bound.slice(1) });
   window.getGlobalWorldbookNames = () => [];
   window.getChatWorldbookName = () => null;
-  const names = ['output_format (随AI输出开，主API)', '[mvu_update]output_format_(使用额外模型更新变量开)', '[mvu_update]用户最新输入(使用额外模型更新变量开)'];
-  const fixture = (main, extra, input) => [...[main, extra, input].map((enabled, i) => ({ uid: i + 1, name: names[i], enabled, content: '正文不得改动' + i, strategy: { type: 'constant' }, extra: { keep: true } })), { uid: 99, name: '世界书事件链', enabled: false, content: '不应自动处理' }];
+  const legacyNames = ['output_format (随AI输出开，主API)', '[mvu_update]output_format_(使用额外模型更新变量开)', '[mvu_update]用户最新输入(使用额外模型更新变量开)'];
+  const renamedNames = ['[本体][变量]output_format_(随AI输出开，主API)', '[本体][变量][mvu_update]output_format_(使用额外模型更新变量开)', '[本体][变量][mvu_update]用户最新输入(使用额外模型更新变量开)'];
+  const fixture = (main, extra, input, entryNames = legacyNames) => [...[main, extra, input].map((enabled, i) => ({ uid: i + 1, name: entryNames[i], enabled, content: '正文不得改动' + i, strategy: { type: 'constant' }, extra: { keep: true } })), { uid: 99, name: '世界书事件链', enabled: false, content: '不应自动处理' }];
   const reset = (main, extra, input) => { bound = ['命定之诗']; books = { 命定之诗: fixture(main, extra, input) }; };
   const localMode = mode => {
     const ids = ui.GROUPS['variable-mode'].options.map(([id]) => id);
@@ -24,6 +25,20 @@
   reset(true, false, false); localMode('extra'); await ui.scanWorldbookMode();
   check('世界书主 API 自动匹配预设', ui.variablePresetMode() === 'main');
   check('自动识别只改预设，不改世界书', writeCount === 0);
+  reset(true, false, false); books['命定之诗'] = fixture(true, false, false, renamedNames); localMode('extra'); await ui.scanWorldbookMode();
+  check('新版变量名称自动匹配主 API', ui.variablePresetMode() === 'main');
+  reset(false, true, true); books['命定之诗'][0].name = renamedNames[0]; books['命定之诗'][2].name = renamedNames[2]; localMode('main'); await ui.scanWorldbookMode();
+  check('新旧混合变量名称自动匹配额外 API', ui.variablePresetMode() === 'extra');
+  const mixedUntouched = JSON.stringify(books['命定之诗'].map(({ enabled, ...entry }) => entry));
+  await ui.selectVariableMode('main');
+  check('混合名称可手动切回主 API 且保留 UID 和正文', JSON.stringify(books['命定之诗'].slice(0, 3).map(e => e.enabled)) === '[true,false,false]' && JSON.stringify(books['命定之诗'].map(({ enabled, ...entry }) => entry)) === mixedUntouched);
+  await ui.selectVariableMode('extra');
+  check('混合名称可手动切回额外 API', JSON.stringify(books['命定之诗'].slice(0, 3).map(e => e.enabled)) === '[false,true,true]');
+  reset(true, false, false); books['命定之诗'].push(
+    { uid: 101, name: '[本体]变量' + legacyNames[0], enabled: true, content: '无关前缀不得识别' },
+    { uid: 102, name: renamedNames[0] + '扩展', enabled: true, content: '无关后缀不得识别' },
+  ); localMode('extra'); await ui.scanWorldbookMode();
+  check('无关前缀和后缀不被识别为变量条目', ui.variablePresetMode() === 'main' && ui.worldLink.books[0].roles.main.length === 1 && !ui.worldLink.books[0].duplicate.length);
   reset(false, true, true); localMode('main'); await ui.scanWorldbookMode();
   check('世界书额外 API 自动匹配预设', ui.variablePresetMode() === 'extra');
   const untouched = JSON.stringify(books['命定之诗'].map(({ enabled, ...entry }) => entry));
@@ -47,17 +62,17 @@
   reset(true, false, false); books['命定之诗'].splice(2, 1); localMode('main'); await ui.scanWorldbookMode();
   check('缺少条目不猜测自动模式', ui.variablePresetMode() === 'main' && ui.worldLink.phase === 'warning');
   await ui.selectVariableMode('extra'); check('缺条目仍切换已存在项而不捏造条目', books['命定之诗'].length === 3 && books['命定之诗'][1].enabled && ui.worldLink.books[0].missing.includes('input'));
-  reset(true, false, false); books['命定之诗'].push({ ...books['命定之诗'][0], uid: 20 }); const oldWrites = writeCount; await ui.selectVariableMode('extra');
-  check('重复名称停止世界书写入', writeCount === oldWrites && ui.worldLink.books[0].duplicate.includes('main'));
+  reset(true, false, false); books['命定之诗'].push({ ...books['命定之诗'][0], uid: 20, name: renamedNames[0] }); const oldWrites = writeCount; await ui.selectVariableMode('extra');
+  check('同角色新旧名称并存时停止世界书写入', writeCount === oldWrites && ui.worldLink.books[0].duplicate.includes('main'));
   bound = []; await ui.selectVariableMode('main');
   check('未绑定世界书仍可保存预设', ui.variablePresetMode() === 'main' && ui.worldLink.message.includes('尚未联动'));
   reset(true, false, false); window.readFailure = '命定之诗'; await ui.selectVariableMode('extra');
   check('读取失败不会阻止预设模式保存', ui.variablePresetMode() === 'extra' && ui.worldLink.issues.some(s => s.includes('模拟读取失败'))); window.readFailure = null;
   reset(true, false, false); window.writeFailure = '命定之诗'; await ui.selectVariableMode('extra');
   check('保存失败明确报告部分未完成', ui.variablePresetMode() === 'extra' && books['命定之诗'][0].enabled && ui.worldLink.issues.some(s => s.includes('模拟保存失败'))); window.writeFailure = null;
-  reset(true, false, false); bound.push('另一绑定世界书'); books['另一绑定世界书'] = fixture(false, true, true); localMode('extra'); await ui.scanWorldbookMode();
-  check('多本世界书冲突不自动跟随', ui.variablePresetMode() === 'extra' && ui.worldLink.phase === 'warning');
-  await ui.selectVariableMode('main'); check('手动模式统一所有已绑定相关世界书', Object.values(books).every(book => book[0].enabled && !book[1].enabled && !book[2].enabled));
+  reset(true, false, false); bound.push('另一绑定世界书'); books['另一绑定世界书'] = fixture(false, true, true, renamedNames); localMode('extra'); await ui.scanWorldbookMode();
+  check('多本新旧世界书冲突不自动跟随', ui.variablePresetMode() === 'extra' && ui.worldLink.phase === 'warning');
+  await ui.selectVariableMode('main'); check('手动模式统一所有新旧绑定世界书', Object.values(books).every(book => book[0].enabled && !book[1].enabled && !book[2].enabled));
   const counts = {};
   for (const tab of ['daily', 'style', 'tools']) { ui.state.activeTab = tab; ui.render(); for (const input of ui.shadow.querySelectorAll('input[data-key^="prompt:"]')) counts[input.dataset.key] = (counts[input.dataset.key] || 0) + 1; }
   check('三个主页面无重复提示词开关', Object.values(counts).every(n => n === 1));
@@ -94,6 +109,9 @@
   reset(true, false, false); window.writeGate = new Promise(r => { releaseWrite = r; }); const conflictingEdit = ui.selectVariableMode('extra'); await pause(30);
   books['命定之诗'][0].enabled = false; window.writeGate = null; releaseWrite(); await conflictingEdit;
   check('读取后条目开关被外部修改时拒绝覆盖', !books['命定之诗'][1].enabled && ui.worldLink.issues.some(s => s.includes('其他操作修改')));
+  reset(true, false, false); books['命定之诗'] = fixture(true, false, false, renamedNames); window.writeGate = new Promise(r => { releaseWrite = r; }); const renamedDuringWrite = ui.selectVariableMode('extra'); await pause(30);
+  books['命定之诗'][0].name = '[本体][变量]已被其他操作改名'; window.writeGate = null; releaseWrite(); await renamedDuringWrite;
+  check('异步读取后条目改名时不覆盖新版条目', books['命定之诗'][0].name.includes('已被其他操作改名') && books['命定之诗'][0].enabled && !books['命定之诗'][1].enabled && ui.worldLink.issues.some(s => s.includes('其他操作修改')));
   reset(true, false, false); await ui.scanWorldbookMode(); ui.state.activeTab = 'daily'; ui.render();
   return results;
 })()

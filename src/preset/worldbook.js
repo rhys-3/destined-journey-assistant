@@ -5,7 +5,9 @@ export function createWorldbook(ctx) {
   }
 
   function variableEntryRole(entry) {
-    const key = worldEntryKey(entry.name);
+    // The renamed base worldbook adds this exact category prefix. Keep legacy
+    // names and semantic tags such as [mvu_update]; do not match arbitrary DLCs.
+    const key = worldEntryKey(entry.name).replace(/^\[本体\]\[变量\]/u, '');
     return Object.keys(ctx.VARIABLE_WORLD_ENTRIES).find(role => worldEntryKey(ctx.VARIABLE_WORLD_ENTRIES[role]) === key) ?? '';
   }
 
@@ -58,7 +60,7 @@ export function createWorldbook(ctx) {
     const duplicate = Object.keys(roles).filter(role => roles[role].length > 1);
     let mode = null;
     let issue = '';
-    if (duplicate.length) issue = '发现同名变量条目，未自动修改；请先清理重复条目';
+    if (duplicate.length) issue = '发现同用途变量条目重复（含新旧名称），未自动修改；请先清理重复条目';
     else if (missing.length) issue = `缺少：${missing.map(role => ctx.VARIABLE_WORLD_ENTRIES[role]).join('、')}`;
     else {
       const main = roles.main[0].enabled;
