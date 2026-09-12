@@ -12,14 +12,14 @@ import { deleteBoundSummaryBook, getManagedSummaryBookNames } from '../src/summa
 import { computeSummaryPlan, computeSummaryPlans, shouldAutoTrigger, executeSummary, finalizeMegaSummarySave, startSummaryProcess, startCustomRangeSummaryProcess, skipPendingTask } from '../src/summary/summary.js';
 import { callSummaryApi, callMegaSummaryApi } from '../src/summary/api.js';
 import { processMessagesByTags } from '../src/summary/messages.js';
-import { upsertSummaryEntryByName, upsertMegaSummaryEntry, restoreMegaSummaryToSummaries, applySummarizedFloorsVisibility, writeChatWorldbookBinding, migrateWorldbookEntries, getAllSummaryEntriesForDisplay } from '../src/summary/worldbook.js';
+import { upsertSummaryEntryByName, upsertMegaSummaryEntry, restoreMegaSummaryToSummaries, activateMegaSummaryEntry, applySummarizedFloorsVisibility, writeChatWorldbookBinding, migrateWorldbookEntries, getAllSummaryEntriesForDisplay } from '../src/summary/worldbook.js';
 import { migrate } from '../src/summary/service.js';
 import { reconcileChatBinding, getActiveWorldbookName } from '../src/summary/worldbook.js';
 import { extractSummaryResult } from '../src/summary/result.js';
 import { getTask, stopTask, detachTaskState, restoreTaskState, clearTaskLog, beginTask, updateTask, finishTask, selectTaskBatch } from '../src/summary/taskState.js';
 import { retryTask, autoTriggerSummary, computeMegaPlan, executeMegaSummary } from '../src/summary/summary.js';
 import { getCoverage, getAllSummaryContents, auditArchiveSources, bindWorldbookToChat, deleteSummaryEntry, setSummaryEntryEnabled } from '../src/summary/worldbook.js';
-import { readArchive, currentSources } from '../src/summary/provenance.js';
+import { ARCHIVE_VAR_KEY, fingerprint, readArchive, currentSources } from '../src/summary/provenance.js';
 import { expandMacros, compilePrompt } from '../src/summary/macros.js';
 import { buildRegeneratePromptParams, buildSummaryPromptParams } from '../src/summary/prompt.js';
 import { setFloorVisibilityAutomation, readVisibilityAutomation, VISIBILITY_AUTOMATION_KEY } from '../src/summary/visibility.js';
@@ -197,6 +197,112 @@ test('coverage finds middle gaps and mega mappings do not cover intervening hole
   books.book=[{name:'大总结0-29楼',content:'mega',enabled:true}];chat[CONFIG.MEGA_SUMMARY_VAR_KEY]={'大总结0-29楼':['总结0-9楼','总结20-29楼']};
   const {floors}=await getCoverage();assert(!floors.has(10));assert(floors.has(20));
   await assert.rejects(executeMegaSummary(['总结0-9楼','总结20-29楼'],'大总结0-29楼'),/连续/);
+});
+test('audit repairs a legacy mega without its map, preserves its closed state, and then permits normal activation',async()=>{
+  await saveSettings(FLOW_SETTINGS);seedFloors(20);
+  books.book=[
+    {name:'总结0-9楼',content:'甲',enabled:false},
+    {name:'总结10-19楼',content:'乙',enabled:false},
+    {name:'大总结0-19楼',content:'旧档案',enabled:false},
+  ];
+  chat[ARCHIVE_VAR_KEY]={book:{records:{'大总结0-19楼':{legacy:true,sources:[],invalid:'来源楼层、回复版本或原总结已变化',committed:true}},excluded:[],megaExcluded:[]}};
+  assert.deepEqual(await auditArchiveSources(),[]);
+  assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],{'大总结0-19楼':['总结0-9楼','总结10-19楼']});
+  const recovered=readArchive().records['大总结0-19楼'];assert.equal(recovered.invalid,null);assert.equal(recovered.sources.length,20);
+  assert.equal(books.book.find(entry=>entry.name==='大总结0-19楼').enabled,false);
+  await activateMegaSummaryEntry('大总结0-19楼');
+  assert(books.book.find(entry=>entry.name==='大总结0-19楼').enabled);assert(books.book.filter(entry=>entry.name.startsWith('总结')).every(entry=>!entry.enabled));
+});
+test('audit uses valid archived mega parents when the worldbook alone has multiple possible source partitions',async()=>{
+  await saveSettings(FLOW_SETTINGS);seedFloors(20);const sources=currentSources();
+  const names=['总结0-9楼','总结10-19楼','总结0-4楼','总结5-19楼'];
+  books.book=[...names.map((name,index)=>({name,content:'普通'+index,enabled:false})),{name:'大总结0-19楼',content:'旧档案',enabled:false}];
+  const byRange=(start,end)=>({legacy:true,committed:true,sources:sources.filter(source=>source.id>=start&&source.id<=end)});
+  chat[ARCHIVE_VAR_KEY]={book:{records:{
+    '总结0-9楼':byRange(0,9),'总结10-19楼':byRange(10,19),'总结0-4楼':byRange(0,4),'总结5-19楼':byRange(5,19),
+    '大总结0-19楼':{legacy:true,committed:true,sources:[],invalid:'旧审计误判',parents:['总结0-9楼','总结10-19楼'].map(name=>({name,fingerprint:fingerprint(books.book.find(entry=>entry.name===name).content)}))},
+  },excluded:[],megaExcluded:[]}};
+  assert.deepEqual(await auditArchiveSources(),[]);
+  assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],{'大总结0-19楼':['总结0-9楼','总结10-19楼']});assert.equal(readArchive().records['大总结0-19楼'].invalid,null);
+});
+test('audit refuses incomplete or ambiguous legacy mega sources instead of inventing a map',async()=>{
+  for(const ordinary of [
+    [['总结0-9楼','甲'],['总结20-29楼','乙']],
+    [['总结0-9楼','甲'],['总结10-19楼','乙'],['总结0-4楼','丙'],['总结5-19楼','丁']],
+  ]){
+    reset();await saveSettings(FLOW_SETTINGS);seedFloors(30);
+    const name=ordinary.length===2?'大总结0-29楼':'大总结0-19楼';
+    books.book=[...ordinary.map(([entryName,content])=>({name:entryName,content,enabled:false})),{name,content:'旧档案',enabled:true}];
+    chat[ARCHIVE_VAR_KEY]={book:{records:{[name]:{legacy:true,committed:true,sources:[],invalid:'旧审计误判'}},excluded:[],megaExcluded:[]}};
+    const invalid=await auditArchiveSources();
+    assert(invalid.includes(name));assert.equal(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],undefined);assert(readArchive().records[name].invalid);assert.equal(books.book.find(entry=>entry.name===name).enabled,false);
+  }
+});
+test('audit does not re-close a natively enabled recovered mega and retains a real source-change invalidation',async()=>{
+  await saveSettings(FLOW_SETTINGS);seedFloors(20);
+  books.book=[{name:'总结0-9楼',content:'甲',enabled:false},{name:'总结10-19楼',content:'乙',enabled:false},{name:'大总结0-19楼',content:'旧档案',enabled:true}];
+  chat[ARCHIVE_VAR_KEY]={book:{records:{'大总结0-19楼':{legacy:true,committed:true,sources:[],invalid:'旧审计误判'}},excluded:[],megaExcluded:[]}};
+  let worldbookWrites=0;const update=globalThis.updateWorldbookWith;globalThis.updateWorldbookWith=async(...args)=>{worldbookWrites++;return update(...args);};
+  await auditArchiveSources();assert.equal(books.book.find(entry=>entry.name==='大总结0-19楼').enabled,true);const stable=structuredClone(readArchive());
+  await auditArchiveSources();assert.equal(books.book.find(entry=>entry.name==='大总结0-19楼').enabled,true);assert.deepEqual(readArchive(),stable);assert.equal(worldbookWrites,0);
+  messages[3].message='<gametxt>真实改楼</gametxt>';const invalid=await auditArchiveSources();
+  assert(invalid.includes('大总结0-19楼'));assert.equal(books.book.find(entry=>entry.name==='大总结0-19楼').enabled,false);const invalidRecord=structuredClone(readArchive().records['大总结0-19楼']);
+  await auditArchiveSources();assert.deepEqual(readArchive().records['大总结0-19楼'],invalidRecord);
+});
+test('audit leaves a legacy archive unrecovered when persisting its repaired mega map fails',async()=>{
+  await saveSettings(FLOW_SETTINGS);seedFloors(20);const sources=currentSources();
+  books.book=[{name:'总结0-9楼',content:'甲',enabled:false},{name:'总结10-19楼',content:'乙',enabled:false},{name:'大总结0-19楼',content:'旧档案',enabled:false}];
+  chat[ARCHIVE_VAR_KEY]={book:{records:{
+    '总结0-9楼':{legacy:true,committed:true,sources:sources.filter(source=>source.id<=9)},
+    '总结10-19楼':{legacy:true,committed:true,sources:sources.filter(source=>source.id>=10)},
+    '大总结0-19楼':{legacy:true,committed:true,sources:[],invalid:'旧审计误判'},
+  },excluded:[],megaExcluded:[]}};
+  const before=structuredClone(chat[ARCHIVE_VAR_KEY]),replace=globalThis.replaceVariables;
+  globalThis.replaceVariables=(value,option)=>{if(option.type==='chat'&&Object.hasOwn(value,CONFIG.MEGA_SUMMARY_VAR_KEY))return;replace(value,option);};
+  await assert.rejects(auditArchiveSources(),/持久化校验失败/);
+  assert.equal(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],undefined);assert.deepEqual(chat[ARCHIVE_VAR_KEY],before);
+});
+test('audit never clears a legacy mega invalidation when an archived parent body changed',async()=>{
+  await saveSettings(FLOW_SETTINGS);seedFloors(20);const sources=currentSources();
+  books.book=[{name:'总结0-9楼',content:'甲',enabled:false},{name:'总结10-19楼',content:'乙',enabled:false},{name:'大总结0-19楼',content:'旧档案',enabled:true}];
+  chat[ARCHIVE_VAR_KEY]={book:{records:{
+    '总结0-9楼':{legacy:true,committed:true,sources:sources.filter(source=>source.id<=9)},
+    '总结10-19楼':{legacy:true,committed:true,sources:sources.filter(source=>source.id>=10)},
+    '大总结0-19楼':{legacy:true,committed:true,sources:[],invalid:'旧审计误判',parents:['总结0-9楼','总结10-19楼'].map(name=>({name,fingerprint:fingerprint(books.book.find(entry=>entry.name===name).content)}))},
+  },excluded:[],megaExcluded:[]}};
+  books.book.find(entry=>entry.name==='总结10-19楼').content='已被用户改写';
+  const invalid=await auditArchiveSources();
+  assert(invalid.includes('大总结0-19楼'));assert.equal(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],undefined);assert(readArchive().records['大总结0-19楼'].invalid);assert.equal(books.book.find(entry=>entry.name==='大总结0-19楼').enabled,false);
+});
+test('audit accepts sparse real sources but rejects sources outside a recorded parent range and duplicate parent names',async()=>{
+  await saveSettings(FLOW_SETTINGS);seedFloors(20);const sources=currentSources();
+  books.book=[{name:'总结0-9楼',content:'甲',enabled:false},{name:'总结10-19楼',content:'乙',enabled:false},{name:'大总结0-19楼',content:'旧档案',enabled:false}];
+  chat[ARCHIVE_VAR_KEY]={book:{records:{
+    '总结0-9楼':{legacy:true,committed:true,sources:sources.filter(source=>source.id===0)},
+    '总结10-19楼':{legacy:true,committed:true,sources:sources.filter(source=>source.id===10)},
+    '大总结0-19楼':{legacy:true,committed:true,sources:[],invalid:'旧审计误判'},
+  },excluded:[],megaExcluded:[]}};
+  assert.deepEqual(await auditArchiveSources(),[]);assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],{'大总结0-19楼':['总结0-9楼','总结10-19楼']});assert.deepEqual(readArchive().records['大总结0-19楼'].sources.map(source=>source.id),[0,10]);
+  reset();await saveSettings(FLOW_SETTINGS);seedFloors(20);const fresh=currentSources();
+  for(const ordinary of [
+    [{name:'总结0-9楼',content:'甲',enabled:false},{name:'总结10-19楼',content:'乙',enabled:false}],
+    [{name:'总结0-9楼',content:'甲',enabled:false},{name:'总结0-9楼',content:'重复',enabled:false},{name:'总结10-19楼',content:'乙',enabled:false}],
+  ]){
+    books.book=[...ordinary,{name:'大总结0-19楼',content:'旧档案',enabled:true}];
+    const records={'大总结0-19楼':{legacy:true,committed:true,sources:[],invalid:'旧审计误判'}};
+    if(ordinary.length===2){records['总结0-9楼']={legacy:true,committed:true,sources:fresh.filter(source=>source.id===10)};records['总结10-19楼']={legacy:true,committed:true,sources:fresh.filter(source=>source.id===11)};}
+    chat[ARCHIVE_VAR_KEY]={book:{records,excluded:[],megaExcluded:[]}};
+    const invalid=await auditArchiveSources();assert(invalid.includes('大总结0-19楼'));assert.equal(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],undefined);
+  }
+});
+test('a failed recovered-archive write leaves the saved map retryable',async()=>{
+  await saveSettings(FLOW_SETTINGS);seedFloors(20);
+  books.book=[{name:'总结0-9楼',content:'甲',enabled:false},{name:'总结10-19楼',content:'乙',enabled:false},{name:'大总结0-19楼',content:'旧档案',enabled:false}];
+  chat[ARCHIVE_VAR_KEY]={book:{records:{'大总结0-19楼':{legacy:true,committed:true,sources:[],invalid:'旧审计误判'}},excluded:[],megaExcluded:[]}};
+  const replace=globalThis.replaceVariables,before=structuredClone(chat[ARCHIVE_VAR_KEY]);globalThis.replaceVariables=(value,option)=>{if(option.type==='chat'&&JSON.stringify(value[ARCHIVE_VAR_KEY])!==JSON.stringify(before))return;replace(value,option);};
+  await assert.rejects(auditArchiveSources(),/持久化校验失败/);
+  assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],{'大总结0-19楼':['总结0-9楼','总结10-19楼']});assert.equal(readArchive().records['大总结0-19楼'].sources.length,0);
+  globalThis.replaceVariables=replace;assert.deepEqual(await auditArchiveSources(),[]);assert.equal(readArchive().records['大总结0-19楼'].sources.length,20);
 });
 test('every automatic normal batch is bounded and ends after an AI reply',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:true,batchFloorCount:19});seedFloors(100);

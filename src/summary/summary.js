@@ -92,7 +92,7 @@ export async function startCustomRangeSummaryProcess() {
   return executeSummary(input.start,input.end,makeSummaryEntryName(input.start,input.end));
 }
 export async function regenerateAndReplaceEntry(name) { const range = parseRange(name); if (!range) throw new Error('条目名称无效'); return executeSummary(range.start, range.end, name, { regenerate: true }); }
-export async function regenerateAndReplaceMegaEntry(name) { const names = await getMegaSummaryMapping(name); if (!names?.length) throw new Error('未找到原始总结来源'); return executeMegaSummary(names, name, { regenerate: true }); }
+export async function regenerateAndReplaceMegaEntry(name) { await auditArchiveSources(); const names = await getMegaSummaryMapping(name); if (!names?.length) throw new Error('缺少原始总结来源映射，请检查对应楼层的普通总结是否完整'); return executeMegaSummary(names, name, { regenerate: true }); }
 export async function autoTriggerSummary() {
   const token = captureContext();
   await auditArchiveSources(); await applySummarizedFloorsVisibility(); checkContext(token);

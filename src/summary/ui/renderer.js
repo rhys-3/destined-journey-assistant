@@ -54,7 +54,7 @@ const renderMegaEntryList = (entries) => {
         🔷 ${escapeHtml(e.name)}
       </span>
       ${e.disabled ? '<span class="sa-entry-badge sa-entry-badge-disabled" title="条目已关闭">已关闭</span>' : ''}
-      ${e.invalid ? '<span class="sa-entry-badge">来源已变化</span>' : ''}
+      ${e.invalid ? `<span class="sa-entry-badge" title="${escapeHtml(String(e.invalid))}">${String(e.invalid).startsWith('缺少') ? '来源记录缺失' : '来源已变化'}</span>` : ''}
       <div class="sa-entry-actions">
         <button class="sa-btn sa-btn-sm" data-action="view-edit-mega" data-name="${escapeHtml(e.name)}">查看/编辑</button>
         <button class="sa-btn sa-btn-sm" data-action="regenerate-mega" data-name="${escapeHtml(e.name)}">重新生成</button>

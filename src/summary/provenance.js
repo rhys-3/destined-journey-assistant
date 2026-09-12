@@ -43,7 +43,7 @@ export function sourceFloors(entry, archive, megaMap, lastId) {
   const record = archive.records[entry.name];
   if (record) return (record.sources ?? []).map(source => source.id).filter(id => id >= 0 && id <= lastId);
   const normal = parseSummaryEntryName(entry.name);
-  const ranges = normal ? [normal] : (megaMap[entry.name] ?? []).map(parseSummaryEntryName).filter(Boolean);
+  const ranges = normal ? [normal] : (Array.isArray(megaMap[entry.name]) ? megaMap[entry.name] : []).map(parseSummaryEntryName).filter(Boolean);
   return [...new Set(ranges.flatMap(range => Array.from({ length: Math.max(0, Math.min(lastId, range.end) - range.start + 1) }, (_, i) => range.start + i)))];
 }
 export function excludeRange(name, { mega = false } = {}) {

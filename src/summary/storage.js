@@ -174,7 +174,7 @@ const loadMegaSummaryMap = errorCatched(async () => {
   try {
     const vars = getVariables({ type: 'chat' });
     const map = vars?.[CONFIG.MEGA_SUMMARY_VAR_KEY];
-    if (map && typeof map === 'object') {
+    if (map && typeof map === 'object' && !Array.isArray(map)) {
       return map;
     }
     return {};

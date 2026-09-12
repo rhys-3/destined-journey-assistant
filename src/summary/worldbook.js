@@ -7,7 +7,8 @@ import { CONFIG } from './config.js';
 import { feedback } from './feedback.js';
 import { allFloorMessages, readVisibilityOverrides, readVisibilityAutomation } from './visibility.js';
 import { parseSummaryEntryName, parseMegaSummaryEntryName, isMegaSummaryEntry, normalizeWorldbookEntries } from './utils.js';
-import { getSettings, getMegaSummaryMap, setMegaSummaryMapping, getMegaSummaryMapping, deleteMegaSummaryMapping } from './storage.js';
+import { getSettings, getMegaSummaryMap, saveMegaSummaryMap, setMegaSummaryMapping, getMegaSummaryMapping, deleteMegaSummaryMapping } from './storage.js';
+import { recoverLegacyMegaSources } from './legacySources.js';
 import { captureContext, checkContext, createWorldbook, rebindGlobalWorldbooks, createWorldbookEntries, updateWorldbookWith, setChatMessages, writeVariableKeys, replaceWorldbook, deleteWorldbook } from '../platform/lifecycle.js';
 /**
  * worldbook.js
@@ -579,8 +580,9 @@ const deleteMegaSummaryEntry = errorCatched(async (entryName) => {
 
 async function toggleMegaSummary(name, enabled, remove = false) {
   assertRecordWritable();
+  await auditArchiveSources();
   const summaryNames = await getMegaSummaryMapping(name);
-  if (!summaryNames?.length) throw new Error('没有找到原始总结来源映射');
+  if (!summaryNames?.length) throw new Error('没有找到原始总结来源映射，请检查对应楼层的普通总结是否完整');
   const { entries, archive, sources } = await getCoverage();
   if (enabled) {
     consecutiveSummaries(summaryNames);
@@ -686,7 +688,9 @@ export async function getCoverage() {
 export async function auditArchiveSources({ taskId } = {}) {
   assertRecordWritable(taskId);
   const { entries, megaMap, archive, sources } = await getCoverage();
-  let changed = false; const invalid = [];
+  const recovery = recoverLegacyMegaSources(entries, megaMap, archive, sources);
+  if (recovery.mapChanged) await saveMegaSummaryMap(megaMap);
+  let changed = recovery.changed; const invalid = [];
   for (const entry of entries.filter(entry => parseRange(entry.name))) {
     if (!archive.records[entry.name]) {
       const ids = new Set(sourceFloors(entry, archive, megaMap, getLastMessageId()));
@@ -694,7 +698,10 @@ export async function auditArchiveSources({ taskId } = {}) {
     }
     const record = archive.records[entry.name];
     if (!recordValid(entry, archive, sources, entries) && record.committed !== false) {
-      if (!record.invalid) { record.invalid = '来源楼层、回复版本或原总结已变化'; changed = true; }
+      const reason = parseMegaSummaryEntryName(entry.name) && !record.sources?.length
+        ? '缺少可恢复的来源记录，请检查原始普通总结是否完整'
+        : '来源楼层、回复版本或原总结已变化';
+      if (record.invalid !== reason) { record.invalid = reason; changed = true; }
       if (!isEntryDisabled(entry)) invalid.push(entry.name);
     }
   }
