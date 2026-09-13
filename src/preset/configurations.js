@@ -16,6 +16,8 @@ export function createConfigurations(ctx) {
     const contextKey = ctx.workspaceContextKey();
     const current = () => !ctx.destroyed && getLoadedPresetName() === name && ctx.workspaceContextKey() === contextKey;
     ctx.state.workspaceBusy = true;
+    ctx.clearLengthDraft?.();
+    if (ctx.shadow?.activeElement?.dataset.action === 'length-number') ctx.shadow.activeElement.blur();
     ctx.cancelPromptSort();
     ctx.worldEpoch += 1;
     clearTimeout(ctx.worldTimer);

@@ -33,6 +33,7 @@ export function createManaged(ctx) {
     const values = ctx.sanitizeManagedValues(ctx.state.config.managed_values, ctx.state.preset);
     return {
       字数: values.min_hanzi,
+      字数要求: lengthRequirement(values),
       对白比例: values.dialogue_ratio,
       对白轮次: values.dialogue_round_trips,
       战斗回合: values.combat_rounds,
@@ -44,6 +45,12 @@ export function createManaged(ctx) {
       全局偏好: serializeSettingItems(values.global_settings, 'global_settings'),
       用户附加设定: serializeSettingItems(values.user_additional_settings, 'user_additional_settings'),
     };
+  }
+
+  function lengthRequirement(values) {
+    if (values.length_mode === 'maximum') return `不多于${values.max_hanzi}`;
+    if (values.length_mode === 'range') return `${values.min_hanzi}—${values.max_hanzi}`;
+    return `不少于${values.min_hanzi}`;
   }
 
   function expandManagedMacros(content, reportUnknown = false) {
@@ -164,7 +171,10 @@ export function createManaged(ctx) {
   function setNumericField(key, rawValue) {
     const definition = ctx.FIELD_DEFINITIONS[key];
     const value = String(rawValue ?? '').trim();
-    if (!/^-?\d+$/u.test(value)) {
+    if (key === 'hanzi' && !validPositiveSafeInteger(value)) {
+      return Promise.reject(new Error(`${definition.label}必须是有效的正整数。`));
+    }
+    if (key !== 'hanzi' && !/^-?\d+$/u.test(value)) {
       return Promise.reject(new Error(`${definition.label}必须是有效整数。`));
     }
     if (!hasManagedMacro(definition.promptId, definition.macro, definition.minimumOccurrences)) {
@@ -172,6 +182,67 @@ export function createManaged(ctx) {
     }
     ctx.state.config.managed_values[definition.configKey] = value;
     return ctx.enqueueScriptConfigSave(definition.label, `field:${key}`);
+  }
+
+  function hasLengthRequirementMacro(preset = ctx.state.preset) {
+    return hasManagedMacro(ctx.IDS.outputLength, ctx.MANAGED_MACROS.lengthRequirement, 1, preset);
+  }
+
+  function readLengthControl() {
+    if (!hasLengthRequirementMacro()) return { ok: false, values: null };
+    const values = ctx.sanitizeManagedValues(ctx.state.config.managed_values, ctx.state.preset);
+    const draft = currentLengthDraft();
+    return { ok: true, values, mode: draft?.mode ?? values.length_mode, error: draft?.error ?? '' };
+  }
+
+  function currentLengthDraft() {
+    const draft = ctx.state.lengthControlDraft;
+    if (!draft) return null;
+    if (draft.context !== ctx.workspaceContextKey()) {
+      delete ctx.state.lengthControlDraft;
+      return null;
+    }
+    return draft;
+  }
+
+  function clearLengthDraft() {
+    delete ctx.state.lengthControlDraft;
+  }
+
+  function validPositiveSafeInteger(rawValue) {
+    const value = String(rawValue ?? '').trim();
+    return /^\d+$/u.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? value : '';
+  }
+
+  function saveLengthControl(next) {
+    if (!hasLengthRequirementMacro()) return Promise.reject(new Error('正文字数要求短宏缺失或格式异常。'));
+    const minHanzi = validPositiveSafeInteger(next.min_hanzi);
+    const maxHanzi = validPositiveSafeInteger(next.max_hanzi);
+    const mode = next.length_mode;
+    if (!minHanzi || !maxHanzi || !['minimum', 'maximum', 'range'].includes(mode)) return Promise.reject(new Error('请输入有效的正整数。'));
+    if (mode === 'range' && Number(minHanzi) > Number(maxHanzi)) return Promise.reject(new Error('范围的最少字数不能大于最多字数。'));
+    const context = ctx.workspaceContextKey();
+    const draft = ctx.state.lengthControlDraft;
+    ctx.state.config.managed_values = { ...ctx.state.config.managed_values, min_hanzi: minHanzi, max_hanzi: maxHanzi, length_mode: mode };
+    return ctx.enqueueScriptConfigSave('正文字数').then(() => {
+      if (ctx.workspaceContextKey() === context && ctx.state.lengthControlDraft === draft) clearLengthDraft();
+    });
+  }
+
+  function setLengthMode(mode) {
+    const values = ctx.sanitizeManagedValues(ctx.state.config.managed_values, ctx.state.preset);
+    if (!['minimum', 'maximum', 'range'].includes(mode)) return Promise.reject(new Error('不支持的正文字数模式。'));
+    if (mode === 'range' && Number(values.min_hanzi) > Number(values.max_hanzi)) {
+      ctx.state.lengthControlDraft = { context: ctx.workspaceContextKey(), mode: 'range', error: '范围的最少字数不能大于最多字数。请先调整两端数值。' };
+      return Promise.resolve();
+    }
+    return saveLengthControl({ ...values, length_mode: mode });
+  }
+
+  function setLengthValue(boundary, rawValue) {
+    const values = ctx.sanitizeManagedValues(ctx.state.config.managed_values, ctx.state.preset);
+    if (!['minimum', 'maximum'].includes(boundary)) return Promise.reject(new Error('不支持的正文字数边界。'));
+    return saveLengthControl({ ...values, length_mode: currentLengthDraft()?.mode ?? values.length_mode, [boundary === 'minimum' ? 'min_hanzi' : 'max_hanzi']: rawValue });
   }
 
   function setNarrationPerson(person) {
@@ -199,7 +270,8 @@ export function createManaged(ctx) {
 
   function readLegacyManagedValues(preset) {
     const values = {};
-    const minHanzi = extractLegacyAttribute(preset, ctx.IDS.outputLength, 'length_control', 'min_hanzi');
+    const minHanzi = extractLegacyAttribute(preset, ctx.IDS.outputLength, 'length_control', 'min_hanzi')
+      ?? extractLegacyAttribute(preset, ctx.IDS.outputLength, 'length_control', 'min_characters');
     const dialogueRatio = extractLegacyAttribute(preset, ctx.IDS.dialogue, 'dialogue', 'target_ratio')?.replace(/%$/u, '');
     const dialogueRounds = extractLegacyAttribute(preset, ctx.IDS.dialogue, 'dialogue', 'min_round_trips');
     const combatRounds = extractLegacyAttribute(preset, ctx.IDS.outputLength, 'combat_pacing', 'max_rounds_per_response');
@@ -243,8 +315,10 @@ export function createManaged(ctx) {
     }
     if (promptId === ctx.IDS.outputLength) {
       next = next.replace(/\sdata-destined-ui="output"/gu, '');
-      next = next.replace(/(<length_control\b[^>]*?)\bmin_hanzi=/iu, '$1min_characters=');
-      if (!next.includes(ctx.MANAGED_MACROS.hanzi)) next = replaceTagAttribute(next, 'length_control', 'min_characters', ctx.MANAGED_MACROS.hanzi);
+      if (!next.includes(ctx.MANAGED_MACROS.lengthRequirement)) {
+        next = next.replace(/(<length_control\b[^>]*?)\bmin_hanzi=/iu, '$1min_characters=');
+        if (!next.includes(ctx.MANAGED_MACROS.hanzi)) next = replaceTagAttribute(next, 'length_control', 'min_characters', ctx.MANAGED_MACROS.hanzi);
+      }
       if (!next.includes(ctx.MANAGED_MACROS.combatRounds)) next = replaceTagAttribute(next, 'combat_pacing', 'max_rounds_per_response', ctx.MANAGED_MACROS.combatRounds);
       next = next.replace('本次推进回合数不得超过`max_rounds_per_response`；', `本次推进回合数不得超过${ctx.MANAGED_MACROS.combatRounds}回合；`);
       next = next.replace(/<language\b[^>]*>\s*正文使用简体中文。\s*<\/language>/iu, `<language target="recorder_body">正文、对白与正文内面板使用${ctx.MANAGED_MACROS.bodyLanguage}；角色专名、原文引用和代码可按语境保留原语言。</language>`);
@@ -451,6 +525,11 @@ export function createManaged(ctx) {
     setLanguageField,
     readNumericField,
     setNumericField,
+    hasLengthRequirementMacro,
+    readLengthControl,
+    clearLengthDraft,
+    setLengthMode,
+    setLengthValue,
     setNarrationPerson,
     extractLegacyAttribute,
     readLegacyManagedValues,

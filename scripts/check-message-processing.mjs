@@ -44,8 +44,9 @@ const adapters = [
   { name: 'claude-story', model: 'Claude', prefill: false, modes: ['story'] },
 ];
 const configurations = [
-  { name: 'epic-main-api', style: '️ 史诗奇幻', minHanzi: 900, mainApi: true },
-  { name: 'gloom-extra-api', style: '️ 阴郁奇幻', minHanzi: 4200, mainApi: false },
+  { name: 'epic-main-minimum', style: '️ 史诗奇幻', minHanzi: 900, maxHanzi: 2500, lengthMode: 'minimum', requirement: '不少于900', mainApi: true },
+  { name: 'gloom-extra-maximum', style: '️ 阴郁奇幻', minHanzi: 4200, maxHanzi: 800, lengthMode: 'maximum', requirement: '不多于800', mainApi: false },
+  { name: 'epic-extra-range', style: '️ 史诗奇幻', minHanzi: 1500, maxHanzi: 2500, lengthMode: 'range', requirement: '1500—2500', mainApi: false },
 ];
 const nativeText = text => String(text).replaceAll('{{user}}', 'CURRENT_USER').replaceAll('{{char}}', 'CURRENT_CHARACTER');
 const message = (role, content) => ({ role, content });
@@ -108,6 +109,7 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
     const emit = async (event, ...args) => { for (const fn of listeners.get(event) ?? []) await fn(...args); };
     const ctx = { ...definitions, state: { config: { managed_values: {
       ...definitions.DEFAULT_MANAGED_VALUES, min_hanzi: config.minHanzi,
+      max_hanzi: config.maxHanzi, length_mode: config.lengthMode,
     } } } };
     ctx.sanitizeManagedValues = createStore(ctx).sanitizeManagedValues;
     const managed = createManaged(ctx);
@@ -157,7 +159,9 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
     const text = requestText(main.prompt);
     assert(!text.includes('<|命定_'), 'structural marker leaked');
     assert(!text.includes('{{getvar::本轮场外讨论}}'), 'conditional mode macro leaked');
-    assert(!/<\|(字数|人称要求|正文语言|思维链语言)\|>/.test(text), 'assistant macro leaked');
+    assert(!/<\|(字数|字数要求|人称要求|正文语言|思维链语言)\|>/.test(text), 'assistant macro leaked');
+    const lengthControl = text.match(/<length_control\b[^>]*>([\s\S]*?)<\/length_control>/)?.[1];
+    assert(lengthControl?.includes('可见文字字符数要求：' + config.requirement + '。'), 'selected length requirement did not reach the final request');
     assert(!text.includes('<|placeholder|>'), 'history cleanup placeholder leaked');
     assert(!text.includes(legacyHistorySentinel) && !text.includes(defaultHistorySentinel), 'retired discussion history was injected into a request');
     assert(!text.includes('<destined_discussion>'), 'legacy saved discussion record was not normalized');
@@ -200,7 +204,7 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
       const protocolEnd = text.indexOf('</narrative_reference>', protocolStart);
       const protocols = text.slice(protocolStart, protocolEnd);
       assert(protocols.includes('<gametxt_module_protocols'), 'body protocols were removed');
-      assert(protocols.includes(String(config.minHanzi)), 'word count did not expand inside reference material');
+      assert(protocols.includes(config.requirement), 'word count did not expand inside reference material');
       assert.equal(request.assistant_prefill, '', 'connection prefill survived');
       assert.deepEqual(request.stop, ['CUSTOM_STOP']);
       if (adapter.prefill) {
@@ -228,7 +232,7 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
     assert.equal((listeners.get(events.CHAT_COMPLETION_SETTINGS_READY) ?? []).length, 0);
     reports.push({
       adapter: adapter.name, model: adapter.model ?? 'custom Gemini', prefill: adapter.prefill,
-      mode, configuration: config.name,
+      mode, configuration: config.name, lengthMode: config.lengthMode, lengthRequirement: config.requirement,
       eventOrder: processorFirst ? 'processor-first' : 'managed-first',
       finalRoles: main.prompt.map(item => item.role),
     });
@@ -260,7 +264,7 @@ const report = {
   testedAt: new Date().toISOString(),
   cases: reports,
   verified: [
-    'actual split prompt order and bodies; Gemini two tails plus two copied custom adapters in story/discussion, and native DeepSeek/Claude story only; two style/word-count/variable settings and both assistant event orders',
+    'actual split prompt order and bodies; Gemini two tails plus two copied custom adapters in story/discussion, and native DeepSeek/Claude story only; three length modes with style/variable settings and both assistant event orders',
     'conditional branches share the original body and depth envelope, multimodal parts and native head/tail roles',
     'discussion retains narrative style/body/variable protocols inside reference boundaries and selects its own audit/output contract',
     'native Gemini prefill survives; the shared non-prefill tail stays unchanged; only the additional connection prefill is cleared',

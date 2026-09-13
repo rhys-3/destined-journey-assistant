@@ -63,9 +63,12 @@ export function createRender(ctx) {
     const scrollTop = preserveScroll ? content.scrollTop : 0;
     const active = ctx.shadow.activeElement;
     const focusKey = active && content.contains(active)
-      ? ['action', 'field', 'key', 'id', 'model'].map(key => [key, active.dataset?.[key]]).filter(([, value]) => value)
+      ? ['action', 'field', 'boundary', 'key', 'id', 'model'].map(key => [key, active.dataset?.[key]]).filter(([, value]) => value)
       : [];
     const invalidDraft = active?.dataset?.action === 'field-number' && !/^-?\d+$/u.test(active.value.trim()) ? active.value : null;
+    const lengthDraft = active?.dataset?.action === 'length-number'
+      && active.closest('[data-length-context]')?.dataset.lengthContext === ctx.workspaceContextKey()
+      ? { boundary: active.dataset.boundary, value: active.value } : null;
     const selectionStart = typeof active?.selectionStart === 'number' ? active.selectionStart : null;
     const selectionEnd = typeof active?.selectionEnd === 'number' ? active.selectionEnd : null;
     content.className = `content content-${ctx.state.activeTab}`;
@@ -88,6 +91,19 @@ export function createRender(ctx) {
           replacement.value = invalidDraft;
           const error = replacement.closest('.numeric-card')?.querySelector('.field-error');
           if (error) error.textContent = invalidDraft ? '请输入有效整数。' : '自定义数值不能为空。';
+        }
+        if (lengthDraft && replacement.dataset.boundary === lengthDraft.boundary) {
+          replacement.value = lengthDraft.value;
+          const error = replacement.closest('.numeric-card')?.querySelector('[data-length-error]');
+          const valid = /^\d+$/u.test(lengthDraft.value.trim()) && Number.isSafeInteger(Number(lengthDraft.value)) && Number(lengthDraft.value) > 0;
+          if (!valid) error.textContent = lengthDraft.value.trim() ? '请输入有效的正整数。' : '字数不能为空。';
+          else {
+            const card = replacement.closest('.numeric-card');
+            const range = card?.querySelector('[data-action="length-mode"].selected')?.dataset.value === 'range';
+            const minimum = card?.querySelector('[data-boundary="minimum"]')?.value;
+            const maximum = card?.querySelector('[data-boundary="maximum"]')?.value;
+            error.textContent = range && Number(minimum) > Number(maximum) ? '范围的最少字数不能大于最多字数。' : '';
+          }
         }
         replacement.focus({ preventScroll: true });
         if (selectionStart !== null && typeof replacement.setSelectionRange === 'function') {
@@ -243,6 +259,7 @@ export function createRender(ctx) {
   }
 
   function renderNumericControl(key) {
+    if (key === 'hanzi' && ctx.hasLengthRequirementMacro()) return renderLengthControl();
     const definition = ctx.FIELD_DEFINITIONS[key];
     const description = promptDescription(ctx.getPrompt(ctx.state.preset, definition.promptId), key);
     const current = ctx.readNumericField(key);
@@ -256,6 +273,27 @@ export function createRender(ctx) {
         </div>
         <label class="number-input"><span>自定义</span><input type="text" inputmode="numeric" data-action="field-number" data-field="${key}" value="${current.ok ? ctx.escapeHtml(current.value) : ''}" ${current.ok ? disabledAttribute() : 'disabled'}></label>
         <div class="field-error" data-field-error="${key}">${current.ok ? '' : '受管字段缺失或格式异常，已停止写入。'}</div>
+      </article>
+    `;
+  }
+
+  function renderLengthControl() {
+    const definition = ctx.FIELD_DEFINITIONS.hanzi;
+    const description = promptDescription(ctx.getPrompt(ctx.state.preset, definition.promptId), 'hanzi');
+    const current = ctx.readLengthControl();
+    const values = current.values;
+    const mode = current.mode;
+    const disabled = !current.ok;
+    const input = (boundary, label, value) => `<label class="number-input"><span>${label}</span><input type="text" inputmode="numeric" data-action="length-number" data-boundary="${boundary}" value="${current.ok ? ctx.escapeHtml(value) : ''}" ${disabled ? 'disabled' : ''}></label>`;
+    return `
+      <article class="card numeric-card" data-length-context="${ctx.escapeHtml(ctx.workspaceContextKey())}">
+        <div class="card-title"><div><h4>${ctx.escapeHtml(definition.label)}</h4>${description?`<p class="entry-description">${ctx.escapeHtml(description)}</p>`:''}</div>${ctx.getPrompt(ctx.state.preset, definition.promptId) ? toggleHtml(`prompt:${definition.promptId}`, ctx.getPrompt(ctx.state.preset, definition.promptId).enabled) : ''}</div>
+        <div class="chips" data-length-mode>
+          ${[['minimum','不少于'],['maximum','不多于'],['range','范围']].map(([value,label]) => `<button type="button" data-action="length-mode" data-value="${value}" class="${current.ok && mode === value ? 'selected' : ''}" ${disabled ? 'disabled' : ''}>${label}</button>`).join('')}
+        </div>
+        ${current.ok && mode !== 'maximum' ? input('minimum', mode === 'range' ? '最少' : '字数', values.min_hanzi) : ''}
+        ${current.ok && mode !== 'minimum' ? input('maximum', mode === 'range' ? '最多' : '字数', values.max_hanzi) : ''}
+        <div class="field-error" data-length-error>${current.ok ? current.error : '正文字数要求短宏缺失或格式异常，已停止写入。'}</div>
       </article>
     `;
   }

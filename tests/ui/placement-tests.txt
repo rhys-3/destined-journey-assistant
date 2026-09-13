@@ -21,8 +21,9 @@
   await move(pace,'hidden');check('隐藏仍保留开关和单选关系',data.prompts.find(p=>p.id===pace).enabled&&ui.getPromptGroupId(data.prompts.find(p=>p.id===pace))==='plot-pace');
   ui.state.activeTab='style';ui.render();check('隐藏条目不出现在设置页',!q('[data-placement-id="'+pace+'"]'));
   ui.state.activeTab='advanced';ui.render();check('隐藏条目仍可从条目列表找到',!!q('[data-action="prompt-open"][data-id="'+pace+'"]'));
-  await move(ui.IDS.outputLength,'style-extra');ui.state.activeTab='style';ui.render();check('移动字数条目保留原数值控件',!!q('[data-action="field-number"][data-field="hanzi"]')&&!!q('[data-action="field-number"][data-field="combatRounds"]'));
-  ui.state.activeTab='daily';ui.render();check('原页面不重复字数控件',!q('[data-action="field-number"][data-field="hanzi"]'));
+  const modernLength=data.prompts.find(p=>p.id===ui.IDS.outputLength).content.includes('<|字数要求|>');
+  await move(ui.IDS.outputLength,'style-extra');ui.state.activeTab='style';ui.render();check('移动字数条目保留对应的新旧控件',!!q(modernLength?'[data-action="length-number"]':'[data-action="field-number"][data-field="hanzi"]')&&(!modernLength||ui.shadow.querySelectorAll('[data-action="length-mode"]').length===3)&&!!q('[data-action="field-number"][data-field="combatRounds"]'));
+  ui.state.activeTab='daily';ui.render();check('原页面不重复字数控件',!q('[data-action="field-number"][data-field="hanzi"],[data-action="length-number"]'));
   await move(ui.IDS.sceneInfo,'style-extra');ui.state.activeTab='style';ui.render();check('核心条目可展示但不暴露关闭开关',!!q('[data-placement-id="'+ui.IDS.sceneInfo+'"]')&&!q('[data-key="prompt:'+ui.IDS.sceneInfo+'"]'));
   const anchor=ui.placementMembers('style-extra')[0].id;await move(id,'style-extra',anchor);check('选择排在谁前面生效',ui.placementMembers('style-extra')[0].id===id);
   check('界面排序同步原生位置',data.prompts.findIndex(p=>p.id===id)+1===data.prompts.findIndex(p=>p.id===anchor));

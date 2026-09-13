@@ -32,6 +32,7 @@ export function run(plan) {
   if (plan.build) { command(['--test', 'tests/*.test.js']); command(['build.js']); }
   for (const name of ['ui', 'assistant', 'themes', 'settings']) if (plan[name]) {
     command([`tests/ui/test-${name}.cjs`]);
+    if (name === 'ui') command(['tests/ui/test-ui.cjs', '--modern-length']);
     if (name === 'assistant') command(['tests/ui/test-discussion-records.cjs']);
   }
 }

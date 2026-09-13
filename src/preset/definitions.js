@@ -18,7 +18,7 @@ export const PROFILE_TIMEOUT = 5000;
 
 export const PRESET_SYNC_INTERVAL = 1500;
 
-export const MANAGED_VALUES_VERSION = 3;
+export const MANAGED_VALUES_VERSION = 4;
 
 export const STYLE_STRUCTURE_VERSION = 1;
 
@@ -32,6 +32,8 @@ export const PANEL_MIN_HEIGHT = 460;
 
 export const DEFAULT_MANAGED_VALUES = Object.freeze({
   min_hanzi: '1500',
+  max_hanzi: '2500',
+  length_mode: 'minimum',
   dialogue_ratio: '40',
   dialogue_round_trips: '3',
   combat_rounds: '1',
@@ -42,6 +44,7 @@ export const DEFAULT_MANAGED_VALUES = Object.freeze({
 
 export const MANAGED_MACROS = Object.freeze({
   hanzi: '<|字数|>',
+  lengthRequirement: '<|字数要求|>',
   dialogueRatio: '<|对白比例|>',
   dialogueRounds: '<|对白轮次|>',
   combatRounds: '<|战斗回合|>',
@@ -53,7 +56,7 @@ export const MANAGED_MACROS = Object.freeze({
   userAdditional: '<|用户附加设定|>',
 });
 
-export const MANAGED_MACRO_PATTERN = /<\|(字数|对白比例|对白轮次|战斗回合|人称|人称要求|正文语言|思维链语言|全局设定|全局偏好|用户附加设定)\|>/gu;
+export const MANAGED_MACRO_PATTERN = /<\|(字数|字数要求|对白比例|对白轮次|战斗回合|人称|人称要求|正文语言|思维链语言|全局设定|全局偏好|用户附加设定)\|>/gu;
 
 export const UNKNOWN_DESTINED_MACRO_PATTERN = /<\|命定[^|>]*\|>/gu;
 

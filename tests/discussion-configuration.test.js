@@ -3,17 +3,26 @@ import assert from 'node:assert/strict';
 import { createConfigurationSchema } from '../src/preset/configuration-schema.js';
 import { createConfigurations } from '../src/preset/configurations.js';
 import { createStore } from '../src/preset/store.js';
+import { DEFAULT_MANAGED_VALUES } from '../src/preset/definitions.js';
 
 const preset = () => ({ settings: {}, prompts: [{ id: 'head', name: 'Head', enabled: true, role: 'system', content: 'CUSTOM', position: { type: 'relative' }, extra: { system_prompt: false } }], prompts_unused: [{ id: 'story', name: 'Story', enabled: false, role: 'system', content: 'S', position: { type: 'relative' } }], extensions: { destined_discussion: { version: 6 }, unrelated: 'RETAIN' } });
-function schema() { return createConfigurationSchema({ state: { config: {} }, BUILTIN_MODEL_ADAPTERS: {}, PROTECTED_IDS: [], IDS: {}, sanitizeManagedValues: () => ({}), sanitizeEntryPoints: () => ({}), sanitizeBinding: () => null, validateAuthorLayout: value => structuredClone(value), getGeminiTail: () => null, variablePresetMode: () => 'main' }); }
+function schema() { const sanitizeManagedValues = createStore({ DEFAULT_MANAGED_VALUES }).sanitizeManagedValues; return createConfigurationSchema({ state: { config: {} }, BUILTIN_MODEL_ADAPTERS: {}, PROTECTED_IDS: [], IDS: {}, sanitizeManagedValues, sanitizeEntryPoints: () => ({}), sanitizeBinding: () => null, validateAuthorLayout: value => structuredClone(value), getGeminiTail: () => null, variablePresetMode: () => 'main' }); }
 
 test('configuration export retains the v6 marker only and never includes chat mode', () => {
   const snapshot = schema().capturePresetConfiguration(preset(), {});
   assert.deepEqual(snapshot.discussion, { version: 6 });
   assert.equal(snapshot.prompts[0].extra.system_prompt, false);
   assert.deepEqual(schema().validatePresetSnapshot(snapshot).prompts[0].extra, { system_prompt: false });
+  assert.deepEqual(snapshot.config.managed_values, DEFAULT_MANAGED_VALUES);
   const legacy = structuredClone(snapshot); legacy.prompts[0].extra.destined_mode = 'old-value';
   assert.equal(schema().validatePresetSnapshot(legacy).prompts[0].extra.destined_mode, 'old-value');
+});
+
+test('configuration snapshots retain all three length settings and normalize legacy imports', () => {
+  const current = schema().capturePresetConfiguration(preset(), { managed_values: { min_hanzi: '1800', max_hanzi: '2400', length_mode: 'range' } });
+  assert.deepEqual(current.config.managed_values, { ...DEFAULT_MANAGED_VALUES, min_hanzi: '1800', max_hanzi: '2400', length_mode: 'range' });
+  const legacy = schema().validatePresetSnapshot({ ...current, config: { ...current.config, managed_values: { min_hanzi: '5000' } } });
+  assert.deepEqual(legacy.config.managed_values, { ...DEFAULT_MANAGED_VALUES, min_hanzi: '5000', max_hanzi: '5000', length_mode: 'minimum' });
 });
 
 test('named configuration restore writes mode marks with native prompts and keeps unrelated extensions', async t => {

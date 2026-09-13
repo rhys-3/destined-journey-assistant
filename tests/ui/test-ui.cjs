@@ -5,15 +5,24 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const variableMerge = require('../helpers/tavern-variables.cjs').mergeTavernVariables.toString();
 fs.mkdirSync('.ui-review',{recursive:true});
+const modernLength = process.argv.includes('--modern-length');
 const raw=JSON.parse(fs.readFileSync('tests/fixtures/preset.json','utf8'));
 const convert=(p,enabled)=>({...p,id:p.identifier,enabled,role:p.role??'system',position:p.injection_position===1?{type:'in_chat',depth:p.injection_depth,order:p.injection_order}:{type:'relative'}});
 const prompts=raw.prompt_order[0].order.map(o=>{const p=raw.prompts.find(p=>p.identifier===o.identifier);return p?convert(p,o.enabled):null}).filter(Boolean);
 const preset={settings:{should_stream:raw.stream_openai},prompts,prompts_unused:raw.prompts.filter(p=>!prompts.some(q=>q.id===p.identifier)).map(p=>convert(p,p.enabled)),extensions:{}};
+if (modernLength) {
+  const outputLength = preset.prompts.find(prompt => prompt.id === '31f1341f-e48c-415e-b917-207d46ea5e77');
+  assert(outputLength, 'Missing output-length fixture prompt');
+  outputLength.content = outputLength.content
+    .replace(/<length_control\b[^>]*>/u, '<length_control scene="non_combat" count_scope="narrative_and_dialogue">')
+    .replace(/普通叙事与角色对白不少于<\|字数\|>个可见文字字符；不统计空白、HTML\/XML标签、代码，也不统计面板、美化组件及其内部文字、字段和数值。/u, '<|字数要求|>');
+  assert(outputLength.content.includes('<|字数要求|>') && !/\bmin_characters=/u.test(outputLength.content), 'Modern fixture must use only the new length macro');
+}
 const script=fs.readFileSync('src/preset/assistant.js','utf8');
 const marker='  try {\n    const version = await getTavernHelperVersion();';
 assert(script.includes(marker));
 let injected=script.slice(0,script.indexOf(marker))+`
-  window.ui = { summary, captureCombined: captureConfiguration, captureConfiguration: capturePresetConfiguration, validateSnapshot: validatePresetSnapshot, validateLibrary, loadScriptConfig, emptyLibrary, rebuildModelRegistry, configLibrary, modelRegistry, getGeminiTail, setGeminiTail, detectModelAdapter, flushPendingSaves, addCustomModel, renameCustomModel, deleteCustomModel, setCustomTail, saveNamedConfiguration, renameConfiguration, deleteConfiguration, applyConfiguration, exportConfigurations, importConfigurations, resolveBoundProfile, configurationIsDirty, runWorkspaceOperation, writeWorkspace, state, IDS, GROUPS, MODEL_ADAPTERS, PROTECTED_IDS, worldLink, worldWrites, variablePresetMode, scanWorldbookMode, scheduleWorldbookScan, selectVariableMode, render, renderActiveContent, openPanel, closePanel, applyGroup, selectModelAdapter, setNumericField, setLanguageField, readLanguageField, managedMacroValues, setNarrationPerson, setGlobalPreference, setUserAdditionalSetting, togglePrompt, updateEntryPoint, reconcilePreset, expandManagedMacros, openStyleEditor, saveStyleEditor, deleteUserStyle, getGroupOptions, readUserAdditionalSetting, openPromptEditor, savePromptEditor, closePromptEditor, setEditorField, get shadow(){return shadow;}, async settle(){await new Promise(r=>setTimeout(r,400));await saveChain;} };
+  window.ui = { summary, captureCombined: captureConfiguration, captureConfiguration: capturePresetConfiguration, validateSnapshot: validatePresetSnapshot, validateLibrary, loadScriptConfig, emptyLibrary, rebuildModelRegistry, configLibrary, modelRegistry, getGeminiTail, setGeminiTail, detectModelAdapter, flushPendingSaves, addCustomModel, renameCustomModel, deleteCustomModel, setCustomTail, saveNamedConfiguration, renameConfiguration, deleteConfiguration, applyConfiguration, exportConfigurations, importConfigurations, resolveBoundProfile, configurationIsDirty, runWorkspaceOperation, writeWorkspace, state, IDS, GROUPS, MODEL_ADAPTERS, PROTECTED_IDS, worldLink, worldWrites, variablePresetMode, scanWorldbookMode, scheduleWorldbookScan, selectVariableMode, render, renderActiveContent, openPanel, closePanel, applyGroup, selectModelAdapter, setNumericField, setLengthMode, setLengthValue, setLanguageField, readLanguageField, managedMacroValues, setNarrationPerson, setGlobalPreference, setUserAdditionalSetting, togglePrompt, updateEntryPoint, reconcilePreset, expandManagedMacros, openStyleEditor, saveStyleEditor, deleteUserStyle, getGroupOptions, readUserAdditionalSetting, openPromptEditor, savePromptEditor, closePromptEditor, setEditorField, get shadow(){return shadow;}, async settle(){await new Promise(r=>setTimeout(r,400));await saveChain;} };
   Object.assign(window.ui, {defaultAuthorLayout,validateAuthorLayout,authorLayout,placementEntry,placementMembers,placementSnapshot,setPlacementField,editEntryAction,getPromptGroupId});
 `+script.slice(script.indexOf(marker))+'\nstartPresetAssistant().then(() => { window.ui.openPanel(); window.testReady=true; });';
 injected=require('esbuild').buildSync({stdin:{contents:injected,resolveDir:path.resolve('src/preset'),sourcefile:'assistant.js'},bundle:true,format:'iife',platform:'browser',target:'es2022',write:false}).outputFiles[0].text;
@@ -42,10 +51,11 @@ await cdp('Emulation.setDeviceMetricsOverride',{width:1280,height:960,screenWidt
 await cdp('Page.navigate',{url:'file:///'+path.resolve('.ui-review/preview.html').replaceAll('\\','/')});
 for(let i=0;i<50;i++){if(await evaluate('window.testReady && !!window.ui?.shadow?.querySelector(".panel")'))break;await new Promise(r=>setTimeout(r,100));}
 console.log(await evaluate('({errors:window.errors,ready:!!window.ui,url:location.href})')); const result=await evaluate(`(async()=>{
-const results=[];const check=(name,ok)=>{if(!ok)throw Error(name);results.push(name)};const q=s=>ui.shadow.querySelector(s);const click=s=>{const e=q(s);if(!e)throw Error('Missing '+s);e.click()};await ui.settle();
+const modernLength=${JSON.stringify(modernLength)};const results=[];const check=(name,ok)=>{if(!ok)throw Error(name);results.push(name)};const q=s=>ui.shadow.querySelector(s);const click=s=>{const e=q(s);if(!e)throw Error('Missing '+s);e.click()};await ui.settle();
 check('默认日常页与六个主导航',ui.state.activeTab==='daily'&&ui.shadow.querySelectorAll('.tabs button').length===6&&!ui.shadow.querySelector('.tabs [data-tab="discussion"]'));
-  check('四项数值设置完整',ui.shadow.querySelectorAll('[data-action="field-number"]').length===4);
-  check('正文与思维链语言设置完整',ui.shadow.querySelectorAll('[data-action="language-input"]').length===2&&vars.managed_values_version===3&&vars.managed_values.body_language==='简体中文'&&vars.managed_values.thinking_language==='简体中文');
+  if (modernLength) check('现代字数预设启动无错误并显示三模式',window.errors.length===0&&vars.managed_values_version===4&&q('[data-length-mode]')?.querySelectorAll('[data-action="length-mode"]').length===3&&q('[data-action="length-number"][data-boundary="minimum"]')?.value==='1500');
+  else check('四项数值设置完整',ui.shadow.querySelectorAll('[data-action="field-number"]').length===4);
+  check('正文与思维链语言设置完整',ui.shadow.querySelectorAll('[data-action="language-input"]').length===2&&vars.managed_values_version===4&&vars.managed_values.body_language==='简体中文'&&vars.managed_values.thinking_language==='简体中文');
   click('[data-action="language-preset"][data-language="body"][data-value="English"]');await ui.settle();check('正文语言快捷选择自动保存',vars.managed_values.body_language==='English');
   let language=q('[data-action="language-input"][data-language="thinking"]');language.value='Deutsch';language.dispatchEvent(new Event('input',{bubbles:true}));await ui.settle();check('思维链语言支持自定义并自动保存',vars.managed_values.thinking_language==='Deutsch');
   check('语言短宏分别展开',ui.expandManagedMacros('<|正文语言|>|<|思维链语言|>')==='English|Deutsch');
@@ -57,9 +67,24 @@ for(const handler of handlers.get('GENERATE_AFTER_DATA')??[])await handler({prom
 check('实际请求回调保留九个中文结构标签',structuralMarkers.every(token=>guardedMessages[0].content.includes(token)));
 check('实际请求回调继续展开设置短宏',guardedMessages[0].content.endsWith(' 1500'));
 check('结构标签不产生未知宏通知',window.errors.length===noticesBefore);
-click('[data-action="field-preset"][data-field="hanzi"][data-value="2500"]');await ui.settle();check('档位自动保存',vars.managed_values.min_hanzi==='2500');
-let input=q('[data-action="field-number"][data-field="hanzi"]');input.focus();input.value='-';input.dispatchEvent(new Event('input',{bubbles:true}));ui.renderActiveContent(true);check('无效输入刷新后保留且不保存',q('[data-field="hanzi"][data-action="field-number"]').value==='-'&&vars.managed_values.min_hanzi==='2500');
-await ui.setNumericField('hanzi','1500');ui.renderActiveContent();
+if (!modernLength) {
+  click('[data-action="field-preset"][data-field="hanzi"][data-value="2500"]');await ui.settle();check('档位自动保存',vars.managed_values.min_hanzi==='2500');
+  let input=q('[data-action="field-number"][data-field="hanzi"]');input.focus();input.value='-';input.dispatchEvent(new Event('input',{bubbles:true}));ui.renderActiveContent(true);check('无效输入刷新后保留且不保存',q('[data-field="hanzi"][data-action="field-number"]').value==='-'&&vars.managed_values.min_hanzi==='2500');
+  await ui.setNumericField('hanzi','1500');ui.renderActiveContent();
+  const lengthPrompt = data.prompts.find(prompt=>prompt.id===ui.IDS.outputLength); const activeLengthPrompt = ui.state.preset.prompts.find(prompt=>prompt.id===ui.IDS.outputLength); lengthPrompt.content += '\\n<|字数要求|>'; activeLengthPrompt.content += '\\n<|字数要求|>'; ui.renderActiveContent();
+}
+  check('新字数宏显示三种长度模式',q('[data-length-mode]').querySelectorAll('[data-action="length-mode"]').length===3&&q('[data-action="length-number"][data-boundary="minimum"]').value==='1500');
+  click('[data-action="length-mode"][data-value="maximum"]');await ui.settle();check('不多于模式自动保存',vars.managed_values.length_mode==='maximum'&&q('[data-action="length-number"][data-boundary="maximum"]').value==='2500');
+  click('[data-action="length-mode"][data-value="range"]');await ui.settle();let minimum=q('[data-action="length-number"][data-boundary="minimum"]');minimum.focus();minimum.value='1800';minimum.dispatchEvent(new Event('input',{bubbles:true}));await ui.settle();check('范围下限保存、展开且保留输入焦点',vars.managed_values.min_hanzi==='1800'&&ui.expandManagedMacros('<|字数要求|>')==='1800—2500'&&ui.shadow.activeElement?.dataset.action==='length-number'&&ui.shadow.activeElement?.dataset.boundary==='minimum');
+  let maximum=q('[data-action="length-number"][data-boundary="maximum"]');maximum.focus();maximum.value='1700';maximum.dispatchEvent(new Event('input',{bubbles:true}));await ui.settle();ui.renderActiveContent(true);check('范围反转保留行内草稿且不保存',vars.managed_values.max_hanzi==='2500'&&q('[data-action="length-number"][data-boundary="maximum"]').value==='1700'&&q('[data-length-error]').textContent.includes('不能大于'));
+  maximum=q('[data-action="length-number"][data-boundary="maximum"]');maximum.value='2500';maximum.dispatchEvent(new Event('input',{bubbles:true}));await ui.settle();
+  minimum=q('[data-action="length-number"][data-boundary="minimum"]');minimum.focus();minimum.value='0';minimum.dispatchEvent(new Event('input',{bubbles:true}));ui.renderActiveContent(true);check('非法字数刷新后保留草稿与行内错误',q('[data-action="length-number"][data-boundary="minimum"]').value==='0'&&q('[data-length-error]').textContent.includes('有效的正整数'));
+  const previousPresetName=window.getLoadedPresetName,previousLengthValues=structuredClone(ui.state.config.managed_values);window.getLoadedPresetName=()=> 'length-context-B';ui.state.config.managed_values.min_hanzi='2100';ui.renderActiveContent(true);check('切换上下文不把旧字数输入草稿灌入新控件',q('[data-action="length-number"][data-boundary="minimum"]').value==='2100');window.getLoadedPresetName=previousPresetName;ui.state.config.managed_values=previousLengthValues;ui.renderActiveContent(true);
+  minimum=q('[data-action="length-number"][data-boundary="minimum"]');minimum.focus();minimum.value='';minimum.dispatchEvent(new Event('input',{bubbles:true}));await ui.runWorkspaceOperation('重新加载字数设置',async()=>{});check('配置操作清除旧字数输入草稿',q('[data-action="length-number"][data-boundary="minimum"]').value==='1800');
+  minimum=q('[data-action="length-number"][data-boundary="minimum"]');minimum.value='1800';minimum.dispatchEvent(new Event('input',{bubbles:true}));await ui.settle();
+  const savedLength=structuredClone(vars.managed_values),originalReplaceVariables=window.replaceVariables;window.replaceVariables=()=>{throw Error('字数保存失败')};await ui.setLengthValue('minimum','1600').catch(()=>{});check('字数保存失败回滚内存和持久值',vars.managed_values.min_hanzi===savedLength.min_hanzi&&ui.state.config.managed_values.min_hanzi===savedLength.min_hanzi);window.replaceVariables=originalReplaceVariables;
+  await ui.setLengthMode('maximum');await ui.setLengthValue('maximum','800');ui.renderActiveContent();click('[data-action="length-mode"][data-value="range"]');await ui.settle();check('反向范围进入可编辑行内错误状态',q('[data-action="length-number"][data-boundary="minimum"]')&&q('[data-action="length-number"][data-boundary="maximum"]')&&q('[data-length-error]').textContent.includes('先调整'));
+  await ui.setLengthValue('minimum','800');await ui.setLengthValue('maximum','2400');await ui.setLengthValue('minimum','1800');ui.renderActiveContent();
 click('[data-action="person"][data-value="second"]');await ui.settle();check('叙事人称保存',vars.managed_values.narration_person==='second');
 const pace=ui.GROUPS['plot-pace'].options[0][0];ui.applyGroup('plot-pace',pace);await ui.settle();check('剧情单选互斥并保存双份',data.prompts.filter(p=>ui.GROUPS['plot-pace'].options.some(([id])=>id===p.id)&&p.enabled).length===1&&stored.prompts.find(p=>p.id===pace).enabled);
 click('[data-tab="custom-settings"]');check('两种设定位于独立分类',!!q('[data-setting-list="global_settings"]')&&!!q('[data-setting-list="user_additional_settings"]'));
@@ -129,6 +154,7 @@ check('所有开关可访问名称完整',[...ui.shadow.querySelectorAll('input[
 ui.state.activeTab='daily';ui.state.disclosures.clear();ui.state.saveState='idle';ui.state.saveMessage='修改后自动保存，下次生成时使用';ui.render();return results;
 })()`);
 console.log(JSON.stringify(result,null,2));fs.writeFileSync('.ui-review/test-results.json',JSON.stringify(result,null,2));
+if (!modernLength) {
 const worldResults=await evaluate(fs.readFileSync('tests/ui/worldbook-tests.txt','utf8'));console.log(JSON.stringify(worldResults,null,2));fs.writeFileSync('.ui-review/worldbook-test-results.json',JSON.stringify(worldResults,null,2));
 const editorResults=await evaluate(fs.readFileSync('tests/ui/editor-tests.txt','utf8'));console.log(JSON.stringify(editorResults,null,2));fs.writeFileSync('.ui-review/editor-test-results.json',JSON.stringify(editorResults,null,2));
 const sortResults=await require('./sort-tests.cjs')(cdp,evaluate);console.log(JSON.stringify(sortResults,null,2));fs.writeFileSync('.ui-review/sort-test-results.json',JSON.stringify(sortResults,null,2));
@@ -149,6 +175,7 @@ const overflow=await evaluate(`(()=>{const root=ui.shadow;const c=root.querySele
 if(tab==='editor'){const layout=await evaluate(`(()=>{const p=ui.shadow.querySelector('.prompt-editor');const b=p.getBoundingClientRect();const body=p.querySelector('.prompt-editor-body');return {overflow:body.scrollWidth>body.clientWidth+1,outside:b.left<0||b.right>innerWidth+1||b.bottom>innerHeight+1}})()`);assert(!layout.overflow&&!layout.outside,name+JSON.stringify(layout));}
 const shot=await cdp('Page.captureScreenshot',{format:'png'});fs.writeFileSync('.ui-review/'+name+'.png',Buffer.from(shot.data,'base64'));console.log(name+' layout OK');}
 const lifecycleResults=await evaluate(fs.readFileSync('tests/ui/configuration-lifecycle-tests.txt','utf8'));console.log(JSON.stringify(lifecycleResults,null,2));fs.writeFileSync('.ui-review/configuration-lifecycle-results.json',JSON.stringify(lifecycleResults,null,2));
+}
 await cdp('Browser.close');
 }catch(e){console.error(e);process.exitCode=1;}finally{clearTimeout(watchdog);ws?.close();browser.kill();}
 })().catch(e => { console.error(e); process.exitCode = 1; });

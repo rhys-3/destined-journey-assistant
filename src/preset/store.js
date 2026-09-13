@@ -30,13 +30,25 @@ export function createStore(ctx) {
     return /^-?\d+$/u.test(normalized) ? normalized : fallback;
   }
 
+  function sanitizePositiveSafeInteger(value, fallback) {
+    const normalized = String(value ?? '').trim();
+    const number = Number(normalized);
+    return /^\d+$/u.test(normalized) && Number.isSafeInteger(number) && number > 0 ? normalized : fallback;
+  }
+
   function sanitizeManagedValues(value, preset = null) {
     const source = value && typeof value === 'object' ? value : {};
+    const minHanzi = sanitizePositiveSafeInteger(source.min_hanzi, ctx.DEFAULT_MANAGED_VALUES.min_hanzi);
+    const fallbackMaxHanzi = String(Math.max(2500, Number(minHanzi)));
+    const maxHanzi = sanitizePositiveSafeInteger(source.max_hanzi, fallbackMaxHanzi);
+    const lengthMode = ['minimum', 'maximum', 'range'].includes(source.length_mode) ? source.length_mode : 'minimum';
     const person = ['first', 'second', 'third'].includes(source.narration_person)
       ? source.narration_person
       : ctx.DEFAULT_MANAGED_VALUES.narration_person;
     return {
-      min_hanzi: sanitizeIntegerSetting(source.min_hanzi, ctx.DEFAULT_MANAGED_VALUES.min_hanzi),
+      min_hanzi: minHanzi,
+      max_hanzi: lengthMode === 'range' && Number(maxHanzi) < Number(minHanzi) ? minHanzi : maxHanzi,
+      length_mode: lengthMode,
       dialogue_ratio: sanitizeIntegerSetting(source.dialogue_ratio, ctx.DEFAULT_MANAGED_VALUES.dialogue_ratio),
       dialogue_round_trips: sanitizeIntegerSetting(source.dialogue_round_trips, ctx.DEFAULT_MANAGED_VALUES.dialogue_round_trips),
       combat_rounds: sanitizeIntegerSetting(source.combat_rounds, ctx.DEFAULT_MANAGED_VALUES.combat_rounds),
@@ -360,6 +372,7 @@ export function createStore(ctx) {
       const settingContext = ctx.syncSettingContext?.();
       const contextChanged = ctx.state.settingContextKey && settingContext !== ctx.state.settingContextKey;
       ctx.state.settingContextKey = settingContext;
+      if (contextChanged) ctx.clearLengthDraft?.();
       if (ctx.state.promptEditor && ctx.state.promptEditor.presetName !== getLoadedPresetName()) ctx.renderStyleEditorLayer();
       if (nextFingerprint === ctx.presetFingerprint) {
         if (contextChanged && ctx.state.open) ctx.renderActiveContent(true);

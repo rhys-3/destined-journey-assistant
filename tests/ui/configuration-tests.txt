@@ -7,6 +7,10 @@
   ui.closePromptEditor(true); ui.state.styleEditor = null;
   await ui.settle();
   const initialData = structuredClone(data), initialStored = structuredClone(stored), initialVars = structuredClone(vars);
+  for (const preset of [data, stored, ui.state.preset]) {
+    const lengthPrompt = preset.prompts.find(prompt => prompt.id === ui.IDS.outputLength);
+    if (!lengthPrompt.content.includes('<|字数要求|>')) lengthPrompt.content += '\n<|字数要求|>';
+  }
   const apis = Object.fromEntries(['getCharWorldbookNames','getGlobalWorldbookNames','getChatWorldbookName','getWorldbook','updateWorldbookWith','getLoadedPresetName','replacePreset','replaceVariables','triggerSlash','SillyTavern'].map(key => [key, window[key]]));
   let ctx = { chatId: 'configuration-test', characterId: 1 };
   let bound = [];
@@ -65,9 +69,11 @@
   await rejected('禁止删除当前模型', () => ui.deleteCustomModel(gid), '先切换');
   await ui.renameCustomModel(gid, 'GLM 正式');
   check('重命名保持模型与条目稳定 ID', ui.state.config.custom_models.find(m=>m.label==='GLM 正式')?.id===gid && ui.detectModelAdapter()===gid);
+  await ui.setLengthMode('range'); await ui.setLengthValue('minimum','1800'); await ui.setLengthValue('maximum','2400');
   const idA = await ui.saveNamedConfiguration('配置 A');
   check('保存命名配置后不显示已修改', ui.configLibrary().activeId===idA && !ui.configurationIsDirty());
   const snapA = structuredClone(ui.configLibrary().items.find(i=>i.id===idA).snapshot.preset);
+  check('命名配置保存字数模式与两端数值',JSON.stringify(snapA.config.managed_values)&&snapA.config.managed_values.length_mode==='range'&&snapA.config.managed_values.min_hanzi==='1800'&&snapA.config.managed_values.max_hanzi==='2400');
   check('配置没有递归包含配置库或扩展脚本', !('configuration_library' in snapA.config) && !('extensions' in snapA) && !('configuration_library' in snapA));
   ui.setGlobalPreference('立即切换前的防抖偏好');
   await ui.saveNamedConfiguration('配置 B');
@@ -75,6 +81,7 @@
   check('保存前刷新脚本变量防抖任务', ui.configLibrary().items.find(i=>i.id===idB).snapshot.preset.config.managed_values.global_settings[0].text==='立即切换前的防抖偏好');
   ui.setUserAdditionalSetting('立即切换前的条目防抖');
   await ui.applyConfiguration(idA);
+  check('命名配置恢复字数模式与两端数值',ui.state.config.managed_values.length_mode==='range'&&ui.state.config.managed_values.min_hanzi==='1800'&&ui.state.config.managed_values.max_hanzi==='2400');
   check('切换前刷新条目防抖并保存在恢复点', ui.configLibrary().recovery.snapshot.preset.config.managed_values.user_additional_settings[0].text==='立即切换前的条目防抖');
   await pause(400);
   check('旧防抖不覆盖新配置', JSON.stringify(ui.state.config.managed_values.global_settings)===JSON.stringify(snapA.config.managed_values.global_settings) && ui.readUserAdditionalSetting().value!=='- 立即切换前的条目防抖');
@@ -96,7 +103,7 @@
   const count=ui.configLibrary().items.length;
   await ui.importConfigurations(exported);
   check('导入同名配置自动改名且不自动应用', ui.configLibrary().items.length===count+1 && ui.configLibrary().items.at(-1).name==='完整配置 C (2)' && ui.configLibrary().activeId===idC);
-  check('导入冲突配置 ID 重新生成而快照保持一致',ui.configLibrary().items.at(-1).id!==idC && JSON.stringify(ui.configLibrary().items.at(-1).snapshot)===JSON.stringify(ui.configLibrary().items.find(i=>i.id===idC).snapshot));
+  check('导入冲突配置 ID 重新生成且字数设置往返保持',ui.configLibrary().items.at(-1).id!==idC && JSON.stringify(ui.configLibrary().items.at(-1).snapshot)===JSON.stringify(ui.configLibrary().items.find(i=>i.id===idC).snapshot) && ui.configLibrary().items.at(-1).snapshot.preset.config.managed_values.length_mode==='range' && ui.configLibrary().items.at(-1).snapshot.preset.config.managed_values.min_hanzi==='1800' && ui.configLibrary().items.at(-1).snapshot.preset.config.managed_values.max_hanzi==='2400');
   await rejected('畸形 JSON 拒绝导入',()=>ui.importConfigurations('{'));
   const invalid=JSON.parse(exported);invalid.version=9;
   await rejected('未来文件版本拒绝导入',()=>ui.importConfigurations(JSON.stringify(invalid)),'不支持');

@@ -125,6 +125,14 @@ export function createEvents(ctx) {
       card?.querySelectorAll('.chips button').forEach(button => button.classList.toggle('selected', button === target));
       return card?.querySelector('[data-action="field-number"]')?.focus();
     }
+    if (action === 'length-mode') {
+      return ctx.setLengthMode(target.dataset.value).then(() => ctx.renderActiveContent(true)).catch(error => {
+        const message = error instanceof Error ? error.message : String(error);
+        const field = target.closest('.numeric-card')?.querySelector('[data-length-error]');
+        if (field) field.textContent = message;
+        ctx.showErrorToast(error);
+      });
+    }
     if (action === 'language-preset') {
       const task = ctx.setLanguageField(target.dataset.language, target.dataset.value);
       const card = target.closest('.language-card');
@@ -245,12 +253,28 @@ export function createEvents(ctx) {
       const card = target.closest('.numeric-card');
       card?.querySelectorAll('.chips button').forEach(button => button.classList.toggle('selected', button.dataset.action === 'field-custom'));
       const error = card?.querySelector(`[data-field-error="${key}"]`);
-      if (!/^-?\d+$/u.test(value)) {
-        if (error) error.textContent = value ? '请输入有效整数。' : '自定义数值不能为空。';
+      const valid = key === 'hanzi'
+        ? /^\d+$/u.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0
+        : /^-?\d+$/u.test(value);
+      if (!valid) {
+        if (error) error.textContent = key === 'hanzi' ? (value ? '请输入有效的正整数。' : '正文字数不能为空。') : (value ? '请输入有效整数。' : '自定义数值不能为空。');
         return;
       }
       if (error) error.textContent = '';
       return ctx.setNumericField(key, value).catch(ctx.showErrorToast);
+    }
+    if (action === 'length-number') {
+      const value = String(target.value ?? '').trim();
+      const error = target.closest('.numeric-card')?.querySelector('[data-length-error]');
+      if (!/^\d+$/u.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) {
+        if (error) error.textContent = value ? '请输入有效的正整数。' : '字数不能为空。';
+        return;
+      }
+      if (error) error.textContent = '';
+      return ctx.setLengthValue(target.dataset.boundary, value).catch(reason => {
+        if (error) error.textContent = reason instanceof Error ? reason.message : String(reason);
+        ctx.showErrorToast(reason);
+      });
     }
     if (action === 'language-input') {
       const key = target.dataset.language;
