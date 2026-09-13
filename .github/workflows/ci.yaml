@@ -54,7 +54,7 @@ jobs:
           python-version: '3.x'
       - run: python -m unittest discover -s tests -p test_update_types.py
         if: needs.plan.outputs.python == 'true' && runner.os == 'Linux'
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: needs.plan.outputs.build == 'true'
         with:
           version: 10
