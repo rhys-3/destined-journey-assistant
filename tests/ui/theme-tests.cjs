@@ -17,7 +17,9 @@ module.exports=async(cdp,evaluate)=>{
   if(ui.shadow.querySelector('.entry-point-card'))throw Error('入口不应留在模型工具页');
   ui.shadow.querySelector('[data-tab="settings"]').click();
   if(!ui.shadow.querySelector('.entry-point-card')||!ui.shadow.querySelector('.appearance-card')||ui.shadow.querySelector('.panel-head [data-action="ui-theme"]'))throw Error('设置页迁移不完整');
-  if(ui.shadow.querySelectorAll('.tabs button').length!==6)throw Error('设置导航缺失');
+  const expectedTabs=[...ui.authorLayout().pages.filter(page=>!page.hidden).map(page=>page.id),'summary','settings'];
+  const actualTabs=[...ui.shadow.querySelectorAll('.tabs button')].map(button=>button.dataset.tab);
+  if(expectedTabs.length!==actualTabs.length||expectedTabs.some(id=>!actualTabs.includes(id)))throw Error('设置导航缺失');
   const root=ui.shadow, panel=root.querySelector('.panel'), frame=getComputedStyle(panel,'::after');
   if(frame.content!=='none')throw Error('不应恢复装饰外框');
   const paint=getComputedStyle(panel);
@@ -35,7 +37,7 @@ module.exports=async(cdp,evaluate)=>{
   assert.equal(await evaluate('ui.shadow.querySelector(".destined-root").dataset.theme'),theme);
   for(const [width,height] of [[1280,960],[768,1024],[390,844],[320,640],[844,390]]){
    await cdp('Emulation.setDeviceMetricsOverride',{width,height,screenWidth:width,screenHeight:height,deviceScaleFactor:1,mobile:width<720||height<500});
-   for(const tab of ['daily','custom-settings','style','tools','settings','advanced','editor']){
+   for(const tab of ['daily','custom-settings','discussion','style','tools','settings','advanced','editor']){
     await evaluate(`ui.closePromptEditor(true);ui.state.activeTab=${JSON.stringify(tab==='editor'?'advanced':tab)};ui.render();${tab==='editor'?'ui.openPromptEditor(ui.IDS.eventChain);':''}`);
     await new Promise(r=>setTimeout(r,35));
     const bounds=await evaluate(`(()=>{const root=ui.shadow,p=root.querySelector('.panel').getBoundingClientRect();const containers=[...root.querySelectorAll('.content,.panel-head,.head-actions,.configuration-shortcut,.prompt-editor-body')];return{outside:p.left<0||p.top<0||p.right>innerWidth+1||p.bottom>innerHeight+1,overflow:containers.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.className),space:root.querySelector('.content').clientHeight}})()`);
@@ -48,7 +50,7 @@ module.exports=async(cdp,evaluate)=>{
     }
    }
   }
-  results.push(theme+': 七个页面 × 五种屏幕尺寸，无内容溢出');
+  results.push(theme+': 八个页面 × 五种屏幕尺寸，无内容溢出');
  }
  await evaluate('ui.closePromptEditor(true);ui.state.activeTab="daily";ui.render()');
  assert.equal(await evaluate('JSON.stringify({data,stored,vars})'),before,'切换外观不得写入预设与脚本配置');

@@ -1,4 +1,5 @@
 import * as summary from '../summary/service.js';
+import { sanitizeDiscussionSettings } from '../discussion/preferences.js';
 import { DESCRIPTION_KEYS, DESCRIPTION_LIMIT } from './descriptions.js';
 import { migrateCustomSettingPrompts } from './setting-items.js';
 
@@ -108,6 +109,15 @@ export function createConfigurationSchema(ctx) {
           .filter(key => Object.hasOwn(ui,key) && ['string','number','boolean'].includes(typeof ui[key]))
           .map(key => [key,ui[key]])
       );
+      if (Object.hasOwn(prompt.extra, 'destined_mode')) {
+        // v1-v3 exports may retain this field. It has no runtime meaning in v4.
+        assertData(typeof prompt.extra.destined_mode === 'string' && prompt.extra.destined_mode.length <= 32, '旧版讨论标记无效：' + prompt.name);
+        result.extra.destined_mode = prompt.extra.destined_mode;
+      }
+      if (Object.hasOwn(prompt.extra, 'system_prompt')) {
+        assertData(typeof prompt.extra.system_prompt === 'boolean', '原生系统条目标记无效：' + prompt.name);
+        result.extra.system_prompt = prompt.extra.system_prompt;
+      }
       if (ui?.descriptions !== undefined) {
         assertData(plainObject(ui.descriptions), '界面简介格式无效：'+prompt.name);
         assertData(Object.entries(ui.descriptions).every(([key,value])=>DESCRIPTION_KEYS.includes(key)&&typeof value==='string'&&value.length<=DESCRIPTION_LIMIT), '界面简介字段或长度无效：'+prompt.name);
@@ -137,6 +147,7 @@ export function createConfigurationSchema(ctx) {
       prompts: preset.prompts.map(snapshotPrompt), prompts_unused: (preset.prompts_unused ?? []).map(snapshotPrompt),
       config: snapshotConfig(config, preset),
       author: preset.extensions?.destined_author ? ctx.validateAuthorLayout(preset.extensions.destined_author) : null,
+      discussion: sanitizeDiscussionSettings(preset.extensions?.destined_discussion),
     };
     const tail = ctx.getGeminiTail(preset);
     if (tail) result.config.model_tail_modes.Gemini = tail;
@@ -151,6 +162,7 @@ export function createConfigurationSchema(ctx) {
       prompts: value.prompts.map(snapshotPrompt), prompts_unused: value.prompts_unused.map(snapshotPrompt),
       config: snapshotConfig(value.config, value),
       author: value.author == null ? null : ctx.validateAuthorLayout(value.author),
+      ...(Object.hasOwn(value, 'discussion') ? { discussion: sanitizeDiscussionSettings(value.discussion) } : {}),
     };
     const seen = new Set();
     for (const prompt of [...result.prompts, ...result.prompts_unused]) {

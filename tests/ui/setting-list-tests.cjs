@@ -25,7 +25,7 @@ module.exports = async (cdp, evaluate) => {
   await size(1280,960);
   await run('ui.closePromptEditor(true);ui.state.editorUnlocked=false;ui.state.styleEditor=null;ui.state.config.connection_link.enabled=false;ui.render();await ui.settle();');
   await click('.tabs [data-tab="custom-settings"]');
-  await check('导航顺序与合并设置入口完整','JSON.stringify([...ui.shadow.querySelectorAll(".tabs strong")].map(n=>n.textContent))===JSON.stringify(["日常调整","自定义设定","文风与表达","模型与工具","总结设置","设置"])');
+  await check('导航顺序与合并设置入口完整','JSON.stringify([...ui.shadow.querySelectorAll(".tabs strong")].map(n=>n.textContent))===JSON.stringify([...ui.authorLayout().pages.filter(p=>!p.hidden).sort((a,b)=>a.order-b.order).map(p=>p.label),"总结设置","设置"])');
   await run('await ui.setGlobalPreference("");ui.renderActiveContent(true);');
   await click(action('global_settings','add'));
   await check('加号直接添加并聚焦紧凑输入框，无弹窗','!ui.shadow.querySelector(".dj-dialog")&&ui.shadow.querySelectorAll(' + JSON.stringify(action('global_settings','text')) + ').length===1&&ui.shadow.activeElement.dataset.action==="setting-text"&&ui.shadow.activeElement.getBoundingClientRect().height<100');

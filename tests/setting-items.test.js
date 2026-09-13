@@ -125,6 +125,11 @@ test('default layout migration moves both settings without mutating its input or
   const placement = createPlacement({ clone: structuredClone, assertData: (ok, message) => { if (!ok) throw Error(message); }, plainObject: value => value && typeof value === 'object', DEFAULT_GROUP_OPTION_IDS: {} });
   const old = placement.defaultAuthorLayout();
   old.pages = old.pages.filter(page => page.id !== 'custom-settings');
+  old.pages.push({ id: 'discussion', label: '场外讨论', order: 4, hidden: false });
+  old.blocks.push({ id: 'discussion-prompts', page: 'discussion', label: '场外讨论条目', kind: 'toggles', order: 25, hidden: false, allowNone: false, defaultId: '' });
+  old.blocks.push({ id: 'discussion-custom', page: 'discussion', label: '自建讨论条目', kind: 'toggles', order: 26, hidden: false, allowNone: false, defaultId: '' });
+  old.pages.push({ id: 'custom-page', label: '自定义页', order: 77, hidden: true });
+  old.blocks.push({ id: 'custom-block', page: 'custom-page', label: '自定义块', kind: 'toggles', order: 78, hidden: true, allowNone: false, defaultId: '' });
   old.pages.find(page => page.id === 'style').label = '文风与偏好';
   old.blocks.find(block => block.id === 'preference').label = '长期叙事偏好';
   for (const block of old.blocks.filter(block => ['preference', 'user-additional'].includes(block.id))) block.page = 'style';
@@ -133,6 +138,11 @@ test('default layout migration moves both settings without mutating its input or
   assert.deepEqual(old, before);
   assert.deepEqual(migrated.pages.slice(0, 3).map(page => page.label), ['日常调整', '自定义设定', '文风与表达']);
   assert.equal(migrated.blocks.find(block => block.id === 'preference').page, 'custom-settings');
+  assert(!migrated.pages.some(page => page.id === 'discussion'));
+  assert.deepEqual(migrated.pages.find(page => page.id === 'custom-page'), { id: 'custom-page', label: '自定义页', order: 5, hidden: true });
+  assert.deepEqual(migrated.blocks.find(block => block.id === 'custom-block'), { id: 'custom-block', page: 'custom-page', label: '自定义块', kind: 'toggles', order: 78, hidden: true, allowNone: false, defaultId: '' });
+  assert.equal(migrated.blocks.some(block => block.id === 'discussion-prompts'), false);
+  assert.equal(migrated.blocks.find(block => block.id === 'discussion-custom').page, 'tools');
   assert.deepEqual(placement.validateAuthorLayout(migrated), migrated);
   old.blocks.find(block => block.id === 'preference').page = 'tools';
   old.blocks.find(block => block.id === 'preference').label = '自己的分区';

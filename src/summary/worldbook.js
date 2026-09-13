@@ -9,6 +9,7 @@ import { allFloorMessages, readVisibilityOverrides, readVisibilityAutomation } f
 import { parseSummaryEntryName, parseMegaSummaryEntryName, isMegaSummaryEntry, normalizeWorldbookEntries } from './utils.js';
 import { getSettings, getMegaSummaryMap, saveMegaSummaryMap, setMegaSummaryMapping, getMegaSummaryMapping, deleteMegaSummaryMapping } from './storage.js';
 import { recoverLegacyMegaSources } from './legacySources.js';
+import { getDiscussionMessageIds } from './messages.js';
 import { captureContext, checkContext, createWorldbook, rebindGlobalWorldbooks, createWorldbookEntries, updateWorldbookWith, setChatMessages, writeVariableKeys, replaceWorldbook, deleteWorldbook } from '../platform/lifecycle.js';
 /**
  * worldbook.js
@@ -585,7 +586,7 @@ async function toggleMegaSummary(name, enabled, remove = false) {
   if (!summaryNames?.length) throw new Error('没有找到原始总结来源映射，请检查对应楼层的普通总结是否完整');
   const { entries, archive, sources } = await getCoverage();
   if (enabled) {
-    consecutiveSummaries(summaryNames);
+    consecutiveSummaries(summaryNames, { discussionIds: new Set(await getDiscussionMessageIds()) });
     if (!recordValid(entries.find(entry=>entry.name===name),archive,sources,entries)) throw new Error('来源已变化，请先重新生成大总结');
     const range=parseRange(name);
     if(entries.some(entry=>entry.name!==name&&parseMegaSummaryEntryName(entry.name)&&!isEntryDisabled(entry)&&parseRange(entry.name).end>=range.start&&parseRange(entry.name).start<=range.end))throw new Error('范围与另一条启用的大总结重叠');
@@ -722,7 +723,7 @@ export async function commitArchiveEntry(name, content, { taskId, sources, paren
   if (!content?.trim()) throw new Error('总结正文不能为空');
   const range = parseRange(name), mega = !!parseMegaSummaryEntryName(name);
   if (!range) throw new Error('总结条目名称无效');
-  if (mega) consecutiveSummaries(summaryNames);
+  if (mega) consecutiveSummaries(summaryNames, { discussionIds: new Set(await getDiscussionMessageIds()) });
   await ensureWorldbookExists({ taskId });
   const book = getActiveWorldbookName(), archive = readArchive(book), entries = await getWorldbookEntriesSafe();
   const existing = entries.find(entry => entry.name === name);

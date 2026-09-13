@@ -58,6 +58,7 @@ import { createConfigurationSchema } from './configuration-schema.js';
 import { createConfigurations } from './configurations.js';
 import { createCustomModels } from './custom-models.js';
 import * as summary from '../summary/service.js';
+import { startDiscussion } from '../discussion/service.js';
 
 import { createDialogs, DIALOG_STYLES } from '../ui/dialogs.js';
 import { PANEL_CSS } from '../ui/styles.js';
@@ -68,6 +69,7 @@ export async function startPresetAssistant() {
 
   // Live references preserve instance ownership, pending writes and cleanup across modules.
   const ctx = {
+    get discussion() { return discussion; },
     get AFTER_BODY_IDS() { return AFTER_BODY_IDS; },
     get BEAUTIFY_IDS() { return BEAUTIFY_IDS; },
     get BUILTIN_MODEL_ADAPTERS() { return BUILTIN_MODEL_ADAPTERS; },
@@ -149,6 +151,7 @@ export async function startPresetAssistant() {
     get editEntryAction() { return editEntryAction; },
     get emptyLibrary() { return emptyLibrary; },
     get enqueueScriptConfigSave() { return enqueueScriptConfigSave; },
+    get ensureDiscussionAuthorLayout() { return ensureDiscussionAuthorLayout; },
     get ensurePromptMetadata() { return ensurePromptMetadata; },
     get escapeHtml() { return escapeHtml; },
     get eventStops() { return eventStops; },
@@ -429,6 +432,7 @@ export async function startPresetAssistant() {
     defaultAuthorLayout,
     validateAuthorLayout,
     authorLayout,
+    ensureDiscussionAuthorLayout,
     authorDependency,
     legacyAuthorBlock,
     placementEntry,
@@ -591,6 +595,7 @@ export async function startPresetAssistant() {
   let saveChain = Promise.resolve();
   let destroyed = false;
   let dialogs = null;
+  let discussion = null;
   let configurationScopes = { preset: true, summary: true };
   let exportScopes = { preset: true, summary: true };
   let metadataEnriching = false;
@@ -640,6 +645,7 @@ export async function startPresetAssistant() {
   syncEntryPoints();
 
   createUi();
+  discussion = startDiscussion(ctx);
   dialogs = createDialogs({ getRoot: () => shadow, open: () => { if (!state.open) openPanel(); } });
   await summary.initialize({
     popup: (...args) => dialogs.popup(...args),

@@ -29,6 +29,7 @@
   await ui.selectModelAdapter('Gemini'); await ui.settle();
   const builtin = ui.modelRegistry();
   const originalCount = data.prompts.length;
+  check('公共界面没有独立场外讨论页', !ui.authorLayout().pages.some(page => page.id === 'discussion') && !ui.authorLayout().blocks.some(block => block.id === 'discussion-prompts'));
 
   ui.state.editorUnlocked=true;ui.state.activeTab = 'tools'; ui.render();
   let input = ui.shadow.querySelector('[data-action="model-draft"][data-field="name"]');

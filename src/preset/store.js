@@ -1,5 +1,6 @@
 import { writePresetStore } from '../platform/store.js';
 import { normalizeCustomSettingValues } from './setting-items.js';
+import { DISCUSSION_SETTINGS_KEY } from '../discussion/preferences.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createStore(ctx) {
@@ -191,6 +192,7 @@ export function createStore(ctx) {
     return JSON.stringify({
       settings: preset.settings,
       author: preset.extensions?.destined_author,
+      discussion: preset.extensions?.[DISCUSSION_SETTINGS_KEY] ?? null,
       prompts: (preset.prompts ?? []).map(prompt => ({
         id: prompt.id,
         name: prompt.name,

@@ -4,7 +4,7 @@ import * as definitions from '../src/preset/definitions.js';
 import { createManaged } from '../src/preset/managed.js';
 import { createStore } from '../src/preset/store.js';
 
-const markers = ['正文开始', '历史开始', '深度900分界', '深度2分界', '历史结束', '正文结束', '记忆区', '参考区', '运行规则区'].map(name => `<|命定_${name}|>`);
+const markers = ['正文开始', '历史开始', '深度900分界', '深度2分界', '历史结束', '正文结束', '记忆区', '参考区', '运行规则区', '资料开始', '资料结束', '场外讨论'].map(name => `<|命定_${name}|>`);
 function setup(t, overrides = {}) {
   const notices = [], previousToast = globalThis.toastr;
   globalThis.toastr = { error: message => notices.push(message) };

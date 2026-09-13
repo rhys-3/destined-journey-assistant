@@ -43,6 +43,7 @@ export function createRender(ctx) {
     ctx.applyPanelGeometry();
     renderStyleEditorLayer();
     renderStatus();
+    ctx.discussion?.refresh();
   }
 
   function renderActiveContent(preserveScroll = false) {
@@ -154,7 +155,7 @@ export function createRender(ctx) {
     return `
       <section class="panel" data-tt-mobile-surface="free-window" role="dialog" aria-modal="false" aria-labelledby="destined-title">
         <header class="panel-head" data-panel-drag-handle title="拖动窗口">
-          <div><span class="eyebrow">DESTINED DUSK PRIME</span><h2 id="destined-title">${renderFeatherIcon()}命定·黄昏 Prime <span>预设助手</span></h2><p>按你的习惯，调整叙事与表达。</p></div>
+          <div class="panel-title-row"><h2 id="destined-title">命定·黄昏 Prime <span>预设助手</span></h2></div>
           <div class="head-actions"><label class="edit-mode-switch"><input type="checkbox" data-action="edit-mode" aria-label="编辑模式" ${ctx.state.editorUnlocked?'checked':''} ${ctx.state.reorderSaving||ctx.state.promptEditor?.saving?'disabled':''}><span>编辑模式</span></label><button type="button" class="secondary-button" data-action="tab" data-tab="advanced">预设条目</button><button class="icon-button" type="button" data-action="close" aria-label="关闭设置">×</button></div>
         </header>
         <div class="configuration-shortcut">${ctx.renderConfigurationShortcut()}</div>

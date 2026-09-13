@@ -1,6 +1,7 @@
 import { errorCatched } from './errorHandler.js';
 import { escapeRegex } from './utils.js';
 import { SillyTavern } from '../platform/lifecycle.js';
+import { isDiscussionMessage } from '../discussion/protocol.js';
 /**
  * messages.js
  * 聊天消息的提取、标签过滤、合并处理
@@ -33,6 +34,7 @@ const getRawMessages = errorCatched(async (startFloor, endFloor) => {
     name: m.name,
     message: m.message,
     swipe_id: m.swipe_id ?? null,
+    extra: structuredClone(m.extra ?? {}),
   }));
 });
 
@@ -41,6 +43,10 @@ const getAllRawMessages = errorCatched(async () => {
   if (lastId < 0) return [];
   return await getRawMessages(0, lastId);
 });
+
+const getDiscussionMessageIds = errorCatched(async () =>
+  (await getAllRawMessages()).filter(isDiscussionMessage).map(message => message.id),
+);
 
 const extractTagContent = (text, tagNames) => {
   if (!text || !tagNames || tagNames.length === 0) return text || "";
@@ -94,6 +100,7 @@ const processMessagesByTags = (
 ) => {
   const results = [];
   for (const msg of messages) {
+    if (isDiscussionMessage(msg)) continue;
     let content = msg.message || "";
     if (excludeHtmlComments) {
       content = removeHtmlComments(content);
@@ -134,7 +141,7 @@ const messagesToMergedText = (
 
 const getRawChatTextForScan = errorCatched(async (startFloor, endFloor) => {
   const msgs = await getRawMessages(startFloor, endFloor);
-  return msgs.map((m) => m.message).join("\n");
+  return msgs.filter(message => !isDiscussionMessage(message)).map((m) => m.message).join("\n");
 });
 
-export { replaceMacros, getRawMessages, getAllRawMessages, extractTagContent, excludeTagContent, removeHtmlComments, processMessagesByTags, messagesToMergedText, getRawChatTextForScan };
+export { replaceMacros, getRawMessages, getAllRawMessages, getDiscussionMessageIds, extractTagContent, excludeTagContent, removeHtmlComments, processMessagesByTags, messagesToMergedText, getRawChatTextForScan };

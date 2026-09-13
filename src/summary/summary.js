@@ -7,7 +7,8 @@ import { parseRange, excludeRange, consecutiveSummaries, recordValid } from './p
 import { getTask, clearTask, updatePendingTask, taskBatchFields } from './taskState.js';
 import { getHost, captureContext, checkContext } from '../platform/lifecycle.js';
 import { runSummaryTask } from './taskRunner.js';
-import { splitFloorBatches, batchTaskSpec } from './batchPlan.js';
+import { splitFloorBatches, batchTaskSpec, bridgeDiscussionGaps } from './batchPlan.js';
+import { isDiscussionMessage } from '../discussion/protocol.js';
 
 export const showSummaryHint = (message, kind = 'info') => getHost()?.status(message, kind);
 export const hideSummaryHint = () => {};
@@ -27,9 +28,11 @@ export async function computeSummaryPlans(settings = getSettings()) {
   const ignored = [...archive.excluded, ...entries.filter(entry => isEntryDisabled(entry) && !archive.records[entry.name]?.invalid).map(entry => parseRange(entry.name)).filter(Boolean)];
   const isIgnored = id => ignored.some(range => id >= range.start && id <= range.end);
   const raw = await getRawMessages(0, lastId);
-  const outstanding = raw.filter(message => !floors.has(message.id) && !isIgnored(message.id));
-  const eligible = outstanding.filter(message => message.id <= lastId - settings.keepFloorCount);
-  return splitFloorBatches(eligible,settings.batchFloorCount).map(plan=>({...plan,lastId,unsummarizedCount:outstanding.length}));
+  const story = raw.filter(message => !isDiscussionMessage(message));
+  const outstanding = story.filter(message => !floors.has(message.id) && !isIgnored(message.id));
+  const keepBoundary = story.length > settings.keepFloorCount ? story.at(story.length - settings.keepFloorCount - 1).id : -1;
+  const eligible = outstanding.filter(message => message.id <= keepBoundary);
+  return splitFloorBatches(eligible,settings.batchFloorCount,{canBridgeGap:bridgeDiscussionGaps(raw)}).map(plan=>({...plan,lastId,unsummarizedCount:outstanding.length}));
 }
 export async function computeSummaryPlan() { return (await computeSummaryPlans())[0]??null; }
 export async function shouldAutoTrigger() { const plan = await computeSummaryPlan(); return !!plan && plan.unsummarizedCount >= getSettings().triggerFloorCount; }
@@ -41,7 +44,8 @@ export async function computeMegaPlan() {
   for (let i = 0; i <= normals.length - settings.megaBatchCount; i++) {
     const names = normals.slice(i, i + settings.megaBatchCount).map(entry => entry.name);
     try {
-      const ranges = consecutiveSummaries(names), entryName = makeMegaSummaryEntryName(ranges[0].start, ranges.at(-1).end);
+      const discussionIds = new Set((await getRawMessages(0, getLastMessageId())).filter(isDiscussionMessage).map(message => message.id));
+      const ranges = consecutiveSummaries(names, { discussionIds }), entryName = makeMegaSummaryEntryName(ranges[0].start, ranges.at(-1).end);
       if (!archive.megaExcluded.some(name=>{const range=parseRange(name);return range&&range.end>=ranges[0].start&&range.start<=ranges.at(-1).end;})) return { summaryNames: names, entryName };
     } catch { /* Skip a gap, never claim its intervening floors. */ }
   }
@@ -58,14 +62,17 @@ export async function executeSummary(startFloor, endFloor, entryName, options = 
   const validation = await validateManualSummaryRange(startFloor, endFloor, { replacing: options.regenerate });
   if (!validation.ok) throw new Error(validation.message);
   if(!options.regenerate){
-    const raw=await getRawMessages(startFloor,endFloor),plans=splitFloorBatches(raw,getSettings().batchFloorCount,{exactEnd:true});
-    if(plans.reduce((count,plan)=>count+plan.endFloor-plan.startFloor+1,0)!==raw.length)throw new Error('每批上限太小，无法按完整回复拆分；请提高每批最多楼层数');
+    const raw=await getRawMessages(startFloor,endFloor),story=raw.filter(message=>!isDiscussionMessage(message));
+    if(!story.some(message=>message.role==='assistant'))return showSummaryHint('所选范围只有讨论，没有可归档的 AI 正文');
+    const plans=splitFloorBatches(story,getSettings().batchFloorCount,{exactEnd:true,canBridgeGap:bridgeDiscussionGaps(raw)});
+    if(plans.reduce((count,plan)=>count+story.filter(message=>message.id>=plan.startFloor&&message.id<=plan.endFloor).length,0)!==story.length)throw new Error('每批上限太小，无法按完整回复拆分；请提高每批最多楼层数');
     if(plans.length>1)return runSummaryTask(batchTaskSpec(plans));
   }
   return runSummaryTask({ kind: 'normal', startFloor, endFloor, entryName, regenerate: !!options.regenerate });
 }
 export async function executeMegaSummary(summaryNames, entryName, options = {}) {
-  const ranges = consecutiveSummaries(summaryNames);
+  const discussionIds = new Set((await getRawMessages(0, getLastMessageId())).filter(isDiscussionMessage).map(message => message.id));
+  const ranges = consecutiveSummaries(summaryNames, { discussionIds });
   return runSummaryTask({ kind: 'mega', summaryNames, entryName, startFloor: ranges[0].start, endFloor: ranges.at(-1).end, regenerate: !!options.regenerate });
 }
 export async function retryTask(mode, body) {

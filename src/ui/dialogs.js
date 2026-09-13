@@ -11,7 +11,7 @@ export const DIALOG_STYLES = `
 `;
 export function createDialogs({ getRoot, open }) {
   const pending=new Set();
-  function show({title='总结',message='',value,rows=12,choices,cancelValue=null,readOnly=false,recordWrite=false,fields,validate}) {
+  function show({title='总结',message='',value,rows=12,choices,cancelValue=null,readOnly=false,recordWrite=false,fields,validate,render}) {
     open(); const root=getRoot();
     return new Promise(resolve=>{
       const doc=root.ownerDocument,backdrop=doc.createElement('div'); backdrop.className='dj-dialog-backdrop';
@@ -25,14 +25,24 @@ export function createDialogs({ getRoot, open }) {
       const controls=new Map();
       if(fields){
         const grid=doc.createElement('div');grid.className='dj-dialog-fields';content.append(grid);
+        const sections=new Map();
         for(const field of fields){
+          let holder=grid;
+          if(field.section){
+            if(!sections.has(field.section)){
+              const details=doc.createElement('details');details.style.gridColumn='1 / -1';
+              const summary=doc.createElement('summary');summary.textContent=field.section;summary.style.cssText='cursor:pointer;padding:8px 0;color:var(--muted)';
+              const group=doc.createElement('div');group.className='dj-dialog-fields';details.append(summary,group);grid.append(details);sections.set(field.section,group);
+            }
+            holder=sections.get(field.section);
+          }
           const label=doc.createElement('label');label.className='dj-dialog-field'+(field.type==='textarea'?' dj-dialog-field-wide':'');label.textContent=field.label;
           const control=doc.createElement(field.type==='textarea'?'textarea':field.type==='select'?'select':'input');
           if(control.tagName==='INPUT')control.type=field.type||'text';
           if(field.options)for(const [value,text] of field.options){const option=doc.createElement('option');option.value=value;option.textContent=text;control.append(option);}
           control.value=field.value??'';control.dataset.formField=field.name;control.setAttribute('aria-label',field.label);
-          for(const key of ['min','max','step','placeholder'])if(field[key]!==undefined)control.setAttribute(key,String(field[key]));
-          label.append(control);grid.append(label);controls.set(field.name,control);
+          for(const key of ['min','max','step','placeholder','maxlength'])if(field[key]!==undefined)control.setAttribute(key,String(field[key]));
+          label.append(control);holder.append(label);controls.set(field.name,control);
           if(field.macros){
             const menu=doc.createElement('select');menu.className='dj-dialog-insert';menu.setAttribute('aria-label','插入变量');const placeholder=doc.createElement('option');placeholder.value='';placeholder.textContent='插入变量…';menu.append(placeholder);
             for(const [name,text] of field.macros){const option=doc.createElement('option');option.value=name;option.textContent=text+' · {{'+name+'}}';menu.append(option);}
@@ -40,6 +50,8 @@ export function createDialogs({ getRoot, open }) {
           }
         }
       }
+      // Complex editors share the same lifecycle, focus trap, and viewport handling as forms.
+      const rendered=render?.({ doc, content, dialog });
       const error=doc.createElement('div');error.className='dj-dialog-error';error.setAttribute('role','alert');error.hidden=true;content.append(error);
       const actions=doc.createElement('div');actions.className='dj-dialog-actions';dialog.append(actions);backdrop.append(dialog);
       const previous=root.activeElement;let finished=false;let off=()=>{};
@@ -57,8 +69,8 @@ export function createDialogs({ getRoot, open }) {
       const cancel=()=>finish(cancelValue);pending.add(cancel);off=onCancel(cancel);
       for(const [label,result] of choices){const button=doc.createElement('button');button.type='button';button.textContent=label;if(recordWrite&&result==='__input__')button.dataset.recordSave='';button.onclick=()=>{
         if(result==='__copy__'){doc.defaultView.navigator.clipboard.writeText(input.value).catch(()=>{});return;}
-        const value=result==='__form__'?Object.fromEntries([...controls].map(([name,control])=>[name,control.type==='number'?control.valueAsNumber:control.value])):result==='__input__'?input.value:result;
-        if(result==='__form__'&&validate){const message=validate(value);if(message){error.textContent=message;error.hidden=false;error.scrollIntoView({block:'nearest'});return;}}
+        const value=result==='__form__'?Object.fromEntries([...controls].map(([name,control])=>[name,control.type==='number'?control.valueAsNumber:control.value])):result==='__render__'?rendered?.value?.():result==='__input__'?input.value:result;
+        if((result==='__form__'||result==='__render__')&&validate){const message=validate(value);if(message){error.textContent=message;error.hidden=false;error.scrollIntoView({block:'nearest'});return;}}
         finish(value);
       };actions.append(button);}
       backdrop.onclick=e=>{if(e.target===backdrop)cancel();};

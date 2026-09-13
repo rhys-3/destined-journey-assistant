@@ -5,6 +5,7 @@ import { legacySettingItems, serializeSettingItems, readSettingTemplate, migrate
 const MESSAGE_PROCESSING_MARKERS = new Set([
   '正文开始', '历史开始', '深度900分界', '深度2分界', '历史结束', '正文结束',
   '记忆区', '参考区', '运行规则区',
+  '资料开始', '资料结束', '场外原生', '场外讨论',
 ].map(name => `<|命定_${name}|>`));
 
 // Dependencies use live accessors so asynchronous operations share the current state.

@@ -31,6 +31,16 @@ export function createPlacement(ctx) {
       });
     }
     for (const block of layout.blocks) if (block.id === 'adult-extra') block.id = NSFW_EXTRA;
+    // v4 placed discussion-only prompt controls on their own page. v5 keeps
+    // the native switch hidden and folds the actual prompt contracts back into
+    // the shared model/native entries. Preserve user-created blocks by moving
+    // them to the ordinary tools page before removing that retired page.
+    const retiredPage = layout.pages.some(page => page.id === 'discussion');
+    if (retiredPage) {
+      layout.blocks = layout.blocks.filter(block => block.id !== 'discussion-prompts');
+      for (const block of layout.blocks) if (block.page === 'discussion') block.page = 'tools';
+      layout.pages = layout.pages.filter(page => page.id !== 'discussion');
+    }
     return layout;
   }
 
@@ -114,6 +124,11 @@ export function createPlacement(ctx) {
     catch { return defaultAuthorLayout(); } // Read-only fallback; mutations below reject malformed source data.
   }
 
+  function ensureDiscussionAuthorLayout(preset) {
+    if (!preset?.extensions?.destined_author) return;
+    preset.extensions.destined_author = validateAuthorLayout(preset.extensions.destined_author);
+  }
+
   function authorDependency(prompt) {
     if (!prompt) return '';
     if (ctx.PROTECTED_IDS.has(prompt.id)) return '基础结构依赖：必须保留并启用，可编辑正文；动态占位符正文由酒馆填入。';
@@ -145,6 +160,9 @@ export function createPlacement(ctx) {
     let original = prompt ? legacyAuthorBlock(prompt) : 'unclassified';
     if(prompt&&original==='unclassified')original=inferNativePlacement(prompt,preset).block;
     let block = [2,3].includes(meta?.version) ? normalizeBlockId(meta.block) : original;
+    // Keep custom content from the retired discussion page reachable through
+    // the standard native-entry area. Its text stays untouched until edited.
+    if (block === 'discussion-prompts') block = 'unclassified';
     if (block !== 'hidden' && !authorLayout(preset).blocks.some(b=>b.id===block)) block='unclassified';
     return {
     block,
@@ -399,6 +417,7 @@ export function createPlacement(ctx) {
     defaultAuthorLayout,
     validateAuthorLayout,
     authorLayout,
+    ensureDiscussionAuthorLayout,
     authorDependency,
     legacyAuthorBlock,
     placementEntry,

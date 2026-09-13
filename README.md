@@ -8,6 +8,8 @@
 
 ## 功能
 
+配套预设支持[讨论模式](docs/DISCUSSION.md)：在原聊天框切换讨论与剧情，显示讨论标记，并从剧情总结中排除讨论。
+
 - 预设设置：字数、语言、叙事人称、文风、自定义设定和功能开关，与酒馆原生预设界面双向同步。
 - 模型与连接：模型适配、Connection Profile 联动、自定义模型、变量世界书模式联动。
 - 条目编辑：正文、界面简介、角色、启停、位置与顺序，支持桌面拖动和触屏排序。
@@ -26,7 +28,7 @@
 在预设的酒馆助手脚本列表中，将 **命定预设助手**（旧版名为“【命定之诗】预设设置”） 的内容替换为 [loader.js](loader.js)，保留脚本 UUID 和已有变量。标准 UUID 为 `3a01f9c2-f6e8-4754-ad75-347741051662`。加载器通过固定版本地址载入助手：
 
 ```text
-https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.4.6/dist/destined-journey-assistant.js
+https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.5.0/dist/destined-journey-assistant.js
 ```
 
 加载失败时会显示版本、原因和重试按钮。重试使用同一个版本，不会切换到开发分支。

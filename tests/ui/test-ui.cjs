@@ -43,7 +43,7 @@ await cdp('Page.navigate',{url:'file:///'+path.resolve('.ui-review/preview.html'
 for(let i=0;i<50;i++){if(await evaluate('window.testReady && !!window.ui?.shadow?.querySelector(".panel")'))break;await new Promise(r=>setTimeout(r,100));}
 console.log(await evaluate('({errors:window.errors,ready:!!window.ui,url:location.href})')); const result=await evaluate(`(async()=>{
 const results=[];const check=(name,ok)=>{if(!ok)throw Error(name);results.push(name)};const q=s=>ui.shadow.querySelector(s);const click=s=>{const e=q(s);if(!e)throw Error('Missing '+s);e.click()};await ui.settle();
-check('默认日常页与六个主导航',ui.state.activeTab==='daily'&&ui.shadow.querySelectorAll('.tabs button').length===6);
+check('默认日常页与六个主导航',ui.state.activeTab==='daily'&&ui.shadow.querySelectorAll('.tabs button').length===6&&!ui.shadow.querySelector('.tabs [data-tab="discussion"]'));
   check('四项数值设置完整',ui.shadow.querySelectorAll('[data-action="field-number"]').length===4);
   check('正文与思维链语言设置完整',ui.shadow.querySelectorAll('[data-action="language-input"]').length===2&&vars.managed_values_version===3&&vars.managed_values.body_language==='简体中文'&&vars.managed_values.thinking_language==='简体中文');
   click('[data-action="language-preset"][data-language="body"][data-value="English"]');await ui.settle();check('正文语言快捷选择自动保存',vars.managed_values.body_language==='English');

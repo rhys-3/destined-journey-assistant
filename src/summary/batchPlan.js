@@ -1,11 +1,22 @@
 import { makeSummaryEntryName } from './utils.js';
+import { isDiscussionMessage } from '../discussion/protocol.js';
 
-export function splitFloorBatches(messages, limit, {exactEnd=false}={}) {
+export function bridgeDiscussionGaps(messages) {
+  const byId = new Map(messages.map(message => [message.id, message]));
+  return (previous, current) => {
+    for (let id = previous.id + 1; id < current.id; id++) {
+      if (!isDiscussionMessage(byId.get(id))) return false;
+    }
+    return true;
+  };
+}
+
+export function splitFloorBatches(messages, limit, {exactEnd=false, canBridgeGap=null}={}) {
   if(!Number.isInteger(limit)||limit<1)throw new Error('每批楼层上限须为正整数');
   const plans=[];
   for(let offset=0;offset<messages.length;){
     let end=offset+1;
-    while(end<messages.length&&messages[end].id===messages[end-1].id+1)end++;
+    while(end<messages.length&&(messages[end].id===messages[end-1].id+1||canBridgeGap?.(messages[end-1],messages[end])))end++;
     for(let cursor=offset;cursor<end;){
       let stop=Math.min(end,cursor+limit);
       if(!(exactEnd&&stop===messages.length))while(stop>cursor&&messages[stop-1].role!=='assistant')stop--;

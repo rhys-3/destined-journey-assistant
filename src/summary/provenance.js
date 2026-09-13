@@ -52,9 +52,14 @@ export function excludeRange(name, { mega = false } = {}) {
   else if (range && !archive.excluded.some(item => item.start === range.start && item.end === range.end)) archive.excluded.push(range);
   writeArchive(archive);
 }
-export function consecutiveSummaries(names) {
+export function consecutiveSummaries(names, { discussionIds = null } = {}) {
   const parsed = [...new Set(names)].map(name => ({ name, ...parseSummaryEntryName(name) })).sort((a, b) => a.start - b.start);
-  if (parsed.length !== names.length || parsed.length < 2 || parsed.some((range, i) => !Number.isInteger(range.start) || range.end < range.start || (i > 0 && range.start !== parsed[i - 1].end + 1))) {
+  const onlyDiscussionBetween = (previous, current) => {
+    if (!discussionIds || current.start <= previous.end) return false;
+    for (let id = previous.end + 1; id < current.start; id++) if (!discussionIds.has(id)) return false;
+    return true;
+  };
+  if (parsed.length !== names.length || parsed.length < 2 || parsed.some((range, i) => !Number.isInteger(range.start) || range.end < range.start || (i > 0 && range.start !== parsed[i - 1].end + 1 && !onlyDiscussionBetween(parsed[i - 1], range)))) {
     throw new Error('大总结需要至少两条按楼层连续、没有重叠的普通总结');
   }
   return parsed;

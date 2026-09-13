@@ -1,4 +1,5 @@
 import * as summary from '../summary/service.js';
+import { DISCUSSION_SETTINGS_KEY } from '../discussion/preferences.js';
 import { writePresetStore } from '../platform/store.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
@@ -79,6 +80,10 @@ export function createConfigurations(ctx) {
       const author = Object.hasOwn(nextPreset,'author') ? nextPreset.author : nextPreset.extensions?.destined_author;
       if (author) preset.extensions.destined_author = ctx.clone(author);
       else delete preset.extensions.destined_author;
+      if (Object.hasOwn(nextPreset, 'discussion')) {
+        if (nextPreset.discussion === null) delete preset.extensions[DISCUSSION_SETTINGS_KEY];
+        else preset.extensions[DISCUSSION_SETTINGS_KEY] = ctx.clone(nextPreset.discussion);
+      }
     }, guard);
     try {
       writeConfigurationData(nextConfig, current);
