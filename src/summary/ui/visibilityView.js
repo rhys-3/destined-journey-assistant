@@ -4,7 +4,7 @@ import { getSettings } from '../storage.js';
 
 export function refreshVisibilityControls(panel, floors = panel._visibilityFloors ?? new Set()) {
   panel._visibilityFloors=floors;
-  const enabled=readVisibilityAutomation(getSettings().autoHideSummarizedFloors);
+  const enabled=readVisibilityAutomation(getSettings().autoHideSummarizedFloors, panel._visibilitySnapshot?.messages);
   panel.querySelector('#sa-vis-auto-hide').checked=enabled;
   panel.querySelector('[data-visibility-mode]').textContent=enabled?'已开启':'已暂停';
   panel.querySelector('[data-visibility-policy]').textContent=automationDescription(enabled,panel._visibilitySnapshot?.counts.covered??0);
@@ -40,6 +40,6 @@ export function renderVisibilityPanel(settings) {
   <div class="sa-visibility-controls"><label>起始楼层<input class="sa-input" id="sa-vis-from" type="number" min="0" placeholder="0" value="0"></label><label>结束楼层<input class="sa-input" id="sa-vis-to" type="number" min="0" placeholder="楼层编号"></label><label>消息类型<select class="sa-select" id="sa-vis-role"><option value="all">全部类型</option><option value="user">用户输入</option><option value="assistant">AI 输出</option><option value="system">系统消息</option></select></label></div>
   <div class="sa-visibility-actions"><button class="sa-btn" id="sa-vis-hide-range">隐藏范围</button><button class="sa-btn" id="sa-vis-show-range">显示范围</button><button class="sa-btn" id="sa-vis-hide-summarized">隐藏已总结楼层</button></div>
   <div class="sa-btn-group"><button class="sa-btn" id="sa-vis-show-all">显示全部楼层</button></div>
-  <p class="sa-hint">以上按钮立即操作当前楼层，并暂停本聊天的自动隐藏。重新开启开关，会清除本面板的手动选择并按总结恢复。</p>
+  <p class="sa-hint">以上按钮立即操作当前楼层，并暂停本聊天的自动隐藏。重新开启会清除这里的手动选择，按总结恢复；“讨论记录”页的独立选择会保留。</p>
 </div></section>`;
 }

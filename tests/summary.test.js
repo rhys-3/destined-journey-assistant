@@ -19,7 +19,7 @@ import { extractSummaryResult } from '../src/summary/result.js';
 import { getTask, stopTask, detachTaskState, restoreTaskState, clearTaskLog, beginTask, updateTask, finishTask, selectTaskBatch } from '../src/summary/taskState.js';
 import { retryTask, autoTriggerSummary, computeMegaPlan, executeMegaSummary } from '../src/summary/summary.js';
 import { getCoverage, getAllSummaryContents, auditArchiveSources, bindWorldbookToChat, deleteSummaryEntry, setSummaryEntryEnabled } from '../src/summary/worldbook.js';
-import { ARCHIVE_VAR_KEY, fingerprint, readArchive, currentSources } from '../src/summary/provenance.js';
+import { ARCHIVE_VAR_KEY, fingerprint, readArchive, currentSources, sourceOf } from '../src/summary/provenance.js';
 import { expandMacros, compilePrompt } from '../src/summary/macros.js';
 import { buildRegeneratePromptParams, buildSummaryPromptParams } from '../src/summary/prompt.js';
 import { setFloorVisibilityAutomation, readVisibilityAutomation, VISIBILITY_AUTOMATION_KEY } from '../src/summary/visibility.js';
@@ -631,6 +631,125 @@ test('manual actions pause hiding for later generated summaries and automation c
   setFloorVisibilityAutomation(true);await applySummarizedFloorsVisibility();assert(messages.slice(0,10).every(message=>message.is_hidden));
   setFloorVisibilityAutomation(false);await deleteSummaryEntry('总结4-9楼');
   assert(messages.slice(0,4).every(message=>message.is_hidden));assert(messages.slice(4,10).every(message=>!message.is_hidden));
+});
+
+test('discussion visibility hides only metadata-tagged records bracketed by covered story sources',async()=>{
+  await saveSettings({...FLOW_SETTINGS,autoHideSummarizedFloors:false});
+  messages=[
+    {message_id:0,role:'user',message:'剧情 0',is_hidden:false},
+    {message_id:1,role:'assistant',message:'<discussion_record>文字不是依据</discussion_record>',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+    {message_id:2,role:'assistant',message:'剧情 2',is_hidden:false},
+    // Text resembling a discussion record without metadata remains story text.
+    {message_id:3,role:'assistant',message:'<discussion_record>未标记</discussion_record>',is_hidden:false},
+    {message_id:4,role:'assistant',message:'剧情 4',is_hidden:false},
+    {message_id:5,role:'assistant',message:'讨论尾部',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+  ];
+  await upsertSummaryEntryByName('总结0-5楼','档案');
+  chat[ARCHIVE_VAR_KEY]={book:{records:{'总结0-5楼':{sources:[0,2,3,4].map(id=>sourceOf(messages[id]))}}}};
+  const coverage=await getCoverage();
+  assert.deepEqual([...coverage.floors],[0,2,3,4]);
+  setFloorVisibilityAutomation(true);await applySummarizedFloorsVisibility();
+  assert.deepEqual(messages.map(message=>!!message.is_hidden),[true,true,true,true,true,false]);
+  const {visibilitySnapshot}=await import('../src/summary/visibility.js');
+  const snapshot=visibilitySnapshot(coverage.floors);
+  assert.deepEqual([...snapshot.discussionFloors],[1]);
+  assert.equal(snapshot.counts.covered,4);
+});
+
+test('discussion visibility excludes discussion-only and unbracketed records from coverage and automation',async()=>{
+  await saveSettings({...FLOW_SETTINGS,autoHideSummarizedFloors:false});
+  messages=[
+    {message_id:0,role:'assistant',message:'首段讨论',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+    {message_id:1,role:'assistant',message:'剧情 1',is_hidden:false},
+    {message_id:2,role:'assistant',message:'中间讨论',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+    {message_id:3,role:'assistant',message:'未覆盖剧情',is_hidden:false},
+    {message_id:4,role:'assistant',message:'最新讨论',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+  ];
+  await upsertSummaryEntryByName('总结0-4楼','档案');
+  // A provenance record must not make a discussion record part of story coverage.
+  chat[ARCHIVE_VAR_KEY]={book:{records:{'总结0-4楼':{sources:[0,1,2].map(id=>sourceOf(messages[id]))}}}};
+  const coverage=await getCoverage();
+  assert.deepEqual([...coverage.floors],[1]);
+  setFloorVisibilityAutomation(true);await applySummarizedFloorsVisibility();
+  assert.deepEqual(messages.map(message=>!!message.is_hidden),[false,true,false,false,false]);
+});
+
+test('discussion choices are scoped, source-guarded, and restore to automatic visibility',async()=>{
+  await saveSettings({...FLOW_SETTINGS,autoHideSummarizedFloors:false});
+  messages=[
+    {message_id:0,role:'user',message:'剧情 0',is_hidden:false},
+    {message_id:1,role:'assistant',message:'讨论 1',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+    {message_id:2,role:'assistant',message:'剧情 2',is_hidden:false},
+    {message_id:3,role:'assistant',message:'讨论 3',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+    {message_id:4,role:'assistant',message:'剧情 4',is_hidden:false},
+  ];
+  await upsertSummaryEntryByName('总结0-4楼','档案');
+  chat[ARCHIVE_VAR_KEY]={book:{records:{'总结0-4楼':{sources:[0,2,4].map(id=>sourceOf(messages[id]))}}}};
+  const {floors}=await getCoverage();
+  const {setManualFloorVisibilityByIds,readVisibilityOverrides,restoreDiscussionVisibilityAutomation}=await import('../src/summary/visibility.js');
+  const first=sourceOf(messages[1]), second=sourceOf(messages[3]);
+  setFloorVisibilityAutomation(true);await applySummarizedFloorsVisibility();
+  assert(messages.every(message=>message.is_hidden));
+  await setManualFloorVisibilityByIds([1],false,{discussionSources:[first]});
+  assert.equal(readVisibilityAutomation(),true);
+  assert.deepEqual(readVisibilityOverrides()[1],{hidden:false,fingerprint:first.fingerprint,scope:'discussion'});
+  await applySummarizedFloorsVisibility();
+  assert.equal(messages[1].is_hidden,false);assert.equal(messages[3].is_hidden,true);
+  // Re-enabling global automation does not erase a separate discussion decision.
+  setFloorVisibilityAutomation(true);await applySummarizedFloorsVisibility();
+  assert.equal(messages[1].is_hidden,false);assert.equal(messages[3].is_hidden,true);
+  await assert.rejects(setManualFloorVisibilityByIds([3],false,{discussionSources:[first]}),/讨论记录已变化/);
+  const stale={...second};messages[3].swipe_id=1;
+  assert.throws(()=>restoreDiscussionVisibilityAutomation([stale]),/讨论记录已变化/);
+  messages[3].swipe_id=0;
+  restoreDiscussionVisibilityAutomation([first]);await applySummarizedFloorsVisibility();
+  assert.equal(readVisibilityOverrides()[1],undefined);assert.equal(messages[1].is_hidden,true);
+  await applySummarizedFloorsVisibility({autoHide:false});
+  assert(messages.every(message=>!message.is_hidden));
+  assert.deepEqual([...floors],[0,2,4]);
+});
+
+test('discussion visibility writes retain the existing persistence and chat-context guards',async()=>{
+  await saveSettings(FLOW_SETTINGS);
+  messages=[{message_id:0,role:'assistant',message:'讨论',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false}];
+  const {setManualFloorVisibilityByIds}=await import('../src/summary/visibility.js');
+  const source=sourceOf(messages[0]), replace=globalThis.replaceVariables;
+  globalThis.replaceVariables=(value,option)=>{if(option.type!=='chat')replace(value,option);};
+  await assert.rejects(setManualFloorVisibilityByIds([0],true,{discussionSources:[source]}),/持久化校验失败/);
+  assert.equal(messages[0].is_hidden,false);
+  globalThis.replaceVariables=replace;
+  const write=globalThis.setChatMessages;
+  globalThis.setChatMessages=async updates=>{ctx.chatId='other';await write(updates);};
+  await assert.rejects(setManualFloorVisibilityByIds([0],true,{discussionSources:[source]}),{name:'AbortError'});
+  assert.equal(messages[0].is_hidden,true);
+});
+
+test('discussion coverage helper requires contiguous covered story boundaries',async()=>{
+  const {discussionFloorsWithinCoverage}=await import('../src/summary/visibility.js');
+  const discussion=(message_id)=>({message_id,extra:{destined_discussion:{version:1,mode:'discussion'}}});
+  assert.deepEqual([...discussionFloorsWithinCoverage([discussion(0),discussion(1)],new Set([0,1]))],[]);
+  assert.deepEqual([...discussionFloorsWithinCoverage([{message_id:0},discussion(1),{message_id:3}],new Set([0,3]))],[]);
+  assert.deepEqual([...discussionFloorsWithinCoverage([{message_id:0},discussion(1),{message_id:2}],new Set([0]))],[]);
+  assert.deepEqual([...discussionFloorsWithinCoverage([{message_id:0},discussion(1),{message_id:2}],new Set([0,2]))],[1]);
+});
+
+test('losing disabled or invalid story coverage restores assistant-hidden discussions',async()=>{
+  await saveSettings({...FLOW_SETTINGS,autoHideSummarizedFloors:false});
+  messages=[
+    {message_id:0,role:'user',message:'剧情 0',is_hidden:false},
+    {message_id:1,role:'assistant',message:'讨论',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+    {message_id:2,role:'assistant',message:'剧情 2',is_hidden:false},
+  ];
+  await upsertSummaryEntryByName('总结0-2楼','档案');
+  chat[ARCHIVE_VAR_KEY]={book:{records:{'总结0-2楼':{sources:[0,2].map(id=>sourceOf(messages[id]))}}}};
+  setFloorVisibilityAutomation(true);await applySummarizedFloorsVisibility();
+  assert(messages.every(message=>message.is_hidden));
+  await setSummaryEntryEnabled('总结0-2楼',false);
+  assert(messages.every(message=>!message.is_hidden));
+  await setSummaryEntryEnabled('总结0-2楼',true);await applySummarizedFloorsVisibility();
+  assert(messages.every(message=>message.is_hidden));
+  messages[2].message='已修改的剧情';await auditArchiveSources();await applySummarizedFloorsVisibility();
+  assert.equal(books.book[0].enabled,false);assert(messages.every(message=>!message.is_hidden));
 });
 
 test('clearing task logs preserves active and pending results; completed logs never delete archives',async()=>{

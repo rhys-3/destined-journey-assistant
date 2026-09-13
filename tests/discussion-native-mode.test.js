@@ -29,9 +29,29 @@ test('round macro writes and validates the native macro scope', () => {
   state.native.prepareRound('story'); assert.equal(setup.round, '0');
 });
 
+test('previews leave the existing round macro alone even for an unavailable adapter', () => {
+  const state = setup();
+  state.native.prepareRound('discussion'); state.busy(true);
+  assert.equal(state.native.prepareRound('story', { dryRun: true }), 'story');
+  assert.equal(setup.round, '1');
+  state.available(false);
+  assert.doesNotThrow(() => state.native.prepareRound('discussion', { dryRun: true }));
+  assert.equal(setup.round, '1');
+});
+
 test('a native click during generation cannot change the frozen chat state', async () => {
   const state = setup(); await state.native.synchronize(); state.busy(true); state.setNative(true); await state.native.synchronize();
   assert.equal(state.chat().destined_discussion_mode, undefined);
+});
+
+test('a live caller resamples a native click while an earlier synchronization settles', async () => {
+  const state = setup(); await state.native.synchronize();
+  const previous = state.native.synchronize();
+  await Promise.resolve();
+  state.setNative(true);
+  const live = state.native.synchronize();
+  assert.deepEqual(await Promise.all([previous, live]), ['discussion', 'discussion']);
+  assert.equal(state.chat().destined_discussion_mode, true);
 });
 
 test('changing to an unsupported adapter turns off the real native toggle once without altering chat content', async () => {

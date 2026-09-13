@@ -1,6 +1,7 @@
 import { bindPromptTools, collectCustomMacros } from './promptTools.js';
 import { bindTagEditors, readTagEditor } from './tagEditor.js';
 import { bindFloorBrowser, refreshFloorBrowser } from './floorBrowser.js';
+import { bindDiscussionRecords, refreshDiscussionRecords } from './discussionRecords.js';
 import { bindBatchSettings } from './batchSettings.js';
 import { applyBusyRules, refreshTaskWidget } from './taskView.js';
 import { isBusy, assertRecordWritable } from '../../platform/lifecycle.js';
@@ -704,6 +705,7 @@ const refreshStatus = async (panel) => {
       refreshVisibilityControls(panel,floors);
       if(expandedFloors) visibility.querySelector('[data-floor-details]').open=true;
       refreshFloorBrowser(panel);
+      refreshDiscussionRecords(panel);
       const table=visibility.querySelector('.sa-floor-table-wrap');if(table)table.scrollTop=scroll;
       applyBusyRules(panel);
     }
@@ -728,7 +730,9 @@ const bindPanelEvents = (overlay, initialSettings) => {
         .querySelector(`.sa-tab-pane[data-pane="${tabName}"]`)
         .classList.add("active");
       if (tabName === 'worldbook') overlay._refreshWorldbooks?.();
+      overlay.classList.toggle('sa-discussion-view', tabName === 'discussion');
       if (tabName === 'status') refreshVisibilityControls(overlay);
+      if (tabName === 'discussion') refreshDiscussionRecords(overlay, { force: true });
     });
   });
   overlay.querySelectorAll('[data-prompt-page]').forEach(button => button.addEventListener('click', () => {
@@ -820,6 +824,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
 
   // ---- 楼层隐藏/显示管理 ----
   bindFloorBrowser(overlay);
+  bindDiscussionRecords(overlay, refreshStatus);
   const batchSetHidden=(from,to,hidden)=>setManualFloorVisibility(from,to,hidden,overlay.querySelector('#sa-vis-role').value);
   overlay.querySelector('#sa-vis-refresh').onclick=uiListener(()=>refreshStatus(overlay));
   overlay.querySelector('#sa-visibility-info').addEventListener('click',uiListener(async event=>{
@@ -1063,7 +1068,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
     }, 800);
   };
   const onFieldChange = e => {
-    if(e.composedPath().some(node=>node?.matches?.('[data-task-widget],.sa-visibility-panel,.sa-tag-editor')))return;
+    if(e.composedPath().some(node=>node?.matches?.('[data-task-widget],.sa-visibility-panel,.sa-tag-editor,[data-discussion-records]')))return;
     if (!e.target.matches('input,select,textarea') || ['sa-enabled','sa-vis-from','sa-vis-to','sa-new-wb-name','sa-wb-select'].includes(e.target.id)) return;
     autoSave();
   };

@@ -51,6 +51,7 @@ const buildPanelHtml = (settings) => `
   <p id="sa-busy-reason" class="sa-task-reason" hidden></p>
   <div class="sa-tabs">
     <button class="sa-tab-item active" data-tab="status">记录与任务</button>
+    <button class="sa-tab-item" data-tab="discussion">讨论记录</button>
     <button class="sa-tab-item" data-tab="settings">生成设置</button>
     <button class="sa-tab-item" data-tab="prompts">提示词</button>
     <button class="sa-tab-item" data-tab="worldbook">世界书</button>
@@ -75,6 +76,10 @@ const buildPanelHtml = (settings) => `
           <div id="sa-mega-entry-list" class="sa-entry-list"><div class="sa-empty">加载中...</div></div>
         </div>
       </div>
+    </div>
+    <div class="sa-tab-pane" data-pane="discussion">
+      <div class="sa-section-header"><span>讨论记录</span><button type="button" class="sa-btn sa-btn-sm" data-discussion-refresh>刷新</button></div>
+      <div data-discussion-records><div class="sa-empty">加载讨论记录…</div></div>
     </div>
     <div class="sa-tab-pane" data-pane="settings">
       <div class="sa-settings-layout">

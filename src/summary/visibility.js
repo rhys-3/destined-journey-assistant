@@ -1,5 +1,6 @@
 import { assertRecordWritable, writeVariableKeys, setChatMessages, captureContext, checkContext } from '../platform/lifecycle.js';
 import { sourceOf } from './provenance.js';
+import { isDiscussionMessage } from '../discussion/protocol.js';
 
 export const VISIBILITY_OVERRIDES_KEY = 'summary_assistant_visibility_overrides';
 export const VISIBILITY_AUTOMATION_KEY = 'summary_assistant_visibility_auto';
@@ -15,10 +16,10 @@ export function readVisibilityOverrides(messages = allFloorMessages()) {
     return value && typeof value.hidden === 'boolean' && value.fingerprint === sourceOf(message).fingerprint;
   }).map(message => [message.message_id,saved[message.message_id]]));
 }
-export function readVisibilityAutomation(fallback = true) {
+export function readVisibilityAutomation(fallback = true, messages) {
   const saved = getVariables({type:'chat'})?.[VISIBILITY_AUTOMATION_KEY];
   if (typeof saved === 'boolean') return saved;
-  return Object.keys(readVisibilityOverrides()).length ? false : fallback !== false;
+  return Object.values(readVisibilityOverrides(messages)).some(value => value.scope !== 'discussion') ? false : fallback !== false;
 }
 export function setFloorVisibilityAutomation(enabled) {
   assertRecordWritable();
@@ -27,31 +28,51 @@ export function setFloorVisibilityAutomation(enabled) {
   if (enabled) {
     const messages = allFloorMessages(), ids = new Set(messages.map(message=>message.message_id));
     const owned = getVariables({type:'chat'})?.[AUTO_HIDDEN_KEY] ?? [];
-    // Return every valid assistant-managed floor to the automatic policy, even
-    // without summary coverage. Native manual choices remain outside ownership.
-    patch[AUTO_HIDDEN_KEY] = [...new Set([...owned.filter(id=>ids.has(id)), ...Object.keys(readVisibilityOverrides(messages)).map(Number)])];
-    patch[VISIBILITY_OVERRIDES_KEY] = {};
+    // Reset general floor controls while preserving choices made in Discussion
+    // Records. Native manual choices remain outside assistant ownership.
+    const overrides = readVisibilityOverrides(messages);
+    patch[AUTO_HIDDEN_KEY] = [...new Set([...owned.filter(id=>ids.has(id)), ...Object.entries(overrides).filter(([,value])=>value.scope!=='discussion').map(([id])=>Number(id))])];
+    patch[VISIBILITY_OVERRIDES_KEY] = Object.fromEntries(Object.entries(overrides).filter(([,value])=>value.scope==='discussion'));
   }
   writeVariableKeys(patch,{type:'chat'});
 }
+/** Discussion can follow two covered story boundaries without becoming a source. */
+export function discussionFloorsWithinCoverage(messages, floors) {
+  const result = new Set();
+  let leftCovered = false, pending = [], previous = -1;
+  for (const message of messages) {
+    const id = message.message_id;
+    if (id !== previous + 1) { leftCovered = false; pending = []; }
+    previous = id;
+    if (isDiscussionMessage(message)) {
+      if (leftCovered) pending.push(id);
+      continue;
+    }
+    if (leftCovered && floors.has(id)) for (const floor of pending) result.add(floor);
+    pending = [];
+    leftCovered = floors.has(id);
+  }
+  return result;
+}
 export function visibilitySnapshot(floors = new Set()) {
   const messages = allFloorMessages(), overrides = readVisibilityOverrides(messages);
+  const discussionFloors = discussionFloorsWithinCoverage(messages, floors);
   const owned = new Set(getVariables({type:'chat'})?.[AUTO_HIDDEN_KEY] ?? []);
   const counts = { total:messages.length, shown:0, hidden:0, user:0, assistant:0, system:0, shownUser:0, shownAssistant:0, covered:0 };
   const groups = [];
   for (const message of messages) {
-    const id=message.message_id, hidden=!!message.is_hidden, role=message.role, covered=floors.has(id);
+    const id=message.message_id, hidden=!!message.is_hidden, role=message.role, discussion=isDiscussionMessage(message), covered=!discussion&&floors.has(id), followsSummary=discussionFloors.has(id);
     counts[hidden?'hidden':'shown']++;
     counts[role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : 'system']++;
     if (!hidden && role === 'user') counts.shownUser++;
     if (!hidden && role === 'assistant') counts.shownAssistant++;
     if (covered) counts.covered++;
     const state = hidden ? owned.has(id) ? '自动隐藏' : '手动隐藏' : overrides[id]?.hidden === false ? '手动显示' : '显示';
-    const key = [role,hidden,covered,state,id===0].join('|'), previous=groups.at(-1);
+    const key = [role,discussion,hidden,covered,followsSummary,state,id===0].join('|'), previous=groups.at(-1);
     if (previous?.key === key && previous.to + 1 === id) { previous.to=id;previous.count++; }
-    else groups.push({key,from:id,to:id,count:1,role,hidden,covered,state});
+    else groups.push({key,from:id,to:id,count:1,role,discussion,hidden,covered,followsSummary,state});
   }
-  return {messages,counts,groups,overrides,owned,shownIds:messages.filter(message=>!message.is_hidden).map(message=>message.message_id),hiddenIds:messages.filter(message=>message.is_hidden).map(message=>message.message_id)};
+  return {messages,counts,groups,overrides,owned,discussionFloors,shownIds:messages.filter(message=>!message.is_hidden).map(message=>message.message_id),hiddenIds:messages.filter(message=>message.is_hidden).map(message=>message.message_id)};
 }
 export async function setManualFloorVisibility(from, to, hidden, role = 'all') {
   assertRecordWritable();
@@ -61,20 +82,38 @@ export async function setManualFloorVisibility(from, to, hidden, role = 'all') {
   const ids=allFloorMessages().filter(message=>message.message_id>=from&&message.message_id<=to&&(role==='all'||message.role===role)).map(message=>message.message_id);
   return setManualFloorVisibilityByIds(ids,hidden);
 }
-export async function setManualFloorVisibilityByIds(ids, hidden) {
+export async function setManualFloorVisibilityByIds(ids, hidden, { discussionSources = null } = {}) {
   assertRecordWritable();
+  if (typeof hidden !== 'boolean') throw new Error('显隐状态无效');
   const token=captureContext(), wanted=new Set(ids);
   const messages=allFloorMessages(), selected=messages.filter(message=>wanted.has(message.message_id));
   if(selected.length!==wanted.size)throw new Error('所选楼层已变化，请刷新后重试');
+  if(discussionSources) assertDiscussionSelection(selected, discussionSources);
   if(!selected.length)return 0;
   const overrides=readVisibilityOverrides(messages), vars=getVariables({type:'chat'}) ?? {};
-  for (const message of selected) overrides[message.message_id]={hidden,fingerprint:sourceOf(message).fingerprint};
+  for (const message of selected) overrides[message.message_id]={hidden,fingerprint:sourceOf(message).fingerprint,...(discussionSources?{scope:'discussion'}:{})};
   const selectedIds=new Set(selected.map(message=>message.message_id));
-  writeVariableKeys({[VISIBILITY_AUTOMATION_KEY]:false,[VISIBILITY_OVERRIDES_KEY]:overrides,[AUTO_HIDDEN_KEY]:(vars[AUTO_HIDDEN_KEY]??[]).filter(id=>!selectedIds.has(id))},{type:'chat'});
+  writeVariableKeys({...(discussionSources?{}:{[VISIBILITY_AUTOMATION_KEY]:false}),[VISIBILITY_OVERRIDES_KEY]:overrides,[AUTO_HIDDEN_KEY]:(vars[AUTO_HIDDEN_KEY]??[]).filter(id=>!selectedIds.has(id))},{type:'chat'});
   const updates=selected.filter(message=>!!message.is_hidden!==hidden).map(message=>({message_id:message.message_id,is_hidden:hidden}));
   for(let index=0;index<updates.length;index+=200) await setChatMessages(updates.slice(index,index+200),{refresh:'affected'});
   checkContext(token);
   const actual=new Map(allFloorMessages().map(message=>[message.message_id,!!message.is_hidden]));
   if(!selected.every(message=>actual.get(message.message_id)===hidden)) throw new Error('楼层显隐没有全部保存，请重试');
   return updates.length;
+}
+
+function assertDiscussionSelection(messages, sources) {
+  const expected = new Map(sources.map(source => [source.id, source.fingerprint]));
+  if (expected.size !== sources.length || messages.length !== sources.length || messages.some(message => !isDiscussionMessage(message) || expected.get(message.message_id) !== sourceOf(message).fingerprint)) {
+    throw new Error('所选讨论记录已变化，请刷新后重试');
+  }
+}
+export function restoreDiscussionVisibilityAutomation(sources) {
+  assertRecordWritable();
+  const messages = allFloorMessages(), wanted = new Set(sources.map(source=>source.id));
+  const selected = messages.filter(message=>wanted.has(message.message_id));
+  assertDiscussionSelection(selected, sources);
+  const overrides = readVisibilityOverrides(messages), vars = getVariables({type:'chat'}) ?? {};
+  for (const id of wanted) delete overrides[id];
+  writeVariableKeys({[VISIBILITY_OVERRIDES_KEY]:overrides,[AUTO_HIDDEN_KEY]:[...new Set([...(vars[AUTO_HIDDEN_KEY]??[]),...wanted])]},{type:'chat'});
 }

@@ -67,10 +67,24 @@ export function createNativeDiscussionMode({ host, ctx, contextKey, readChatMode
   }
   function synchronize(options) {
     const origin = contextKey();
-    if (synchronizing?.origin === origin) return synchronizing.promise;
-    const job = { origin };
-    job.promise = Promise.resolve().then(() => synchronizeNow(options, origin)).finally(() => {
-      if (synchronizing === job) synchronizing = null;
+    if (synchronizing?.origin === origin) {
+      // A native click can arrive after this job read the toggle. Before all
+      // callers resume, sample it again instead of returning the stale mode.
+      synchronizing.rescan = true;
+      return synchronizing.promise;
+    }
+    const job = { origin, rescan: false };
+    job.promise = Promise.resolve().then(async () => {
+      try {
+        let mode;
+        do {
+          job.rescan = false;
+          mode = await synchronizeNow(options, origin);
+        } while (job.rescan);
+        return mode;
+      } finally {
+        if (synchronizing === job) synchronizing = null;
+      }
     });
     synchronizing = job;
     return job.promise;
@@ -84,11 +98,12 @@ export function createNativeDiscussionMode({ host, ctx, contextKey, readChatMode
     if (actual !== value) throw new Error('原生本轮讨论变量写入失败。');
   }
   function prepareRound(mode, { type = 'normal', dryRun = false } = {}) {
+    // Token-count and prompt previews must not overwrite a live round's macro.
+    if (dryRun) return mode;
     if (mode === 'discussion') {
       const support = availability();
       if (!support.available) throw new Error(support.reason || '当前模型条目不支持讨论模式。');
     }
-    if (dryRun) { writeRound(mode); return mode; }
     if (type === 'quiet') {
       if (busy()) return 'story';
       const substitute = nativeSubstitute(host);

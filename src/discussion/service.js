@@ -10,7 +10,7 @@ export function startDiscussion(ctx) {
   const host = window.parent, doc = host.document;
   host[DISCUSSION_BRIDGE]?.dispose?.();
   const stops = [], owner = getLoadedPresetName();
-  let disposed = false, guardedMvu = null, mvuStop = null, nativeMode = null, quietPending = false, quietRejection = null, latestGenerationType = null, dryRunError = null;
+  let disposed = false, guardedMvu = null, mvuStop = null, nativeMode = null, quietPending = false, quietRejection = null, latestGenerationType = null;
   const mvu = () => typeof Mvu !== 'undefined' ? Mvu : host.Mvu;
   function syncVariableGuard() {
     const runtime = mvu();
@@ -81,7 +81,6 @@ export function startDiscussion(ctx) {
     quietPending = false;
     quietRejection = null;
     latestGenerationType = null;
-    dryRunError = null;
     controller.contextChanged();
     nativeMode?.reset();
   }
@@ -129,20 +128,9 @@ export function startDiscussion(ctx) {
   subscribe('GENERATION_STARTED', async (...args) => {
     const [type = 'normal', _options = {}, dryRun = false] = args;
     ensureLifecycleContext();
-    if (dryRun) {
-      latestGenerationType = type;
-      dryRunError = null;
-      try {
-        // A native click can happen immediately before the preview. Sync it
-        // first; controller.mode alone may still be the previous chat value.
-        const mode = await nativeMode.synchronize();
-        nativeMode.prepareRound(mode, { type, dryRun: true });
-      } catch (error) {
-        dryRunError = error instanceof Error ? error : new Error(String(error));
-        controller.fail(dryRunError);
-      }
-      return;
-    }
+    // Tavern also emits START while editing/counting prompts. That preview is
+    // not a round and must never claim, fail or rewrite an in-flight request.
+    if (dryRun) return;
     if (type === 'quiet') {
       // START precedes Tavern rebuilding its abort controller. Stop the frozen
       // discussion now, then cancel the quiet controller at AFTER_COMMANDS.
@@ -167,13 +155,12 @@ export function startDiscussion(ctx) {
         return;
       }
       latestGenerationType = 'quiet'; quietPending = true;
-      dryRunError = null;
       try { nativeMode.prepareRound('story', { type }); } catch (error) { console.warn('[讨论模式] 静默请求隔离失败。', error); }
       return;
     }
     if (!['normal', 'regenerate', 'swipe', 'continue'].includes(type)) return;
     quietRejection = null;
-    latestGenerationType = type; dryRunError = null;
+    latestGenerationType = type;
     try {
       await nativeMode.synchronize();
     } catch (error) {
@@ -249,17 +236,14 @@ export function startDiscussion(ctx) {
   const instance = {
     requestMode: ({ type, dryRun = false } = {}) => {
       ensureLifecycleContext();
-      if (dryRun && dryRunError) throw dryRunError;
       const requestType = type ?? latestGenerationType ?? 'normal';
       if (requestType === 'quiet' && quietRejection?.origin === lifecycleContext) throw quietRejection.error;
       if (requestType === 'quiet') return 'story';
       const mode = controller.requestMode({ dryRun });
-      if (dryRun) nativeMode.prepareRound(mode, { type: requestType, dryRun: true });
       return mode;
     },
     assertRequestReady: ({ type, dryRun = false, mode } = {}) => {
       ensureLifecycleContext();
-      if (dryRun && dryRunError) throw dryRunError;
       const actual = instance.requestMode({ type, dryRun });
       if ((type ?? latestGenerationType) !== 'quiet') nativeMode.prepareRound(actual, { type: type ?? latestGenerationType ?? 'normal', dryRun });
       if (mode && mode !== actual) throw new Error('本轮讨论状态与请求标记不一致，已阻止发送。');

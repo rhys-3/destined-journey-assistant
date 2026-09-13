@@ -30,7 +30,10 @@ export function run(plan) {
     if (r.status !== 0) throw new Error('Type updater verification failed');
   }
   if (plan.build) { command(['--test', 'tests/*.test.js']); command(['build.js']); }
-  for (const name of ['ui', 'assistant', 'themes', 'settings']) if (plan[name]) command([`tests/ui/test-${name}.cjs`]);
+  for (const name of ['ui', 'assistant', 'themes', 'settings']) if (plan[name]) {
+    command([`tests/ui/test-${name}.cjs`]);
+    if (name === 'assistant') command(['tests/ui/test-discussion-records.cjs']);
+  }
 }
 
 if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {

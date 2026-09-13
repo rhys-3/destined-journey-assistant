@@ -1,11 +1,12 @@
 import { errorCatched } from './errorHandler.js';
 import { readStore, patchSummaryStore } from '../platform/store.js';
 import { assertRecordWritable } from '../platform/lifecycle.js';
-import { readArchive, writeArchive, fingerprint, currentSources, recordValid, sourceFloors, sourcesMatch, excludeRange, parseRange, consecutiveSummaries } from './provenance.js';
+import { readArchive, writeArchive, fingerprint, currentSources, sourceOf, recordValid, sourceFloors, sourcesMatch, excludeRange, parseRange, consecutiveSummaries } from './provenance.js';
 import { helperApi } from '../platform/ambient.js';
 import { CONFIG } from './config.js';
 import { feedback } from './feedback.js';
-import { allFloorMessages, readVisibilityOverrides, readVisibilityAutomation } from './visibility.js';
+import { allFloorMessages, readVisibilityOverrides, readVisibilityAutomation, discussionFloorsWithinCoverage } from './visibility.js';
+import { isDiscussionMessage } from '../discussion/protocol.js';
 import { parseSummaryEntryName, parseMegaSummaryEntryName, isMegaSummaryEntry, normalizeWorldbookEntries } from './utils.js';
 import { getSettings, getMegaSummaryMap, saveMegaSummaryMap, setMegaSummaryMapping, getMegaSummaryMapping, deleteMegaSummaryMapping } from './storage.js';
 import { recoverLegacyMegaSources } from './legacySources.js';
@@ -282,7 +283,7 @@ const addFloorRangeToSet = (set, parsed, lastId) => {
   }
 };
 
-const buildSummarizedFloorSet = (entries, lastId, megaSummaryMap = {}, archive = { records: {} }, sources = null) => {
+const buildSummarizedFloorSet = (entries, lastId, megaSummaryMap = {}, archive = { records: {} }, sources = null, messages = []) => {
   const set = new Set();
   if (!Array.isArray(entries) || lastId < 0) return set;
 
@@ -311,6 +312,9 @@ const buildSummarizedFloorSet = (entries, lastId, megaSummaryMap = {}, archive =
     }
   }
 
+  // Legacy ranges may span discussions. Visibility coverage must not call
+  // those records summarized story or change their archive provenance.
+  for (const message of messages) if (isDiscussionMessage(message)) set.delete(message.message_id);
   return set;
 };
 
@@ -348,30 +352,32 @@ const saveAutoHiddenFloorIds = (floorIds) => {
 const applySummarizedFloorsVisibility = errorCatched(async ({ taskId, autoHide } = {}) => {
   assertRecordWritable(taskId);
   const settings = getSettings();
-  const shouldAutoHide = autoHide ?? readVisibilityAutomation(settings.autoHideSummarizedFloors);
   const lastId = getLastMessageId();
   if (lastId < 0) return false;
   const entries = await getWorldbookEntriesSafe();
   const megaSummaryMap = await getMegaSummaryMap();
+  const messages = allFloorMessages(), overrides = readVisibilityOverrides(messages);
+  const shouldAutoHide = autoHide ?? readVisibilityAutomation(settings.autoHideSummarizedFloors, messages);
   const summarizedSet = buildSummarizedFloorSet(
     entries,
     lastId,
     megaSummaryMap,
-    readArchive(), currentSources(),
+    readArchive(), messages.map(sourceOf), messages,
   );
   const previousAutoHiddenSet = loadAutoHiddenFloorIds();
-  const messages = allFloorMessages(), overrides = readVisibilityOverrides(messages);
+  const discussionFloors = discussionFloorsWithinCoverage(messages, summarizedSet);
   const updates = [];
   const nextAutoHiddenSet = new Set();
   for (const message of messages) {
     const id = message.message_id;
+    const eligible = isDiscussionMessage(message) ? discussionFloors.has(id) : summarizedSet.has(id);
     // Manual actions happen once; the paused policy does not reapply them.
     if (overrides[id]) continue;
     const currentHidden = !!message.is_hidden;
     let targetHidden = currentHidden;
     // Losing summary coverage must still restore our own hidden source text.
-    if (previousAutoHiddenSet.has(id) && (autoHide === false || !summarizedSet.has(id))) targetHidden = false;
-    else if (shouldAutoHide && summarizedSet.has(id)) targetHidden = true;
+    if (previousAutoHiddenSet.has(id) && (autoHide === false || !eligible)) targetHidden = false;
+    else if (shouldAutoHide && eligible) targetHidden = true;
     if (targetHidden && (!currentHidden || previousAutoHiddenSet.has(id))) nextAutoHiddenSet.add(id);
     if (currentHidden !== targetHidden) updates.push({message_id:id,is_hidden:targetHidden});
   }
@@ -386,7 +392,8 @@ const applySummarizedFloorsVisibility = errorCatched(async ({ taskId, autoHide }
     await setChatMessages(uniqueUpdates.slice(i, i + VISIBILITY_CHUNK_SIZE), { refresh: 'affected' });
   }
   const actual = getChatMessages(`0-${lastId}`, { role: 'all', hide_state: 'all', include_swipes: false });
-  if (!uniqueUpdates.every(update => actual.some(message => message.message_id === update.message_id && !!message.is_hidden === update.is_hidden))) throw new Error('楼层显隐同步未完成');
+  const actualHidden = new Map(actual.map(message=>[message.message_id,!!message.is_hidden]));
+  if (!uniqueUpdates.every(update => actualHidden.get(update.message_id) === update.is_hidden)) throw new Error('楼层显隐同步未完成');
   saveAutoHiddenFloorIds(nextAutoHiddenSet);
   return true;
 });
@@ -683,8 +690,8 @@ export async function deleteBoundSummaryBook() {
   return { keptOtherEntries: remaining.length };
 }
 export async function getCoverage() {
-  const entries = await getWorldbookEntriesSafe(), megaMap = await getMegaSummaryMap(), archive = readArchive(), sources = currentSources();
-  return { entries, megaMap, archive, sources, floors: buildSummarizedFloorSet(entries, getLastMessageId(), megaMap, archive, sources) };
+  const entries = await getWorldbookEntriesSafe(), megaMap = await getMegaSummaryMap(), archive = readArchive(), messages = allFloorMessages(), sources = messages.map(sourceOf);
+  return { entries, megaMap, archive, sources, floors: buildSummarizedFloorSet(entries, getLastMessageId(), megaMap, archive, sources, messages) };
 }
 export async function auditArchiveSources({ taskId } = {}) {
   assertRecordWritable(taskId);
