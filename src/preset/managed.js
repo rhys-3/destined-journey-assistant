@@ -1,4 +1,5 @@
 import { legacySettingItems, serializeSettingItems, readSettingTemplate, migrateCustomSettingPrompts } from './setting-items.js';
+import { expandIdentityMacros } from '../platform/identity-macros.js';
 
 // These structural markers are consumed by the preset's message processor.
 // They must survive both assistant macro passes until that processor runs.
@@ -41,9 +42,9 @@ export function createManaged(ctx) {
       人称要求: narrationRequirement(values.narration_person),
       正文语言: values.body_language,
       思维链语言: values.thinking_language,
-      全局设定: serializeSettingItems(values.global_settings, 'global_settings'),
-      全局偏好: serializeSettingItems(values.global_settings, 'global_settings'),
-      用户附加设定: serializeSettingItems(values.user_additional_settings, 'user_additional_settings'),
+      全局设定: expandIdentityMacros(serializeSettingItems(values.global_settings, 'global_settings')),
+      全局偏好: expandIdentityMacros(serializeSettingItems(values.global_settings, 'global_settings')),
+      用户附加设定: expandIdentityMacros(serializeSettingItems(values.user_additional_settings, 'user_additional_settings')),
     };
   }
 
@@ -400,15 +401,25 @@ export function createManaged(ctx) {
 
   function expandOutgoingMessages(messages) {
     if (!Array.isArray(messages)) return;
+    // Prime's boundaries identify its assembled request. Summary materials and
+    // unrelated generateRaw requests remain opaque, including literal macros.
+    const texts = messages.flatMap(message => typeof message?.content === 'string'
+      ? [message.content] : (Array.isArray(message?.content) ? message.content.filter(part => part?.type === 'text').map(part => part.text) : []));
+    const presetRequest = ['<|命定_正文开始|>', '<|命定_正文结束|>']
+      .every(marker => texts.some(text => typeof text === 'string' && text.includes(marker)));
+    const expand = text => {
+      const result = expandManagedMacros(text, true);
+      return presetRequest ? expandIdentityMacros(result) : result;
+    };
     for (const message of messages) {
       if (typeof message?.content === 'string') {
-        message.content = expandManagedMacros(message.content, true);
+        message.content = expand(message.content);
         continue;
       }
       if (!Array.isArray(message?.content)) continue;
       for (const part of message.content) {
         if (part?.type === 'text' && typeof part.text === 'string') {
-          part.text = expandManagedMacros(part.text, true);
+          part.text = expand(part.text);
         }
       }
     }

@@ -1,6 +1,6 @@
 import { errorCatched } from './errorHandler.js';
 import { escapeRegex } from './utils.js';
-import { SillyTavern } from '../platform/lifecycle.js';
+import { expandIdentityMacros } from '../platform/identity-macros.js';
 import { isDiscussionMessage } from '../discussion/protocol.js';
 /**
  * messages.js
@@ -10,11 +10,7 @@ import { isDiscussionMessage } from '../discussion/protocol.js';
 
 const replaceMacros = (text) => {
   if (!text || typeof text !== "string") return text || "";
-  const userName = SillyTavern.name1 || "User";
-  const charName = SillyTavern.name2 || "Character";
-  return text
-    .replace(/\{\{user\}\}/gi, userName)
-    .replace(/\{\{char\}\}/gi, charName);
+  return expandIdentityMacros(text);
 };
 
 const getRawMessages = errorCatched(async (startFloor, endFloor) => {

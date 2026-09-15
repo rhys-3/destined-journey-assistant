@@ -1,4 +1,5 @@
 import { tavernContext, helperApi } from '../platform/ambient.js';
+import { IDENTITY_MACRO_SOURCE, captureIdentityValues, identityMacroValue, expandIdentityMacros } from '../platform/identity-macros.js';
 import { captureContext, checkContext } from '../platform/lifecycle.js';
 import { BLOCK_TYPES, BUILTIN_PROMPTS } from './config.js';
 import { OUTPUT_CONTRACT, formatInstruction, activeResultFormat } from './archiveDefaults.js';
@@ -15,7 +16,7 @@ export async function snapshotContext(params, settings) {
   const token = captureContext(), st = tavernContext(), ctx = st?.getContext?.() ?? st ?? {};
   const fields = (st?.getCharacterCardFields ?? ctx.getCharacterCardFields)?.() ?? {};
   const values = {
-    user: st?.name1 ?? ctx.name1 ?? 'User', char: st?.name2 ?? ctx.name2 ?? 'Character',
+    ...captureIdentityValues(),
     'summary.history': params.oldSummaryContent ?? params.oldMegaSummaryContent ?? '', 'summary.material': params.mergedChatText ?? params.mergedSummaryText ?? '',
     'summary.start': String(params.startFloor ?? ''), 'summary.end': String(params.endFloor ?? ''), 'summary.kind': params.kind === 'mega' ? '大总结' : '普通总结',
     'summary.persona': fields.persona ?? '', 'summary.character': fields.description ?? '', 'summary.personality': fields.personality ?? '', 'summary.scenario': fields.scenario ?? '', 'summary.examples': fields.mesExamples ?? '',
@@ -31,11 +32,17 @@ export async function snapshotContext(params, settings) {
     values['summary.world_after'] = clean(world?.worldInfoAfter);
   }
   checkContext(token);
+  for (const name of Object.values(builtinNames)) {
+    const key = `summary.${name}`;
+    values[key] = expandIdentityMacros(values[key], values);
+  }
   return values;
 }
 export function expandMacros(text, values, customMacros = []) {
   const customs = new Map(customMacros.map(macro => [macro.name, macro.content]));
-  const resolve = (source, stack = []) => String(source ?? '').replace(/\{\{([\w.-]+)\}\}/g, (whole, name) => {
+  const pattern = new RegExp(`${IDENTITY_MACRO_SOURCE}|\\{\\{([\\w.-]+)\\}\\}`, 'gi');
+  const resolve = (source, stack = []) => String(source ?? '').replace(pattern, (whole, curly, legacy, name) => {
+    if (curly || legacy) return identityMacroValue(curly ?? legacy, values) ?? whole;
     if (Object.hasOwn(values, name)) return values[name]; // Materials are opaque; never expand their embedded instructions/macros.
     if (!customs.has(name)) return whole;
     if (stack.includes(name) || stack.length >= 12) throw new Error(`自定义宏循环引用：${name}`);
