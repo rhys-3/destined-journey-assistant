@@ -11,7 +11,7 @@ module.exports=async(cdp,evaluate)=>{
  };
  const coords=async(index=0)=>evaluate(`(()=>{const r=ui.shadow.querySelectorAll('.prompt-sort-row')[${index}],h=r.querySelector('.sort-handle').getBoundingClientRect(),b=r.getBoundingClientRect(),c=ui.shadow.querySelector('.content').getBoundingClientRect();return {x:h.x+h.width/2,y:h.y+h.height/2,top:b.top,bottom:b.bottom,cx:c.left,cy:c.top,cb:c.bottom,cr:c.right}})()`);
  const mouse=async(type,x,y)=>cdp('Input.dispatchMouseEvent',{type,x,y,button:type==='mouseMoved'?'none':'left',buttons:type==='mouseReleased'?0:1,clickCount:type==='mouseMoved'?0:1});
- const begin=async()=>{const p=await coords();await mouse('mousePressed',p.x,p.y);await mouse('mouseMoved',p.x+6,p.y+8);await pause(40);return p};
+ const begin=async()=>{const p=await coords();await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:p.x,y:p.y,button:'none',buttons:0});await mouse('mousePressed',p.x,p.y);await mouse('mouseMoved',p.x+6,p.y+8);await pause(40);check('鼠标移动后已进入拖动状态',await evaluate(`!!ui.shadow.querySelector('.sort-ghost')`));return p};
  const settle=async()=>{await evaluate('ui.settle()');await pause(80)};
  await reset();
  check('解锁后每个发送条目有独立44像素拖动柄',await evaluate(`ui.shadow.querySelectorAll('.sort-handle').length===data.prompts.length&&[...ui.shadow.querySelectorAll('.sort-handle')].every(h=>h.getBoundingClientRect().width>=44)`));
