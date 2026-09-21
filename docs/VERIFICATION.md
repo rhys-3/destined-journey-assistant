@@ -32,7 +32,7 @@ Node 测试覆盖原始楼层计数、完整回复边界、覆盖漏段、实际
 
 场外讨论的专项浏览器检查为 `node tests/ui/test-discussion.cjs` 和 `node tests/ui/test-discussion-settings.cjs`。前者使用实际讨论 service 与原生输入区结构的模拟宿主，覆盖魔法棒入口、原生总开关同步、聊天及生成生命周期、模型切换、宏状态和 260／320／390／1280 像素布局；后者复用原配置浏览器组，覆盖无独立讨论页、原生条目编辑及自定义模型副本修改，预设写入接口为模拟。配置序列化与命名配置兼容另由 Node 检查。结果与截图写入 `.ui-review/discussion-*` 和 `configuration-test-results.json`，不代表真实手机或模型测试。
 
-本地跨工作区核对可运行 `node scripts/check-message-processing.mjs --source <命定消息处理.js 路径>`。它从对应私有工作区读取正式 split、顺序和条件宏测试宿主，串联助手两次宏处理与 Prime 原有正文分区。覆盖 Gemini 两种尾部及其自定义副本的剧情／讨论、Claude 与 DeepSeek 剧情，结合三种字数模式、文风／变量设置及两种脚本注册顺序，共 60 组。检查字数下限／上限／范围实际进入最终请求且不泄漏短宏，以及参考边界、最新输入、讨论历史包装、多模态、原生头尾及预填充保留、附加连接预填充清除、交错总结参数不变与错误标记阻止发送。报告包含源码、提示词输入、锁定上游条件宏与测试宿主哈希，写入 `.ui-review/message-processing-integration.json`。完整预设不复制到本仓库；EJS 和无关动态宏不执行，深度注入为模拟，不连接酒馆或模型。
+本地跨工作区核对可运行 `node scripts/check-message-processing.mjs --source <命定消息处理.js 路径>`。它从对应私有工作区读取正式 split、顺序和条件宏测试宿主，串联助手两次宏处理与 Prime 原有正文分区。覆盖 Gemini 两种尾部及其自定义副本、Claude、DeepSeek、GLM 的剧情／讨论，结合三种字数模式、文风／变量设置及两种脚本注册顺序，共 84 组。检查字数下限／上限／范围实际进入最终请求且不泄漏短宏，以及参考边界、最新输入、讨论历史包装、多模态、原生头尾及预填充保留、附加连接预填充清除、交错总结参数不变与错误标记阻止发送。报告包含源码、提示词输入、锁定上游条件宏与测试宿主哈希，写入 `.ui-review/message-processing-integration.json`。完整预设不复制到本仓库；EJS 和无关动态宏不执行，深度注入为模拟，不连接酒馆或模型。
 
 宏检查另有 Node 回归，覆盖有效结构标签、未知及已停用的标签、短宏展开、多模态内容与递归残留。浏览器通过助手实际注册的 `CHAT_COMPLETION_PROMPT_READY` 和 `GENERATE_AFTER_DATA` 回调检查结构标签不会被误删或产生未知宏通知。讨论输出专项脚本还检查完整 XML 外壳、代码示例、结束及停止时的正文保留。
 

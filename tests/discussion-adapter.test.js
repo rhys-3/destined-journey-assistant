@@ -6,41 +6,78 @@ import { createCustomModels } from '../src/preset/custom-models.js';
 
 const branch = text => `{{#if {{getvar::本轮场外讨论}}}}${text}{{else}}STORY{{/if}}`;
 const gemini = BUILTIN_MODEL_ADAPTERS.Gemini;
-function fixture(prefill = false) {
-  const contents = new Map([
-    [gemini.ids[0], branch('<|命定_场外讨论|> HEAD_FIXTURE')],
-    [gemini.ids[1], branch('</narrative_reference><recorder_audit_format>AUDIT_FIXTURE</recorder_audit_format>')],
-    [gemini.tails[0], branch('<think>ENTRY_FIXTURE</think><recorder_output><recorder_thinking>')],
-    [gemini.tails[1], 'Begin <recorder_output><recorder_thinking>'],
-  ]);
-  return { prompts: Object.entries(BUILTIN_MODEL_ADAPTERS).flatMap(([name, adapter]) => [...adapter.ids, ...adapter.tails]
-    .map(id => ({ id, name: id, enabled: name === 'Gemini' && (adapter.ids.includes(id) || id === adapter.tails[prefill ? 0 : 1]),
-      role: id === gemini.tails[0] ? 'assistant' : 'system', position: { type: 'relative' }, content: contents.get(id) ?? name }))), prompts_unused: [] };
+// GLM ships as an editable copy saved in the runtime configuration, so its records
+// reach the adapter through the registry instead of BUILTIN_MODEL_ADAPTERS.
+const GLM = 'glm';
+const glm = { label: GLM, ids: ['glm-head', 'glm-think', 'glm-tail'], tails: [], custom: true };
+const ADAPTERS = { ...BUILTIN_MODEL_ADAPTERS, [GLM]: glm };
+const MARKERS = {
+  Gemini: '</narrative_reference><recorder_audit_format>AUDIT_FIXTURE</recorder_audit_format>',
+  Claude: '</narrative_reference><recorder_audit_format>PUBLIC_CHECK_FIXTURE</recorder_audit_format>',
+  DeepSeek: '</narrative_reference><think_format>REASONING_CHECK_FIXTURE</think_format>',
+  [GLM]: '</narrative_reference><think_format>REASONING_CHECK_FIXTURE</think_format>',
+};
+const TAILS = {
+  [gemini.tails[0]]: { role: 'assistant', content: branch('<think>ENTRY_FIXTURE</think><recorder_output><recorder_thinking>') },
+  [gemini.tails[1]]: { role: 'system', content: 'Begin <recorder_output><recorder_thinking>' },
+};
+function entryContent(model, id) {
+  const adapter = ADAPTERS[model];
+  if (id === adapter.ids[0]) return branch('<|命定_场外讨论|> HEAD_FIXTURE');
+  if (id === adapter.ids[1]) return branch(MARKERS[model]);
+  return TAILS[id]?.content ?? model + ' TAIL_FIXTURE';
+}
+function fixture(model = 'Gemini', prefill = false) {
+  return { prompts: Object.entries(ADAPTERS).flatMap(([name, adapter]) => [...adapter.ids, ...adapter.tails]
+    .map(id => ({ id, name: id, enabled: name === model && (adapter.ids.includes(id) || id === adapter.tails[prefill ? 0 : 1]),
+      role: TAILS[id]?.role ?? 'system', position: { type: 'relative' }, content: entryContent(name, id) }))), prompts_unused: [] };
 }
 
-test('Gemini supports both native tails without consulting the API model name', () => {
-  for (const prefill of [false, true]) assert.equal(discussionAdapterSupport(fixture(prefill)).available, true);
+test('each shipped adapter enables discussion from its own head and thinking branch markers', () => {
+  for (const prefill of [false, true]) {
+    assert.deepEqual(discussionAdapterSupport(fixture('Gemini', prefill), ADAPTERS), { available: true, model: 'Gemini', reason: '' });
+  }
+  for (const model of ['Claude', 'DeepSeek', GLM]) {
+    assert.deepEqual(discussionAdapterSupport(fixture(model), ADAPTERS), { available: true, model, reason: '' });
+  }
 });
 
-test('unsupported, conflicting, incomplete, and unmerged templates cannot enable discussion', () => {
-  for (const name of ['Claude', 'DeepSeek']) {
-    const preset = fixture();
-    for (const prompt of preset.prompts) prompt.enabled = BUILTIN_MODEL_ADAPTERS[name].ids.includes(prompt.id);
-    assert.match(discussionAdapterSupport(preset).reason, /仅支持 Gemini/);
+test('templates without a discussion branch stay rejected for every adapter', () => {
+  for (const model of ['Gemini', 'Claude', 'DeepSeek', GLM]) {
+    const adapter = ADAPTERS[model];
+    const oldHead = fixture(model);
+    oldHead.prompts.find(prompt => prompt.id === adapter.ids[0]).content = 'old narrative template';
+    assert.match(discussionAdapterSupport(oldHead, ADAPTERS).reason, /缺少讨论分支/);
+    const oldThinking = fixture(model);
+    oldThinking.prompts.find(prompt => prompt.id === adapter.ids[1]).content = '<recorder_audit_format>story only</recorder_audit_format>';
+    assert.match(discussionAdapterSupport(oldThinking, ADAPTERS).reason, /缺少讨论分支/);
+    const noMarker = fixture(model);
+    noMarker.prompts.find(prompt => prompt.id === adapter.ids[1]).content = branch('story thinking without a format marker');
+    assert.match(discussionAdapterSupport(noMarker, ADAPTERS).reason, /缺少讨论分支/);
+    const openReference = fixture(model);
+    openReference.prompts.find(prompt => prompt.id === adapter.ids[1]).content = branch(MARKERS[model].replace('</narrative_reference>', ''));
+    assert.match(discussionAdapterSupport(openReference, ADAPTERS).reason, /缺少讨论分支/);
+    const plainName = fixture(model);
+    plainName.prompts.find(prompt => prompt.id === adapter.ids[1]).content = branch('</narrative_reference> recorder_audit_format think_format');
+    assert.match(discussionAdapterSupport(plainName, ADAPTERS).reason, /缺少讨论分支/);
   }
+  const oldPrefill = fixture('Gemini', true);
+  oldPrefill.prompts.find(prompt => prompt.id === gemini.tails[0]).content = '<think>old story prefill</think>';
+  assert.equal(discussionAdapterSupport(oldPrefill, ADAPTERS).available, false);
+});
+
+test('conflicting, incomplete, and unmerged model selections cannot enable discussion', () => {
   const conflict = fixture(); conflict.prompts.find(prompt => prompt.id === gemini.tails[0]).enabled = true;
-  assert.equal(discussionAdapterSupport(conflict).available, false);
+  assert.equal(discussionAdapterSupport(conflict, ADAPTERS).available, false);
   const missing = fixture(); missing.prompts.find(prompt => prompt.id === gemini.ids[1]).enabled = false;
-  assert.equal(discussionAdapterSupport(missing).available, false);
-  const oldCopy = fixture(); oldCopy.prompts.find(prompt => prompt.id === gemini.ids[0]).content = 'old narrative template';
-  assert.match(discussionAdapterSupport(oldCopy).reason, /缺少讨论分支/);
-  const oldPrefill = fixture(true); oldPrefill.prompts.find(prompt => prompt.id === gemini.tails[0]).content = '<think>old story prefill</think>';
-  assert.equal(discussionAdapterSupport(oldPrefill).available, false);
+  assert.equal(discussionAdapterSupport(missing, ADAPTERS).available, false);
+  const unmerged = fixture('Claude'); unmerged.prompts.find(prompt => prompt.id === gemini.ids[0]).enabled = true;
+  assert.equal(discussionAdapterSupport(unmerged, ADAPTERS).available, false);
 });
 
 test('the existing custom model creation copies both branches, keeps source entries intact, and remains editable', async () => {
   for (const prefill of [false, true]) {
-    let live = fixture(prefill), serial = 0;
+    let live = fixture('Gemini', prefill), serial = 0;
     const before = structuredClone(live);
     globalThis.getPreset = () => structuredClone(live);
     const ctx = {

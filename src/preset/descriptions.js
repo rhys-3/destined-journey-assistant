@@ -3,7 +3,7 @@ import { IDS, FIELD_DEFINITIONS, LANGUAGE_DEFINITIONS } from './definitions.js';
 export const DESCRIPTION_LIMIT = 2000;
 const numericDefaults = {
   hanzi: '每次回复的正文篇幅要求', dialogueRatio: '对白在正文中的占比',
-  dialogueRounds: '角色之间至少来回几轮对白', combatRounds: '每次回复推进几回合战斗',
+  dialogueRounds: '角色之间至少来回几轮对白；启用禁止抢话时，建议设为 0', combatRounds: '每次回复推进几回合战斗',
 };
 const promptDefaults = {
   [IDS.nsfwGeneral]: '中性镜头，双方并重的性描写。',
