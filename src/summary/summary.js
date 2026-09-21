@@ -1,7 +1,7 @@
 import { getSettings, getMegaSummaryMapping } from './storage.js';
 import { getCoverage, auditArchiveSources, applySummarizedFloorsVisibility, upsertSummaryEntryByName, upsertMegaSummaryEntry, isEntryDisabled } from './worldbook.js';
 import { validateResultBody } from './result.js';
-import { getRawMessages } from './messages.js';
+import { getRawMessages, processMessagesByTags } from './messages.js';
 import { makeSummaryEntryName, makeMegaSummaryEntryName } from './utils.js';
 import { parseRange, excludeRange, consecutiveSummaries, recordValid } from './provenance.js';
 import { getTask, clearTask, updatePendingTask, taskBatchFields } from './taskState.js';
@@ -22,18 +22,29 @@ export const SUMMARY_INVALID_PATTERNS = [], SUMMARY_LAZY_PATTERNS = [], SUMMARY_
 export const finalizeSummarySave = (name, content) => upsertSummaryEntryByName(name, content);
 export const finalizeMegaSummarySave = (name, content, names) => upsertMegaSummaryEntry(name, content, names);
 
-export async function computeSummaryPlans(settings = getSettings()) {
-  const lastId = getLastMessageId(); if (lastId < 0) return [];
+export async function computeSummaryPreview(settings = getSettings()) {
+  const token=captureContext(),lastId=getLastMessageId();
   const { floors, archive, entries } = await getCoverage();
   const ignored = [...archive.excluded, ...entries.filter(entry => isEntryDisabled(entry) && !archive.records[entry.name]?.invalid).map(entry => parseRange(entry.name)).filter(Boolean)];
   const isIgnored = id => ignored.some(range => id >= range.start && id <= range.end);
   const raw = await getRawMessages(0, lastId);
   const story = raw.filter(message => !isDiscussionMessage(message));
   const outstanding = story.filter(message => !floors.has(message.id) && !isIgnored(message.id));
-  const keepBoundary = story.length > settings.keepFloorCount ? story.at(story.length - settings.keepFloorCount - 1).id : -1;
+  let boundary=Math.max(0,story.length-settings.keepFloorCount);
+  while(boundary>0&&story[boundary-1].role!=='assistant')boundary--;
+  const keepBoundary=story[boundary-1]?.id??-1,retained=story.slice(boundary);
   const eligible = outstanding.filter(message => message.id <= keepBoundary);
-  return splitFloorBatches(eligible,settings.batchFloorCount,{canBridgeGap:bridgeDiscussionGaps(raw)}).map(plan=>({...plan,lastId,unsummarizedCount:outstanding.length}));
+  const processed=processMessagesByTags(eligible,settings.includeTags,settings.excludeTags,settings.excludeHtmlComments);
+  const weights=new Map(processed.map(message=>[message.id,message.content.length]));
+  const retention={keepFloorCount:settings.keepFloorCount,retainedFloorCount:retained.length,retainedStartFloor:retained[0]?.id??null,retainedEndFloor:retained.at(-1)?.id??null};
+  const plans=splitFloorBatches(eligible,settings.batchFloorCount,{canBridgeGap:bridgeDiscussionGaps(raw),weightOf:message=>weights.get(message.id)??0})
+    .map(plan=>({...plan,lastId,unsummarizedCount:outstanding.length,...retention}));
+  const plannedFloorCount=plans.reduce((sum,plan)=>sum+plan.floorCount,0);
+  checkContext(token);
+  return {plans,lastId,unsummarizedCount:outstanding.length,plannedFloorCount,remainingCount:outstanding.length-plannedFloorCount,...retention,
+    triggerFloorCount:settings.triggerFloorCount,keepFloorCount:settings.keepFloorCount,batchFloorCount:settings.batchFloorCount,ready:outstanding.length>=settings.triggerFloorCount&&plans.length>0,enabled:settings.enabled};
 }
+export async function computeSummaryPlans(settings = getSettings()) { return (await computeSummaryPreview(settings)).plans; }
 export async function computeSummaryPlan() { return (await computeSummaryPlans())[0]??null; }
 export async function shouldAutoTrigger() { const plan = await computeSummaryPlan(); return !!plan && plan.unsummarizedCount >= getSettings().triggerFloorCount; }
 export async function computeMegaPlan() {
@@ -61,14 +72,9 @@ export async function executeSummary(startFloor, endFloor, entryName, options = 
   if(options.regenerate){const {entries,megaMap}=await getCoverage();if(entries.some(entry=>!isEntryDisabled(entry)&&megaMap[entry.name]?.includes(entryName)))throw new Error('该条目已被大总结包含，请先回档对应的大总结再重生成');}
   const validation = await validateManualSummaryRange(startFloor, endFloor, { replacing: options.regenerate });
   if (!validation.ok) throw new Error(validation.message);
-  if(!options.regenerate){
-    const raw=await getRawMessages(startFloor,endFloor),story=raw.filter(message=>!isDiscussionMessage(message));
-    if(!story.some(message=>message.role==='assistant'))return showSummaryHint('所选范围只有讨论，没有可归档的 AI 正文');
-    const plans=splitFloorBatches(story,getSettings().batchFloorCount,{exactEnd:true,canBridgeGap:bridgeDiscussionGaps(raw)});
-    if(plans.reduce((count,plan)=>count+story.filter(message=>message.id>=plan.startFloor&&message.id<=plan.endFloor).length,0)!==story.length)throw new Error('每批上限太小，无法按完整回复拆分；请提高每批最多楼层数');
-    if(plans.length>1)return runSummaryTask(batchTaskSpec(plans));
-  }
-  return runSummaryTask({ kind: 'normal', startFloor, endFloor, entryName, regenerate: !!options.regenerate });
+  const raw=await getRawMessages(startFloor,endFloor),story=raw.filter(message=>!isDiscussionMessage(message));
+  if(!story.some(message=>message.role==='assistant'))return showSummaryHint('所选范围没有可归档的 AI 正文');
+  return runSummaryTask({ kind: 'normal', startFloor, endFloor, entryName, floorCount:story.length, regenerate: !!options.regenerate });
 }
 export async function executeMegaSummary(summaryNames, entryName, options = {}) {
   const discussionIds = new Set((await getRawMessages(0, getLastMessageId())).filter(isDiscussionMessage).map(message => message.id));
@@ -94,7 +100,21 @@ export async function startSummaryProcess() { const plans=await computeSummaryPl
 export async function startCustomRangeSummaryProcess() {
   const plan = await computeSummaryPlan();
   const last=getLastMessageId();if(last<0)return showSummaryHint('聊天中还没有可总结的楼层');
-  const input=await getHost().form({title:'指定楼层总结',message:`楼层从 0 开始，当前最后一楼为 ${last}。`,fields:[{name:'start',label:'起始楼层',type:'number',min:0,max:last,step:1,value:plan?.startFloor??0},{name:'end',label:'结束楼层',type:'number',min:0,max:last,step:1,value:plan?.endFloor??last}],choices:[['开始总结','__form__'],['取消',null]],validate:value=>Number.isInteger(value.start)&&Number.isInteger(value.end)&&value.start>=0&&value.end>=value.start&&value.end<=last?'':`请填写 0—${last} 之间、起点不大于终点的整数。`});
+  const raw=await getRawMessages(0,last);
+  const input=await getHost().form({title:'指定楼层总结',message:`楼层编号从 0 开始，当前最后一楼为 #${last}。所选范围一次生成，不受每批目标或保留楼层设置限制。`,
+    fields:[{name:'start',label:'起始楼层编号',type:'number',min:0,max:last,step:1,value:plan?.startFloor??0},{name:'end',label:'结束楼层编号',type:'number',min:0,max:last,step:1,value:plan?.endFloor??last}],
+    choices:[['一次生成','__form__'],['取消',null]],
+    render:({doc,content})=>{
+      const preview=doc.createElement('p');preview.dataset.rangePreview='';preview.setAttribute('role','status');content.append(preview);
+      const update=()=>{
+        const start=content.querySelector('[data-form-field="start"]').valueAsNumber,end=content.querySelector('[data-form-field="end"]').valueAsNumber;
+        if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end<start||end>last){preview.textContent='请填写有效的起止编号。';return;}
+        const selected=raw.filter(message=>message.id>=start&&message.id<=end),discussion=selected.filter(isDiscussionMessage).length;
+        preview.textContent=`所选 #${start}—#${end}，共 ${selected.length} 楼；${discussion?`其中 ${selected.length-discussion} 楼剧情材料，跳过 ${discussion} 楼讨论；`:''}将一次生成。`;
+      };
+      content.addEventListener('input',update);update();
+    },
+    validate:value=>Number.isInteger(value.start)&&Number.isInteger(value.end)&&value.start>=0&&value.end>=value.start&&value.end<=last?'':`请填写 0—${last} 之间、起点不大于终点的整数。`});
   if(!input)return;
   return executeSummary(input.start,input.end,makeSummaryEntryName(input.start,input.end));
 }

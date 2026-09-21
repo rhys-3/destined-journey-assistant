@@ -7,19 +7,25 @@ module.exports=async(cdp,evaluate,{click,fill,choose,check,pause,confirm,cancel}
   await evaluate(`window.usabilityBefore={settings:ui.summary.capture(),messages:structuredClone(messages),chatVars:structuredClone(chatVars),books:structuredClone(books),globalBooks:structuredClone(globalBooks),generate:generateRaw,getMessages:getChatMessages};`);
   await size(1280);await evaluate('ui.render()');await pause(100);
   await click('.sa-tab-item[data-tab="settings"]');await click('[data-sub-nav="core"]');
+  await pause(200);
+  await check('三个字段改为启动楼层、保留楼层与每批目标楼层数','(()=>{const labels=[...ui.shadow.querySelectorAll("[data-sub-pane=core] .sa-label")].map(item=>item.textContent);return labels.includes("未总结消息达到多少楼时启动")&&labels.includes("至少保留最近多少楼")&&labels.includes("每批目标楼层数");})()');
+  await check('目标楼层数与并发默认收在折叠的分批设置里','(()=>{const fold=ui.shadow.querySelector("[data-batch-settings]");return !!fold&&!fold.open&&!!fold.querySelector("#sa-batch-count")&&!fold.querySelector("#sa-batch-count").checkVisibility();})()');
+  await check('实际聊天预览取代固定 trigger-keep 文案','(()=>{const text=ui.shadow.querySelector("[data-batch-preview]").textContent;return /未总结 \\d+ 楼/.test(text)&&!text.includes("每批不超过")&&!text.includes("本轮处理");})()');
+  await click('[data-batch-settings] > summary');await pause(60);
+  await check('展开分批设置后目标楼层数与并发可编辑','(()=>{const fold=ui.shadow.querySelector("[data-batch-settings]");return fold.open&&fold.querySelector("#sa-batch-count").getBoundingClientRect().height>0&&!!fold.querySelector("#sa-batch-concurrency");})()');
   await choose('#sa-batch-preset','with-summary');await pause(900);
-  await check('摘要推荐为 50/10，单批上限保持独立且解释本轮 20＋20','ui.summary.capture().triggerFloorCount===50&&ui.summary.capture().keepFloorCount===10&&ui.summary.capture().batchFloorCount===20&&ui.shadow.querySelector("[data-batch-explanation]").textContent.includes("20＋20")');
+  await check('摘要推荐为 50/10，目标楼层数保持独立','ui.summary.capture().triggerFloorCount===50&&ui.summary.capture().keepFloorCount===10&&ui.summary.capture().batchFloorCount===20');
   await fill('#sa-batch-count','30');await pause(900);
-  await check('调整单批上限为 30 后明确显示本轮 30＋10','ui.shadow.querySelector("[data-batch-explanation]").textContent.includes("30＋10")&&ui.summary.capture().batchPreset==="with-summary"');
+  await check('调整每批目标楼层数后仍保留批次方案','ui.summary.capture().batchFloorCount===30&&ui.summary.capture().batchPreset==="with-summary"');
   await choose('#sa-batch-preset','without-summary');await pause(900);
-  await check('无摘要推荐为 20/5，不覆盖单批上限','ui.summary.capture().triggerFloorCount===20&&ui.summary.capture().keepFloorCount===5&&ui.summary.capture().batchFloorCount===30');
+  await check('无摘要推荐为 20/5，不覆盖目标楼层数','ui.summary.capture().triggerFloorCount===20&&ui.summary.capture().keepFloorCount===5&&ui.summary.capture().batchFloorCount===30');
   await fill('#sa-trigger-count','35');await pause(900);
   await check('手动修改数字自动转为自定义','ui.summary.capture().batchPreset==="custom"');
   await choose('#sa-batch-preset','with-summary');await click('#sa-parallel-batches');await fill('#sa-batch-concurrency','3');await pause(900);
   await check('并发可选且并发数持久化，提示同组记忆限制','ui.summary.capture().parallelBatches&&ui.summary.capture().batchConcurrency===3&&!ui.shadow.querySelector("[data-batch-history-hint]").hidden');
   for(const width of [1280,390,320]){
     await size(width);await evaluate('ui.shadow.querySelector("[data-sub-pane=core]").scrollIntoView({block:"start"})');await shot('batches-'+width);
-    await check(width+'px：批次设置没有横向溢出','(()=>{const p=ui.shadow.querySelector("[data-sub-pane=core]");return p.scrollWidth<=p.clientWidth+1;})()');
+    await check(width+'px：分批设置与实际聊天预览没有横向溢出','(()=>{const p=ui.shadow.querySelector("[data-sub-pane=core]"),preview=ui.shadow.querySelector("[data-batch-preview]");return p.scrollWidth<=p.clientWidth+1&&preview.scrollWidth<=preview.clientWidth+1;})()');
   }
   await click('#sa-parallel-batches');await pause(900);
   await check('关闭并发后回到串行，并发数不可编辑','!ui.summary.capture().parallelBatches&&ui.shadow.querySelector("#sa-batch-concurrency").disabled');
@@ -66,9 +72,30 @@ module.exports=async(cdp,evaluate,{click,fill,choose,check,pause,confirm,cancel}
   await click('[data-floor-details] > summary');await check('重新收起明细释放表格行','ui.shadow.querySelectorAll("[data-floor-view]").length===0');
   await click('[data-floor-visibility="hidden"]');await check('范围概览的查看可进入对应分页','ui.shadow.querySelector("[data-floor-details]").open&&ui.shadow.querySelector("[data-floor-filter=visibility]").value==="hidden"');
 
-  await evaluate(`(async()=>{messages=Array.from({length:70},(_,id)=>({message_id:id,role:'assistant',message:'<gametxt>批次界面 '+id+'</gametxt>',is_hidden:false}));books['批次界面验证书']=[];chatVars={summary_assistant_worldbook:'批次界面验证书',summary_assistant_visibility_auto:false};await ui.summary.apply({...usabilityBefore.settings,enabled:false,parallelBatches:true,batchConcurrency:2,batchFloorCount:20,keepFloorCount:10});window.uiBatchCalls=[];window.uiBatchResolvers=[];window.generateRaw=request=>{uiBatchCalls.push(request);return new Promise((resolve,reject)=>uiBatchResolvers.push({resolve,reject}));};ui.render();})()`);await pause(100);
+  await evaluate(`(async()=>{messages=Array.from({length:70},(_,id)=>({message_id:id,role:'assistant',message:'<gametxt>批次界面 '+String(id).padStart(2,'0')+'</gametxt>',is_hidden:false}));books['批次界面验证书']=[];chatVars={summary_assistant_worldbook:'批次界面验证书',summary_assistant_visibility_auto:false};await ui.summary.apply({...usabilityBefore.settings,enabled:false,parallelBatches:true,batchConcurrency:2,batchFloorCount:20,keepFloorCount:10});window.uiBatchCalls=[];window.uiBatchResolvers=[];window.generateRaw=request=>{uiBatchCalls.push(request);return new Promise((resolve,reject)=>uiBatchResolvers.push({resolve,reject}));};ui.render();})()`);await pause(100);
+  await click('.sa-tab-item[data-tab="settings"]');await click('[data-sub-nav="core"]');await pause(240);
+  await check('实际聊天预览给出未总结、本轮、保留与剩余','(()=>{const text=ui.shadow.querySelector("[data-batch-preview]").textContent;return text.includes("未总结 70 楼")&&text.includes("本轮 3 批")&&text.includes("实际 60 楼")&&text.includes("每批目标 20 楼")&&text.includes("保留最近 10 楼")&&text.includes("#60—#69")&&text.includes("本轮后未总结剩 10 楼");})()');
+  await check('预览逐批显示实际楼层数与编号范围','(()=>{const chips=[...ui.shadow.querySelectorAll("[data-preview-batches] li")].map(item=>item.textContent);return chips.length===3&&chips[0].includes("第 1 批 · 20 楼 · #0—#19")&&chips[2].includes("第 3 批 · 20 楼 · #40—#59");})()');
+  const savedKeepFloor=await evaluate('ui.summary.capture().keepFloorCount');
+  await click('[data-batch-settings] > summary');
+  await fill('#sa-keep-count','5');await pause(40);
+  await check('草稿改动后不会继续显示上一份草稿结果','!ui.shadow.querySelector("[data-batch-preview]").textContent.includes("保留最近 10 楼")');
+  await pause(320);
+  await check('草稿改动立即反映在预览中但不写入设置','ui.shadow.querySelector("[data-batch-preview]").textContent.includes("保留最近 5 楼")&&ui.summary.capture().keepFloorCount==='+savedKeepFloor);
+  await fill('#sa-keep-count','60');await pause(300);
+  await check('无效草稿显示与保存一致的提示而不是虚假预览','ui.shadow.querySelector("[data-batch-preview]").textContent.includes("保留楼层数须小于触发楼层数")&&ui.summary.capture().keepFloorCount==='+savedKeepFloor);
+  await fill('#sa-keep-count','10');await pause(900);
+  await check('恢复草稿后预览与保存值一致','ui.summary.capture().keepFloorCount===10&&ui.shadow.querySelector("[data-batch-preview]").textContent.includes("保留最近 10 楼")');
   await click('#sa-start-summary');await pause(150);await click('.sa-tab-item[data-tab="status"]');
   await check('界面启动三批任务，仅同时生成两批，其余等待','uiBatchCalls.length===2&&ui.shadow.querySelectorAll("[data-task-batch]").length===3&&ui.shadow.querySelector(`[data-task-batch="2"]`).textContent.includes("未开始")');
+  await check('任务与批次优先显示实际楼层数、编号范围与保留范围','(()=>{const title=ui.shadow.querySelector("[data-task-title]").textContent,buttons=[...ui.shadow.querySelectorAll("[data-task-batch]")].map(item=>item.textContent),retention=ui.shadow.querySelector("[data-task-retention]").textContent;return title.includes("60 楼 · #0—#59")&&buttons[0].includes("第 1 批 · 20 楼 · #0—#19")&&retention.includes("保留最近 10 楼")&&retention.includes("#60—#69");})()');
+  await click('.sa-tab-item[data-tab="settings"]');await click('[data-sub-nav="core"]');
+  if(!await evaluate('ui.shadow.querySelector("[data-batch-settings]").open'))await click('[data-batch-settings] > summary');
+  await fill('#sa-batch-count','5');await pause(900);
+  await check('任务运行中修改草稿只改预览，不改变本轮批次','ui.shadow.querySelector("[data-batch-preview]").textContent.includes("每批目标 5 楼")');
+  await click('.sa-tab-item[data-tab="status"]');
+  await check('运行中可切回记录与任务页','ui.shadow.querySelector(".sa-tab-pane.active").dataset.pane==="status"');
+  await check('运行中的任务保留起批时的批次范围与数量','ui.shadow.querySelectorAll("[data-task-batch]").length===3&&ui.shadow.querySelector(`[data-task-batch="2"]`).textContent.includes("20 楼 · #40—#59")');
   await evaluate(`uiBatchResolvers[1].reject(Object.assign(Error('第二批请求失败'),{status:401}));uiBatchResolvers[0].reject(Object.assign(Error('第一批请求失败'),{status:401}));`);await pause(150);
   await click('[data-task-batch="1"]');await check('选中待处理批次后正文区域保持展开','ui.shadow.querySelector("[data-task-details]").open');
   await fill('[data-task-body]',await evaluate('dialogSummaryBody+"\\n  第二批编辑"'));
@@ -83,6 +110,10 @@ module.exports=async(cdp,evaluate,{click,fill,choose,check,pause,confirm,cancel}
   await check('继续后全部完成且已保存批次没有重复','books["批次界面验证书"].filter(entry=>/^总结/.test(entry.name)).length===3&&ui.shadow.querySelector("[data-task-batches]").textContent.includes("已完成 3 批")');
   await click('[data-task-clear-log]');
   await evaluate(`(async()=>{messages=usabilityBefore.messages;chatVars=usabilityBefore.chatVars;books=usabilityBefore.books;globalBooks=usabilityBefore.globalBooks;window.generateRaw=usabilityBefore.generate;await ui.summary.apply(usabilityBefore.settings);ui.render();})()`);await pause(100);
+  await evaluate(`(async()=>{const spec=(start,end)=>({kind:"normal",startFloor:start,endFloor:end,entryName:"总结"+start+"-"+end+"楼",regenerate:false});const specs=[spec(0,19),spec(20,39)];const task=uiTaskState.beginTask({kind:"batch",startFloor:0,endFloor:39,batches:specs});uiTaskState.finishTask(task,{phase:"pending",message:"旧任务等待处理",batches:specs.map(item=>({spec:item,phase:"queued"})),selectedBatch:0});ui.state.activeTab="summary";ui.render();await ui.summary.refresh();})()`);await pause(120);
+  await click('.sa-tab-item[data-tab="status"]');
+  await check('旧任务没有实际楼层数时只显示编号范围，不按讨论缺口虚报','(()=>{const title=ui.shadow.querySelector("[data-task-title]").textContent,buttons=[...ui.shadow.querySelectorAll("[data-task-batch]")].map(item=>item.textContent);return buttons.length===2&&buttons[0].includes("第 1 批 · #0—#19")&&buttons[1].includes("第 2 批 · #20—#39")&&!buttons.some(text=>text.includes(" 楼 · #"))&&title.includes("#0—#39")&&!title.includes(" 楼 · #")&&ui.shadow.querySelector("[data-task-retention]").hidden;})()');
+  await evaluate('uiTaskState.clearTask();ui.summary.refresh();');await pause(60);
 
   await size(320);await evaluate(`ui.state.activeTab='style';ui.state.editorUnlocked=true;ui.render();`);
   await click('[data-action="entry-new-here"][data-block="style-extra"]');await click('[data-action="prompt-close"]');

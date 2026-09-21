@@ -96,7 +96,7 @@ export function refresh() {
   if(isBusy())return Promise.resolve();
   if(refreshPromise)return refreshPromise;
   const current=panel;
-  refreshPromise=(async()=>{await current._refreshWorldbooks?.();await Promise.all([refreshEntryList(current,current.querySelector('#sa-start-mega-summary')?.textContent.includes('退出')),refreshMegaEntryList(current),refreshStatus(current)]);})()
+  refreshPromise=(async()=>{await current._refreshWorldbooks?.();await Promise.all([refreshEntryList(current,current.querySelector('#sa-start-mega-summary')?.textContent.includes('退出')),refreshMegaEntryList(current),refreshStatus(current),current._refreshPlan?.()]);})()
     .catch(error=>{if(error.name!=='AbortError')getHost()?.status(error.message,'error');}).finally(()=>{refreshPromise=null;});
   return refreshPromise;
 }

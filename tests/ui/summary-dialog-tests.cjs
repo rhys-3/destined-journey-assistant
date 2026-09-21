@@ -10,6 +10,8 @@ module.exports = async (cdp, evaluate) => {
   async function click(selector) {
     // Let the panel finish its two-frame scroll restoration before measuring the hit target.
     await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await evaluate(`ui.shadow.querySelector(${JSON.stringify(selector)})?.scrollIntoView({block:'center',inline:'nearest'})`);
+    await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     const point = await evaluate(`(()=>{const e=ui.shadow.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing click target');e.scrollIntoView({block:'center',inline:'nearest'});const r=e.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=ui.shadow.elementFromPoint(x,y);return{x,y,reachable:!!r.width&&!!r.height&&!e.disabled&&(hit===e||e.contains(hit)),hit:hit?.className,pointer:getComputedStyle(e).pointerEvents};})()`);
     assert(point.reachable, selector + ' is not reachable: ' + JSON.stringify(point));
     await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 });
@@ -52,6 +54,7 @@ module.exports = async (cdp, evaluate) => {
     await click('#sa-start-custom-summary');
     await fill('[data-form-field="start"]', '40');await fill('[data-form-field="end"]', '45');
     await check(width + 'px：弹窗输入框获得焦点且确认按钮可用', `ui.shadow.activeElement===ui.shadow.querySelector('[data-form-field="end"]')&&!ui.shadow.querySelector('.dj-dialog-actions button').disabled`);
+    await check(width + 'px：范围预览实时显示所选楼层与一次生成', `(()=>{const text=ui.shadow.querySelector('[data-range-preview]').textContent;return text.includes('所选 #40—#45')&&text.includes('共 6 楼')&&text.includes('将一次生成')&&ui.shadow.querySelector('.dj-dialog-actions button').textContent.trim()==='一次生成';})()`);
     const shot = await cdp('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync('.ui-review/summary-dialog-' + width + '.png', Buffer.from(shot.data, 'base64'));
     await cancel(); await closed();
@@ -61,6 +64,18 @@ module.exports = async (cdp, evaluate) => {
   await click('#sa-start-custom-summary'); await fill('[data-form-field="start"]', '40');await fill('[data-form-field="end"]', '45'); await confirm();
   await pause(150);
   await check('关闭自动总结仍可由指定楼层弹窗确认并生成', `!ui.summary.capture().enabled&&Object.values(books).flat().some(entry=>entry.name==='总结40-45楼'&&entry.content===dialogSummaryBody)`);
+  await check('指定范围任务只显示实际楼层数与编号范围，不推导保留范围', `(()=>{const title=ui.shadow.querySelector('[data-task-title]').textContent,retention=ui.shadow.querySelector('[data-task-retention]');return /6 楼 · #40—#45/.test(title)&&retention.hidden;})()`);
+  await evaluate(`messages.push(...Array.from({length:20},(_,index)=>({message_id:index+50,role:'assistant',message:'<gametxt>指定范围材料</gametxt>',is_hidden:false})));window.rangeSingleCalls=0;window.rangeInnerGenerate=window.generateRaw;window.generateRaw=request=>{window.rangeSingleCalls++;window.lastRequest=request;return window.rangeInnerGenerate(request);};`);
+  await click('#sa-start-custom-summary');await fill('[data-form-field="start"]','46');await fill('[data-form-field="end"]','69');
+  await check('24 楼范围超过每批目标仍标记一次生成', `(()=>{const text=ui.shadow.querySelector('[data-range-preview]').textContent;return text.includes('所选 #46—#69')&&text.includes('共 24 楼')&&text.includes('将一次生成');})()`);
+  await confirm();await pause(200);
+  await check('指定范围只发起一次请求并保存为单条记录', `window.rangeSingleCalls===1&&Object.values(books).flat().some(entry=>entry.name==='总结46-69楼'&&entry.content===dialogSummaryBody)`);
+  await evaluate('window.generateRaw=window.rangeInnerGenerate;');
+  await evaluate(`messages.push({message_id:70,role:'assistant',message:'<discussion_record>讨论</discussion_record>',is_hidden:false,extra:{destined_discussion:{version:1,mode:'discussion'}}});`);
+  await click('#sa-start-custom-summary');await fill('[data-form-field="start"]','0');await fill('[data-form-field="end"]','70');
+  await check('范围预览区分剧情材料与跳过的讨论楼层', `(()=>{const text=ui.shadow.querySelector('[data-range-preview]').textContent;return text.includes('共 71 楼')&&text.includes('70 楼剧情材料')&&text.includes('跳过 1 楼讨论')&&text.includes('将一次生成');})()`);
+  await cancel();await closed();
+  await evaluate('messages.pop();');
 
   await click('.sa-tab-item[data-tab="prompts"]');
   await click('[data-action-add-block]'); await fill('.dj-dialog textarea', '鼠标新增条目'); await confirm();
@@ -100,7 +115,8 @@ module.exports = async (cdp, evaluate) => {
   await click('#sa-reset'); await confirm(); await pause(100);
   await check('重置总结参数弹窗可确认并恢复默认值', `ui.summary.capture().megaTriggerCount===15&&ui.summary.capture().megaBatchCount===10&&!ui.summary.capture().enabled&&ui.shadow.querySelector('#sa-user-prefix').value==='{{user}}'&&ui.shadow.querySelector('#sa-assistant-prefix').value==='AI'`);
   await click('#sa-start-summary'); await pause(150);
-  await check('关闭自动总结仍可点击手动开始并保存', `Object.values(books).flat().some(entry=>entry.name==='总结0-19楼'&&entry.content===dialogSummaryBody)&&!ui.summary.capture().enabled`);
+  await check('关闭自动总结仍可点击手动开始并保存', `Object.values(books).flat().some(entry=>/^总结0-\\d+楼$/.test(entry.name)&&entry.content===dialogSummaryBody)&&!ui.summary.capture().enabled`);
+  await check('立即总结任务显示实际楼层数与保留范围', `(()=>{const title=ui.shadow.querySelector('[data-task-title]').textContent,retention=ui.shadow.querySelector('[data-task-retention]');return /\\d+ 楼 · #0—#\\d+/.test(title)&&!retention.hidden&&retention.textContent.includes('保留最近 10 楼')&&retention.textContent.includes('#60—#69')&&!retention.textContent.includes('多留');})()`);
   await evaluate(`window.summaryToastCalls=[];for(const kind of ['info','success','warning','error'])window.toastr[kind]=(...args)=>summaryToastCalls.push([kind,...args]);`);
   for (const width of [1280,390,320]) {
     const height = width===1280?960:844;

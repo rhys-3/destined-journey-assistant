@@ -28,7 +28,34 @@ export function applyBusyRules(root) {
   for (const button of root.querySelectorAll('[data-action="view-edit"],[data-action="view-edit-mega"]')) button.textContent = busy ? '查看 / 复制' : '查看 / 编辑';
   const reason = root.querySelector('#sa-busy-reason'); if (reason) { reason.hidden = !busy; reason.textContent = '当前总结任务尚未结束：记录暂时只读。提示词和连接参数的修改将在下次任务生效。'; }
 }
-export const taskSummary = task => task ? `${task.running ? '◌ ' : task.phase === 'complete' ? '✓ ' : '⚠ '}${task.running ? phaseLabels[task.phase] : task.message || phaseLabels[task.phase]} · ${task.spec.startFloor}—${task.spec.endFloor} 楼` : '';
+export function describeFloorRange(spec) {
+  if (!Number.isInteger(spec?.startFloor) || !Number.isInteger(spec?.endFloor)) return '';
+  return `#${spec.startFloor}—#${spec.endFloor}`;
+}
+// Actual floor count first, then the floor range. Tasks restored from before the
+// balanced planner carry no count; they must keep showing the range only instead
+// of inflating the number across discussion gaps.
+export function describeSpecFloors(spec, batches) {
+  const range = describeFloorRange(spec);
+  if (!range) return '';
+  const count = specFloorCount(spec, batches);
+  return count === null ? range : `${count} 楼 · ${range}`;
+}
+function specFloorCount(spec, batches) {
+  if (Number.isInteger(spec?.floorCount) && spec.floorCount > 0) return spec.floorCount;
+  const values = (Array.isArray(batches) ? batches : []).map(batch => batch?.spec?.floorCount);
+  return values.length && values.every(value => Number.isInteger(value) && value > 0) ? values.reduce((sum, value) => sum + value, 0) : null;
+}
+// Only automatic and immediate summary plans snapshot the retained range; the
+// dedicated-range dialog never derives it. The "extra" note only applies when the
+// snapshot kept more floors than the user's own setting asked for.
+export function describeRetention(spec) {
+  if (!Number.isInteger(spec?.retainedFloorCount) || spec.retainedFloorCount <= 0) return '';
+  const range = Number.isInteger(spec.retainedStartFloor) && Number.isInteger(spec.retainedEndFloor) ? ` · #${spec.retainedStartFloor}—#${spec.retainedEndFloor}` : '';
+  const extra = Number.isInteger(spec.keepFloorCount) && spec.retainedFloorCount > spec.keepFloorCount ? '（按完整 AI 回复多留）' : '';
+  return `保留最近 ${spec.retainedFloorCount} 楼${range}${extra}`;
+}
+export const taskSummary = task => task ? `${task.running ? '◌ ' : task.phase === 'complete' ? '✓ ' : '⚠ '}${task.running ? phaseLabels[task.phase] : task.message || phaseLabels[task.phase]} · ${describeSpecFloors(task.spec, task.batches)}` : '';
 const retryLabel = task => task.batches?.length>1?'继续未完成批次':task.errorKind === 'visibility' ? '重试隐藏' : task.errorKind === 'save' ? '重试保存' : task.phase === 'stopped' ? '继续本次' : '重试生成';
 function renderTaskBatches(widget, task) {
   const target=widget.querySelector('[data-task-batches]'),batches=task.batches??[];
@@ -36,7 +63,7 @@ function renderTaskBatches(widget, task) {
   const pages=Math.ceil(batches.length/8),page=Math.max(0,Math.min(pages-1,task.running?Math.floor((task.selectedBatch??0)/8):Number(widget.dataset.batchPage??Math.floor((task.selectedBatch??0)/8))));
   widget.dataset.batchPage=page;
   const labels={...phaseLabels,queued:'未开始',skipped:'已跳过',paused:'未执行'};
-  target.innerHTML=`<div>本轮 ${batches.length} 批 · 已完成 ${batches.filter(batch=>batch.phase==='complete').length} 批</div><div class="sa-task-batch-list">${batches.slice(page*8,page*8+8).map((batch,offset)=>{const index=page*8+offset;return `<button type="button" data-task-batch="${index}" aria-current="${index===(task.selectedBatch??0)}" ${task.running||['complete','skipped','paused'].includes(batch.phase)?'disabled':''}><span>第 ${index+1} 批 · ${batch.spec.startFloor}—${batch.spec.endFloor} 楼</span><small>${labels[batch.phase]??'待处理'}</small></button>`;}).join('')}</div>${pages>1?`<div class="sa-task-batch-pages"><button type="button" data-task-batch-page="-1" ${page===0?'disabled':''}>上一页</button><span>${page+1} / ${pages}</span><button type="button" data-task-batch-page="1" ${page+1>=pages?'disabled':''}>下一页</button></div>`:''}`;
+  target.innerHTML=`<div>本轮 ${batches.length} 批 · 已完成 ${batches.filter(batch=>batch.phase==='complete').length} 批</div><div class="sa-task-batch-list">${batches.slice(page*8,page*8+8).map((batch,offset)=>{const index=page*8+offset;return `<button type="button" data-task-batch="${index}" aria-current="${index===(task.selectedBatch??0)}" ${task.running||['complete','skipped','paused'].includes(batch.phase)?'disabled':''}><span>第 ${index+1} 批 · ${describeSpecFloors(batch.spec)}</span><small>${labels[batch.phase]??'待处理'}</small></button>`;}).join('')}</div>${pages>1?`<div class="sa-task-batch-pages"><button type="button" data-task-batch-page="-1" ${page===0?'disabled':''}>上一页</button><span>${page+1} / ${pages}</span><button type="button" data-task-batch-page="1" ${page+1>=pages?'disabled':''}>下一页</button></div>`:''}`;
 }
 export function refreshTaskWidget(panel) {
   applyBusyRules(panel);
@@ -45,7 +72,7 @@ export function refreshTaskWidget(panel) {
   if (!task) return;
   if (widget.dataset.taskId !== task.id) {
     widget.dataset.taskId = task.id;
-    widget.innerHTML = '<div class="sa-task-heading"><div data-task-title role="status" aria-live="polite"></div><span class="sa-task-reason" data-task-elapsed></span></div><ol class="sa-task-log" data-task-log aria-label="本次任务日志"></ol><p class="sa-task-reason" data-task-message></p><div class="sa-task-actions" data-task-main-actions><button data-task-stop>停止本次任务</button><button data-task-retry></button></div><details class="sa-disclosure" data-task-details hidden><summary><span>处理待完成结果</span><span class="sa-disclosure-arrow" aria-hidden="true">⌄</span></summary><div class="sa-disclosure-content"><textarea data-task-body aria-label="待处理总结正文"></textarea><div class="sa-task-actions"><button data-task-copy>复制正文</button><button data-task-save>保存编辑后的正文</button><button data-task-regenerate>重新生成</button><button data-task-skip>跳过此批</button></div></div></details><details class="sa-disclosure" data-task-tech-section hidden><summary><span>错误详情与原始返回</span><span class="sa-disclosure-arrow" aria-hidden="true">⌄</span></summary><pre class="sa-task-details" data-task-tech></pre></details>';
+    widget.innerHTML = '<div class="sa-task-heading"><div data-task-title role="status" aria-live="polite"></div><span class="sa-task-reason" data-task-elapsed></span></div><ol class="sa-task-log" data-task-log aria-label="本次任务日志"></ol><p class="sa-task-reason" data-task-message></p><p class="sa-task-reason" data-task-retention hidden></p><div class="sa-task-actions" data-task-main-actions><button data-task-stop>停止本次任务</button><button data-task-retry></button></div><details class="sa-disclosure" data-task-details hidden><summary><span>处理待完成结果</span><span class="sa-disclosure-arrow" aria-hidden="true">⌄</span></summary><div class="sa-disclosure-content"><textarea data-task-body aria-label="待处理总结正文"></textarea><div class="sa-task-actions"><button data-task-copy>复制正文</button><button data-task-save>保存编辑后的正文</button><button data-task-regenerate>重新生成</button><button data-task-skip>跳过此批</button></div></div></details><details class="sa-disclosure" data-task-tech-section hidden><summary><span>错误详情与原始返回</span><span class="sa-disclosure-arrow" aria-hidden="true">⌄</span></summary><pre class="sa-task-details" data-task-tech></pre></details>';
     widget.querySelector('[data-task-stop]').onclick = stopTask;
     widget.querySelector('[data-task-retry]').onclick = () => runAction(() => retryTask());
     widget.querySelector('[data-task-regenerate]').onclick = () => runAction(() => retryTask('generate'));
@@ -76,6 +103,8 @@ export function refreshTaskWidget(panel) {
   const message = widget.querySelector('[data-task-message]');
   message.hidden = task.phase === 'complete';
   message.textContent = task.running ? '关闭面板可继续聊天；本次使用开始时的设置。' : task.message || '本次任务等待处理。';
+  const retention = widget.querySelector('[data-task-retention]');
+  if (retention) { const text = describeRetention(task.spec); retention.hidden = !text; retention.textContent = text; }
   const body = widget.querySelector('[data-task-body]');
   body.readOnly = !pending;
   body.hidden = !pending;

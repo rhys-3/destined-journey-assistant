@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import variableMocks from './helpers/tavern-variables.cjs';
 import { DEFAULT_SETTINGS, CONFIG } from '../src/summary/config.js';
 import { summarySnapshot } from '../src/summary/settingsSchema.js';
-import { writePresetStore } from '../src/platform/store.js';
-import { configureRuntime, captureContext, checkContext, invalidate, runAction, isBusy, setRuntimeEnabled } from '../src/platform/lifecycle.js';
+import { writePresetStore, patchSummaryStore } from '../src/platform/store.js';
+import { configureRuntime, captureContext, checkContext, contextKey, invalidate, runAction, isBusy, setRuntimeEnabled } from '../src/platform/lifecycle.js';
 import { loadSettings, saveSettings, getSettings, updateSettings, getKeyForUrl, migrateOldSettings } from '../src/summary/storage.js';
 import { PREVIOUS_ARCHIVE_PROMPTS, PREVIOUS_COMPACT_PROMPTS, THINKING_TEMPLATES, PREFILLS, optionBlocks, activeResultFormat } from '../src/summary/archiveDefaults.js';
 import { deleteBoundSummaryBook, getManagedSummaryBookNames } from '../src/summary/worldbook.js';
-import { computeSummaryPlan, computeSummaryPlans, shouldAutoTrigger, executeSummary, finalizeMegaSummarySave, startSummaryProcess, startCustomRangeSummaryProcess, skipPendingTask } from '../src/summary/summary.js';
+import { computeSummaryPlan, computeSummaryPlans, computeSummaryPreview, shouldAutoTrigger, executeSummary, finalizeMegaSummarySave, regenerateAndReplaceEntry, startSummaryProcess, startCustomRangeSummaryProcess, skipPendingTask } from '../src/summary/summary.js';
 import { callSummaryApi, callMegaSummaryApi } from '../src/summary/api.js';
 import { processMessagesByTags } from '../src/summary/messages.js';
 import { upsertSummaryEntryByName, upsertMegaSummaryEntry, restoreMegaSummaryToSummaries, activateMegaSummaryEntry, applySummarizedFloorsVisibility, writeChatWorldbookBinding, migrateWorldbookEntries, getAllSummaryEntriesForDisplay } from '../src/summary/worldbook.js';
@@ -105,7 +105,8 @@ test('threshold counts raw floors, retaining the latest ten',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:true});
   seedFloors(29);assert.equal(await shouldAutoTrigger(),false);
   messages.push({message_id:29,role:'assistant',message:'<gametxt>新事件</gametxt>'});assert.equal(await shouldAutoTrigger(),true);
-  assert.deepEqual(await computeSummaryPlan(),{startFloor:0,endFloor:19,entryName:'总结0-19楼',lastId:29,unsummarizedCount:30});
+  const plan=await computeSummaryPlan();assert.deepEqual({startFloor:plan.startFloor,endFloor:plan.endFloor,entryName:plan.entryName,lastId:plan.lastId,unsummarizedCount:plan.unsummarizedCount},{startFloor:0,endFloor:19,entryName:'总结0-19楼',lastId:29,unsummarizedCount:30});
+  assert.equal(plan.floorCount,20);assert(plan.materialChars>0);
 });
 test('tag extraction ignores thoughts but preserves untagged user input',()=>{
   const result=processMessagesByTags([{id:0,role:'assistant',message:'<think>secret</think><tp>488-1-1</tp><gametxt>故事<!--注释--></gametxt><summary>摘要</summary>'},{id:1,role:'user',message:'无标签'}],['tp','gametxt'],['think'],true);
@@ -304,9 +305,12 @@ test('a failed recovered-archive write leaves the saved map retryable',async()=>
   assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],{'大总结0-19楼':['总结0-9楼','总结10-19楼']});assert.equal(readArchive().records['大总结0-19楼'].sources.length,0);
   globalThis.replaceVariables=replace;assert.deepEqual(await auditArchiveSources(),[]);assert.equal(readArchive().records['大总结0-19楼'].sources.length,20);
 });
-test('every automatic normal batch is bounded and ends after an AI reply',async()=>{
+test('every automatic normal batch stays inside the soft target and ends after an AI reply',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:true,batchFloorCount:19});seedFloors(100);
-  const plan=await computeSummaryPlan();assert.equal(plan.endFloor,17);assert(plan.endFloor-plan.startFloor+1<=19);
+  const plans=await computeSummaryPlans(),cap=Math.floor(19*1.2);assert(plans.length>1);
+  assert.deepEqual(plans.map(plan=>plan.startFloor),[plans[0].startFloor,...plans.slice(0,-1).map(plan=>plan.endFloor+1)]);
+  assert.equal(plans.at(-1).endFloor,89);
+  for(const plan of plans){assert(messages[plan.endFloor].role==='assistant');assert(plan.floorCount<=cap);assert(plan.materialChars>0);assert.equal(plan.entryName,`总结${plan.startFloor}-${plan.endFloor}楼`);}
 });
 test('generation saves body then hides without CHAT_CHANGED reloads',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:true});seedFloors();let calls=0;
@@ -781,26 +785,30 @@ test('clearing task logs preserves active and pending results; completed logs ne
   assert.equal(getTask(),null);assert.equal(books.book[0].content,'保留档案');
 });
 
-test('a triggered round drains its fixed eligible range in 20+20 or 30+10 batches',async()=>{
+test('a triggered round drains its eligible range in balanced target-sized batches',async()=>{
   for(const limit of [20,30]){
     reset();await saveSettings({...FLOW_SETTINGS,enabled:true,triggerFloorCount:50,keepFloorCount:10,batchFloorCount:limit});seedFloors(50);
     const requests=[];globalThis.generateRaw=async config=>{requests.push(config);return '<summary_result>批次记忆'+requests.length+'</summary_result>';};
-    const plans=await computeSummaryPlans();assert.deepEqual(plans.map(plan=>plan.endFloor-plan.startFloor+1),limit===20?[20,20]:[30,10]);
+    const plans=await computeSummaryPlans();
+    assert.deepEqual(plans.map(plan=>[plan.startFloor,plan.endFloor]),[[0,19],[20,39]]);
+    assert(plans.every(plan=>plan.floorCount<=Math.floor(limit*1.2)&&messages[plan.endFloor].role==='assistant'));
     await autoTriggerSummary();assert.equal(requests.length,2);assert.equal(getTask().phase,'complete');
     assert(requests[1].ordered_prompts.some(prompt=>prompt.content.includes('批次记忆1')));
     assert(messages.slice(0,40).every(message=>message.is_hidden));assert(messages.slice(40).every(message=>!message.is_hidden));
     assert(getTask().batches.every(batch=>batch.phase==='complete'));
+    assert.deepEqual(books.book.map(entry=>entry.name),plans.map(plan=>plan.entryName));
   }
 });
 
 test('parallel generation stays bounded and saves each group in floor order despite reversed completion',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:true,triggerFloorCount:70,keepFloorCount:10,batchFloorCount:20,parallelBatches:true,batchConcurrency:2});seedFloors(70);
+  const plans=await computeSummaryPlans();assert.equal(plans.length,3);assert(plans.every(plan=>plan.floorCount<=Math.floor(20*1.2)));
   const pending=[],requests=[];let active=0,peak=0;
   globalThis.generateRaw=config=>{requests.push(config);active++;peak=Math.max(peak,active);return new Promise(resolve=>pending.push(value=>{active--;resolve('<summary_result>'+value+'</summary_result>');}));};
   const run=autoTriggerSummary();await waitUntil(()=>pending.length===2);assert.equal(books.book.length,0);
   pending[1]('第二批');await nextTick();assert.equal(books.book.length,0);assert.equal(getTask().batches[1].body,'第二批');
   pending[0]('第一批');await waitUntil(()=>pending.length===3);
-  assert.deepEqual(books.book.map(entry=>entry.name),['总结0-19楼','总结20-39楼']);
+  assert.deepEqual(books.book.map(entry=>entry.name),plans.slice(0,2).map(plan=>plan.entryName));
   assert(requests[2].ordered_prompts.some(prompt=>prompt.content.includes('第一批')&&prompt.content.includes('第二批')));
   assert(!requests[1].ordered_prompts.some(prompt=>prompt.content.includes('第一批')));
   pending[2]('第三批');await run;assert.equal(peak,2);assert.equal(requests.length,3);assert.equal(getTask().phase,'complete');
@@ -808,11 +816,12 @@ test('parallel generation stays bounded and saves each group in floor order desp
 
 test('a failed parallel batch preserves successful siblings and retries only unfinished batches after reload',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:true,triggerFloorCount:70,keepFloorCount:10,batchFloorCount:20,parallelBatches:true,batchConcurrency:2});seedFloors(70);
+  const plans=await computeSummaryPlans();
   let calls=0;globalThis.generateRaw=async()=>{if(++calls===1)throw Object.assign(Error('denied'),{status:401});return '<summary_result>第二批成功</summary_result>';};
-  await autoTriggerSummary();assert.equal(calls,2);assert.equal(getTask().phase,'pending');assert.deepEqual(books.book.map(entry=>entry.name),['总结20-39楼']);
+  await autoTriggerSummary();assert.equal(calls,2);assert.equal(getTask().phase,'pending');assert.deepEqual(books.book.map(entry=>entry.name),[plans[1].entryName]);
   assert.deepEqual(getTask().batches.map(batch=>batch.phase),['pending','complete','queued']);
   restoreTaskState();globalThis.generateRaw=async()=>{calls++;return '<summary_result>恢复批次</summary_result>';};
-  await retryTask();assert.equal(calls,4);assert.equal(getTask().phase,'complete');assert.equal(books.book.find(entry=>entry.name==='总结20-39楼').content,'第二批成功');
+  await retryTask();assert.equal(calls,4);assert.equal(getTask().phase,'complete');assert.equal(books.book.find(entry=>entry.name===plans[1].entryName).content,'第二批成功');
   assert(messages.slice(0,60).every(message=>message.is_hidden));
 });
 
@@ -841,11 +850,16 @@ test('editing one failed batch saves just that selection without regenerating an
   assert.equal(getTask().batches[0].phase,'pending');assert.equal(getTask().batches[1].phase,'complete');
 });
 
-test('custom ranges respect the batch cap and pause stops queuing after the active serial batch',async()=>{
+test('custom and regenerated ranges stay one request and pause stops queuing after the active serial batch',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:false,batchFloorCount:20});seedFloors(50);
-  let calls=0;globalThis.generateRaw=async()=>{calls++;return '<summary_result>指定范围</summary_result>';};await executeSummary(0,39,'总结0-39楼');
-  assert.equal(calls,2);assert.deepEqual(books.book.map(entry=>entry.name),['总结0-19楼','总结20-39楼']);
+  let calls=0;globalThis.generateRaw=async()=>{calls++;return '<summary_result>指定范围</summary_result>';};
+  await executeSummary(0,39,'总结0-39楼');
+  assert.equal(calls,1);assert.deepEqual(books.book.map(entry=>entry.name),['总结0-39楼']);
+  assert(messages.slice(0,40).every(message=>message.is_hidden));assert(messages.slice(40).every(message=>!message.is_hidden));
+  await regenerateAndReplaceEntry('总结0-39楼');
+  assert.equal(calls,2);assert.deepEqual(books.book.map(entry=>entry.name),['总结0-39楼']);assert.equal(getTask().phase,'complete');
   reset();await saveSettings({...FLOW_SETTINGS,enabled:true,triggerFloorCount:50,keepFloorCount:10});seedFloors(50);
+  assert.equal((await computeSummaryPlans()).length,2);
   calls=0;globalThis.generateRaw=async()=>{calls++;await updateSettings({enabled:false});return '<summary_result>暂停前完成</summary_result>';};
   await autoTriggerSummary();assert.equal(calls,1);assert.equal(books.book.length,1);assert.equal(getTask().batches[1].phase,'paused');
 });
@@ -873,4 +887,141 @@ test('a long floor list is paged in bounded slices and can jump and filter witho
   const users=floorPage(snapshot,{role:'user',page:49});assert.equal(users.count,1500);assert(users.groups.every(group=>group.role==='user'));
   assert.deepEqual(floorPage(snapshot,{visibility:'hidden'}).groups.map(group=>group.from),[2999]);
   const {parseTagNames}=await import('../src/summary/ui/tagEditor.js');assert.deepEqual(parseTagNames('<tp>，gametxt、hidden;tp'),['tp','gametxt','hidden']);assert.throws(()=>parseTagNames('bad!tag'));
+});
+
+test('preview reports the next round without writing settings, worldbook or task state',async()=>{
+  await saveSettings({...FLOW_SETTINGS,enabled:true,triggerFloorCount:50,keepFloorCount:10,batchFloorCount:20});seedFloors(50);
+  books.book=[{name:'旧条目',content:'保留'}];
+  const before={script:structuredClone(script),chat:structuredClone(chat),books:structuredClone(books)};
+  const preview=await computeSummaryPreview();
+  assert.deepEqual({script,chat,books},before);assert.equal(getTask(),null);
+  assert.deepEqual(preview.plans.map(plan=>[plan.startFloor,plan.endFloor,plan.entryName]),[[0,19,'总结0-19楼'],[20,39,'总结20-39楼']]);
+  assert.deepEqual(await computeSummaryPlans(),preview.plans);
+  assert.equal(preview.lastId,49);assert.equal(preview.unsummarizedCount,50);
+  assert.equal(preview.plannedFloorCount,40);assert.equal(preview.remainingCount,10);
+  assert.equal(preview.retainedStartFloor,40);assert.equal(preview.retainedFloorCount,10);assert.equal(preview.retainedEndFloor,49);
+  assert.equal(preview.ready,true);assert.equal(preview.enabled,true);
+});
+
+test('a recovered pending or stopped task keeps its recorded batches and never regenerates saved ones',async()=>{
+  const sourcesFor=(start,end)=>messages.slice(start,end+1).map(message=>sourceOf({id:message.message_id,role:message.role,name:message.name,swipe_id:message.swipe_id,message:message.message}));
+  for(const phase of ['pending','stopped']){
+    reset();await saveSettings({...FLOW_SETTINGS,enabled:true,triggerFloorCount:50,keepFloorCount:10,batchFloorCount:10});seedFloors(50);
+    books.book=[{name:'总结0-19楼',content:'旧批次正文',enabled:false}];
+    const batch=(start,end,batchPhase,body)=>({spec:{kind:'normal',startFloor:start,endFloor:end,entryName:`总结${start}-${end}楼`,floorCount:end-start+1,regenerate:false},phase:batchPhase,body,saved:batchPhase==='complete',book:'book',sources:sourcesFor(start,end),parents:[],resultFormat:'free',errorKind:null,details:'',attempt:1});
+    const batches=[batch(0,19,'complete','旧批次正文'),batch(20,39,'pending','')];
+    patchSummaryStore({summary_assistant_runtime:{[contextKey()]:{id:`legacy-${phase}`,key:contextKey(),spec:{kind:'batch',startFloor:0,endFloor:39,floorCount:40,batches},phase,running:false,selectedBatch:1,startedAt:1,endedAt:null,message:'',details:'',errorKind:null,attempt:0,log:[],batches}}});
+    restoreTaskState();
+    assert.equal(getTask().phase,phase);assert.deepEqual(getTask().batches.map(batch=>batch.spec.entryName),['总结0-19楼','总结20-39楼']);
+    const fresh=await computeSummaryPlans();
+    assert(fresh.length>1,'新的批次目标应把同一段拆得更细');assert(fresh.every(plan=>plan.entryName!=='总结20-39楼'));
+    const requests=[];globalThis.generateRaw=async config=>{requests.push(config);return '<summary_result>恢复正文</summary_result>';};
+    assert.equal(await retryTask(),true);
+    assert.equal(requests.length,1);
+    assert.deepEqual(books.book.map(entry=>entry.name).sort(),['总结0-19楼','总结20-39楼']);
+    assert.equal(books.book.find(entry=>entry.name==='总结0-19楼').content,'旧批次正文');
+    assert.deepEqual(readArchive().records['总结20-39楼'].sources.map(source=>source.id),Array.from({length:20},(_,index)=>20+index));
+    assert.equal(getTask().phase,'complete');assert(getTask().batches.every(batch=>batch.phase==='complete'));
+  }
+});
+
+test('older saved settings reuse their batch target without rewriting the stored value',async()=>{
+  script[CONFIG.SETTINGS_VAR_KEY]={...structuredClone(FLOW_SETTINGS),enabled:true,triggerFloorCount:50,keepFloorCount:10,batchFloorCount:15};
+  const stored=structuredClone(script[CONFIG.SETTINGS_VAR_KEY]);
+  await loadSettings();
+  assert.equal(getSettings().batchFloorCount,15);assert.deepEqual(script[CONFIG.SETTINGS_VAR_KEY],stored);
+  seedFloors(50);
+  const plans=await computeSummaryPlans(),cap=Math.floor(15*1.2);
+  assert.equal(plans.length,Math.ceil(40/cap));assert(plans.every(plan=>plan.floorCount<=cap));assert.equal(plans.at(-1).endFloor,39);
+  globalThis.generateRaw=async()=>'<summary_result>沿用旧目标</summary_result>';
+  await autoTriggerSummary();
+  assert.equal(getTask().phase,'complete');assert.equal(books.book.length,plans.length);
+  assert.equal(script[CONFIG.SETTINGS_VAR_KEY].batchFloorCount,15);assert.equal(getSettings().batchFloorCount,15);
+});
+
+test('existing summary entries keep their name and body when a new round saves',async()=>{
+  await saveSettings({...FLOW_SETTINGS,enabled:true,triggerFloorCount:30,keepFloorCount:10,batchFloorCount:20});seedFloors(50);
+  books.book=[{name:'总结0-19楼',content:'旧档案正文',enabled:true}];
+  let calls=0;globalThis.generateRaw=async()=>{calls++;return '<summary_result>新批次正文</summary_result>';};
+  await autoTriggerSummary();
+  assert.equal(calls,1);
+  assert.equal(books.book.filter(entry=>entry.name==='总结0-19楼').length,1);
+  assert.equal(books.book.find(entry=>entry.name==='总结0-19楼').content,'旧档案正文');
+  assert.equal(books.book.filter(entry=>entry.name==='总结20-39楼').length,1);
+  assert(messages.slice(0,40).every(message=>message.is_hidden));assert(messages.slice(40).every(message=>!message.is_hidden));
+});
+
+test('a backlogged chat up to floor 120 plans its whole round in one pass for the three recommended settings',async()=>{
+  for(const setting of [
+    {label:'已开启摘要 50/10/40',triggerFloorCount:50,keepFloorCount:10,batchFloorCount:40},
+    {label:'已开启摘要 50/10/20',triggerFloorCount:50,keepFloorCount:10,batchFloorCount:20},
+    {label:'未开启摘要 20/5/20',triggerFloorCount:20,keepFloorCount:5,batchFloorCount:20},
+  ]){
+    reset();await saveSettings({...FLOW_SETTINGS,enabled:true,...setting});seedFloors(121);
+    const preview=await computeSummaryPreview(),{plans}=preview,cap=Math.floor(setting.batchFloorCount*1.2);
+    assert(plans.length>0,`${setting.label} 应产生批次`);assert.equal(plans[0].startFloor,0);
+    plans.forEach((plan,index)=>{
+      assert.equal(plan.entryName,`总结${plan.startFloor}-${plan.endFloor}楼`);
+      assert.equal(plan.floorCount,plan.endFloor-plan.startFloor+1,`${plan.entryName} 楼层数与范围不符`);
+      assert.equal(messages[plan.endFloor].role,'assistant',`${plan.entryName} 未以 AI 回复收尾`);
+      assert(plan.floorCount<=cap,`${plan.entryName} 超出软上限`);
+      if(index)assert.equal(plan.startFloor,plans[index-1].endFloor+1,`${plan.entryName} 与上一批不连续`);
+    });
+    assert.equal(preview.plannedFloorCount,plans.reduce((sum,plan)=>sum+plan.floorCount,0));
+    assert.equal(preview.remainingCount,preview.unsummarizedCount-preview.plannedFloorCount);
+    assert.equal(preview.retainedStartFloor,plans.at(-1).endFloor+1);assert.equal(preview.retainedEndFloor,120);
+    assert.equal(preview.retainedFloorCount,121-preview.retainedStartFloor);assert.equal(preview.ready,true);
+    const mean=plans.reduce((sum,plan)=>sum+plan.materialChars,0)/plans.length;
+    plans.forEach(plan=>assert(Math.abs(plan.materialChars-mean)<=mean*0.15,`${setting.label} 的 ${plan.entryName} 正文权重偏离均值过多`));
+    const requests=[];globalThis.generateRaw=async()=>{requests.push(1);return `<summary_result>第${requests.length}批</summary_result>`;};
+    await autoTriggerSummary();
+    assert.equal(requests.length,plans.length,`${setting.label} 的请求数应与批次数一致`);
+    assert.deepEqual(books.book.map(entry=>entry.name),plans.map(plan=>plan.entryName));
+    assert.equal(getTask().phase,'complete');assert(getTask().batches.every(batch=>batch.phase==='complete'));
+    assert.equal(getTask().spec.floorCount,plans.reduce((sum,plan)=>sum+plan.floorCount,0));
+    assert.equal(getTask().spec.keepFloorCount,setting.keepFloorCount);
+    assert.equal(getTask().spec.retainedFloorCount,preview.retainedFloorCount);
+    assert.equal(getTask().spec.retainedStartFloor,preview.retainedStartFloor);
+    assert(messages.slice(0,plans.at(-1).endFloor+1).every(message=>message.is_hidden));
+    assert(messages.slice(preview.retainedStartFloor).every(message=>!message.is_hidden));
+  }
+});
+
+test('a chat growing to floor 120 triggers where the floor counts say and each round keeps its planned ranges',async()=>{
+  const uniform='正文正文正文正文正文正文正文正文';
+  for(const setting of [
+    {label:'已开启摘要 50/10/40',triggerFloorCount:50,keepFloorCount:10,batchFloorCount:40,remaining:40,
+      rounds:[[50,['0-40']],[90,['41-80']]]},
+    {label:'已开启摘要 50/10/20',triggerFloorCount:50,keepFloorCount:10,batchFloorCount:20,remaining:40,
+      rounds:[[50,['0-20','21-40']],[90,['41-60','61-80']]]},
+    {label:'未开启摘要 20/5/20',triggerFloorCount:20,keepFloorCount:5,batchFloorCount:20,remaining:8,
+      rounds:[[20,['0-14']],[34,['15-28']],[48,['29-42']],[62,['43-56']],[76,['57-70']],[90,['71-84']],[104,['85-98']],[118,['99-112']]]},
+  ]){
+    reset();await saveSettings({...FLOW_SETTINGS,enabled:true,autoMegaSummary:false,...setting});
+    messages=[];let calls=0;
+    globalThis.generateRaw=async()=>{calls++;return '<summary_result>连续批次</summary_result>';};
+    const rounds=[];
+    for(let id=0;id<=120;id++){
+      const assistant=id%2===0;
+      messages.push({message_id:id,role:assistant?'assistant':'user',name:assistant?'角色':'用户',swipe_id:0,message:assistant?`<tp>${uniform}</tp>`:uniform,is_hidden:false});
+      if(!assistant)continue;
+      const previous=getTask()?.id;
+      await autoTriggerSummary();
+      const task=getTask();
+      if(!task||task.id===previous)continue;
+      assert.equal(task.phase,'complete',`${setting.label} 在第 ${id} 楼的回合应完成`);
+      const specs=task.spec.kind==='batch'?task.spec.batches:[task.spec];
+      rounds.push([id,specs.map(batch=>`${batch.startFloor}-${batch.endFloor}`)]);
+    }
+    assert.deepEqual(rounds,setting.rounds,`${setting.label} 的触发点与分批范围`);
+    const planned=rounds.flatMap(([,names])=>names);
+    assert.equal(calls,planned.length,`${setting.label} 的请求数应与批次总数一致`);
+    const lastEnd=Number(planned.at(-1).split('-')[1]);
+    for(const name of planned){const [start,end]=name.split('-').map(Number);assert.equal(messages[end].role,'assistant',`${name} 未以 AI 回复收尾`);assert(end-start+1<=Math.floor(setting.batchFloorCount*1.2),`${name} 超出软上限`);}
+    const covered=planned.reduce((sum,name)=>{const [start,end]=name.split('-').map(Number);return sum+end-start+1;},0);
+    assert.equal(new Set(planned.flatMap(name=>{const [start,end]=name.split('-').map(Number);return Array.from({length:end-start+1},(_,index)=>start+index);})).size,covered,'已保存批次不能重复覆盖同一楼层');
+    assert(messages.slice(0,lastEnd+1).every(message=>message.is_hidden));
+    assert(messages.slice(lastEnd+1).every(message=>!message.is_hidden));
+    assert.equal((await computeSummaryPreview()).unsummarizedCount,setting.remaining,`${setting.label} 的剩余未总结楼层`);
+  }
 });

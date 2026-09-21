@@ -46,7 +46,7 @@ const renderBlocks = (blocks, containerId = "sa-blocks-container") => {
 const buildPanelHtml = (settings) => `
 <div class="sa-panel">
   <div class="sa-workspace-heading"><div><h3>剧情档案</h3><p class="sa-hint">整理剧情、管理记忆与生成规则</p></div><label class="sa-enable"><input type="checkbox" id="sa-enabled" ${settings.enabled ? 'checked' : ''}>自动总结</label></div>
-  <div class="sa-generation-actions"><button class="sa-btn sa-btn-primary" id="sa-start-summary">手动开始总结</button><button class="sa-btn" id="sa-start-custom-summary">指定楼层总结</button><span class="sa-hint">自动开关只控制后续自动任务。</span></div>
+  <div class="sa-generation-actions"><button class="sa-btn sa-btn-primary" id="sa-start-summary">立即总结</button><button class="sa-btn" id="sa-start-custom-summary">指定楼层总结</button><span class="sa-hint">自动开关只控制后续自动任务。</span></div>
   <p class="sa-hint sa-binding-hint" data-binding-hint></p>
   <p id="sa-busy-reason" class="sa-task-reason" hidden></p>
   <div class="sa-tabs">
@@ -92,16 +92,23 @@ const buildPanelHtml = (settings) => `
           <div class="sa-settings-pane active" data-sub-pane="core">
             <h4 class="sa-group-title">普通总结</h4>
             <label class="sa-field">批次方案（触发 / 保留）<select class="sa-select" id="sa-batch-preset"><option value="with-summary" ${settings.batchPreset==='with-summary'?'selected':''}>已开启摘要 · 推荐 50 / 10</option><option value="without-summary" ${settings.batchPreset==='without-summary'?'selected':''}>未开启摘要 · 推荐 20 / 5</option><option value="custom" ${settings.batchPreset==='custom'?'selected':''}>自定义</option></select></label>
-            <p class="sa-hint">请按自己的摘要使用情况选择。这里不会读取或修改摘要开关；修改触发数或保留数会切换为自定义。</p>
+            <p class="sa-hint">请按自己的摘要使用情况选择。这里不会读取或修改摘要开关；修改前两项会切换为自定义。</p>
             <div class="sa-row sa-row-pair">
-              <div class="sa-pair-item"><span class="sa-label">触发楼层数</span><input class="sa-input" id="sa-trigger-count" type="number" min="1" max="999" value="${settings.triggerFloorCount}"></div>
-              <div class="sa-pair-item"><span class="sa-label">保留楼层数</span><input class="sa-input" id="sa-keep-count" type="number" min="1" max="999" value="${settings.keepFloorCount}"></div>
+              <div class="sa-pair-item"><span class="sa-label">未总结消息达到多少楼时启动</span><input class="sa-input" id="sa-trigger-count" type="number" min="1" max="999" value="${settings.triggerFloorCount}"></div>
+              <div class="sa-pair-item"><span class="sa-label">至少保留最近多少楼</span><input class="sa-input" id="sa-keep-count" type="number" min="1" max="999" value="${settings.keepFloorCount}"></div>
             </div>
-            <div class="sa-row sa-row-pair"><div class="sa-pair-item"><span class="sa-label">每批最多楼层</span><input class="sa-input" id="sa-batch-count" type="number" min="1" max="999" value="${settings.batchFloorCount}"></div></div>
-            <p class="sa-hint">每批上限用来控制单次请求的材料量，避免一次发送过多 Tokens。达到触发数后，会完成本轮可总结范围。</p>
-            <div class="sa-row"><label class="sa-enable"><input type="checkbox" id="sa-parallel-batches" ${settings.parallelBatches?'checked':''}>并发生成批次</label><label class="sa-concurrency-field">并发数<input class="sa-input" id="sa-batch-concurrency" type="number" min="1" max="8" value="${settings.batchConcurrency}" ${settings.parallelBatches?'':'disabled'}></label></div>
-            <p class="sa-batch-explanation" data-batch-explanation role="status"></p>
-            <p class="sa-hint" data-batch-history-hint ${settings.parallelBatches?'':'hidden'}>同一组并发批次使用生成前已有的总结，不包含彼此刚生成的结果。需要逐批参考前一批结果时，请关闭并发。</p>
+            <p class="sa-hint">在 AI 回复结束后检查；为保留完整对话，可能多留一楼。</p>
+            <div class="sa-batch-preview" data-batch-preview role="status" aria-live="polite"><p class="sa-preview-line">正在读取当前聊天…</p></div>
+            <details class="sa-disclosure sa-batch-settings" data-batch-settings>
+              <summary><span>分批设置</span><span class="sa-disclosure-arrow" aria-hidden="true">⌄</span></summary>
+              <div class="sa-disclosure-content">
+                <div class="sa-row sa-row-pair"><div class="sa-pair-item"><span class="sa-label">每批目标楼层数</span><input class="sa-input" id="sa-batch-count" type="number" min="1" max="999" value="${settings.batchFloorCount}"></div></div>
+                <p class="sa-hint">适用于自动总结与立即总结；按完整 AI 回复收尾，实际楼层数会在目标附近浮动。</p>
+                <p class="sa-hint">指定楼层总结一次生成，不受这里的每批目标限制。</p>
+                <div class="sa-row"><label class="sa-enable"><input type="checkbox" id="sa-parallel-batches" ${settings.parallelBatches?'checked':''}>并发生成批次</label><label class="sa-concurrency-field">并发数<input class="sa-input" id="sa-batch-concurrency" type="number" min="1" max="8" value="${settings.batchConcurrency}" ${settings.parallelBatches?'':'disabled'}></label></div>
+                <p class="sa-hint" data-batch-history-hint ${settings.parallelBatches?'':'hidden'}>同一组并发批次使用生成前已有的总结，不包含彼此刚生成的结果。需要逐批参考前一批结果时，请关闭并发。</p>
+              </div>
+            </details>
             <h4 class="sa-group-title">大总结</h4>
             <label class="sa-enable"><input type="checkbox" id="sa-auto-mega" ${settings.autoMegaSummary?'checked':''}>自动合并连续普通总结</label>
             <div class="sa-row sa-row-pair"><div class="sa-pair-item"><span class="sa-label">普通总结累计（条）</span><input class="sa-input" id="sa-mega-trigger" type="number" min="3" max="999" value="${settings.megaTriggerCount}"></div><div class="sa-pair-item"><span class="sa-label">合并最早连续（条）</span><input class="sa-input" id="sa-mega-batch" type="number" min="2" max="998" value="${settings.megaBatchCount}"></div></div>

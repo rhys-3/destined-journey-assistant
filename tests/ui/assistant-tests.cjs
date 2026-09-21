@@ -6,6 +6,7 @@ module.exports=async(cdp,evaluate)=>{
   Object.assign(window.SillyTavern,{POPUP_TYPE:{CONFIRM:2,INPUT:1},POPUP_RESULT:{AFFIRMATIVE:1,CANCELLED:0}});
   ui.state.activeTab='summary';ui.render();await pause(100);
   check('总结作为第六导航体系中的独立页面',!!q('.summary-slot .sa-panel')&&q('.sa-tabs').textContent.includes('记录')&&q('.sa-tabs').textContent.includes('生成设置'));
+  check('普通总结按钮改为立即总结并保留指定楼层入口',q('#sa-start-summary').textContent.trim()==='立即总结'&&q('#sa-start-custom-summary').textContent.trim()==='指定楼层总结');
   check('新装默认关闭总结',!q('#sa-enabled').checked&&!ui.summary.capture().enabled);
   click('#sa-enabled');await pause(30);check('总结启用开关独立持久化',vars.summary_assistant_settings.enabled===true);
   click('[data-tab="settings"].sa-tab-item');

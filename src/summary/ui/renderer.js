@@ -3,10 +3,12 @@ import { escapeHtml, compressRanges } from '../utils.js';
 import { getSettings } from '../storage.js';
 import { getActiveWorldbookName, isChatWorldbookBound, getAllSummaryEntriesForDisplay, getLastSummarizedFloor } from '../worldbook.js';
 import { getCoverage } from '../worldbook.js';
+import { computeSummaryPreview } from '../summary.js';
+import { floorRange } from './planPreview.js';
 /**
  * ui/renderer.js
  * 状态信息与条目列表渲染
- * 依赖: utils.js, storage.js, worldbook.js, errorHandler.js
+ * 依赖: utils.js, storage.js, worldbook.js, errorHandler.js, ui/planPreview.js
  */
 
 const renderEntryList = (entries, selectionMode = false) => {
@@ -76,11 +78,16 @@ const renderStatusInfo = errorCatched(async () => {
   const { floors } = await getCoverage();
   const entries = await getAllSummaryEntriesForDisplay();
   const all = lastId < 0 ? [] : getChatMessages(`0-${lastId}`, {role:'all',hide_state:'all',include_swipes:false});
-  const unsummarized = all.filter(message=>!floors.has(message.message_id)).length;
+  // Same planner the trigger uses: never recount discussion or excluded floors here.
+  const preview = await computeSummaryPreview(settings);
+  const unsummarized = preview.unsummarizedCount;
   const triggerProgress =
-    settings.triggerFloorCount > 0
-      ? Math.min(100, Math.round((unsummarized / settings.triggerFloorCount) * 100))
+    preview.triggerFloorCount > 0
+      ? Math.min(100, Math.round((unsummarized / preview.triggerFloorCount) * 100))
       : 0;
+  const planBatches = preview.plans.length ? `${preview.plans.length} 批 · 实际 ${preview.plannedFloorCount} 楼` : '本轮没有完整批次';
+  const retainedRange = floorRange(preview.retainedStartFloor, preview.retainedEndFloor);
+  const planRetained = preview.retainedFloorCount ? `${preview.retainedFloorCount} 楼${retainedRange ? `（${retainedRange}）` : ''}` : '无';
   const hiddenMsgs =
     lastId >= 0
       ? getChatMessages(`0-${lastId}`, {
@@ -108,9 +115,15 @@ const renderStatusInfo = errorCatched(async () => {
       <span class="sa-status-value">${unsummarized} 条</span>
       <span class="sa-status-label">触发进度</span>
       <span class="sa-status-value">
-        ${unsummarized}/${settings.triggerFloorCount} (${triggerProgress}%)
+        ${unsummarized}/${preview.triggerFloorCount} (${triggerProgress}%)
         <div class="sa-progress-bar"><div class="sa-progress-fill" style="width:${triggerProgress}%"></div></div>
       </span>
+      <span class="sa-status-label">本轮计划</span>
+      <span class="sa-status-value">${planBatches}</span>
+      <span class="sa-status-label">保留最近</span>
+      <span class="sa-status-value" title="按完整 AI 回复收尾，实际保留范围可能多于设置的保留楼层数">${planRetained}</span>
+      <span class="sa-status-label">本轮后未总结</span>
+      <span class="sa-status-value">${preview.remainingCount} 楼</span>
       <span class="sa-status-label">API 模式</span>
       <span class="sa-status-value">${settings.apiMode === 'custom' ? '自定义API' : '酒馆主API'} ${model}</span>
       <span class="sa-status-label">绑定世界书</span>

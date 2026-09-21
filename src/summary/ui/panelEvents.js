@@ -2,7 +2,7 @@ import { bindPromptTools, collectCustomMacros } from './promptTools.js';
 import { bindTagEditors, readTagEditor } from './tagEditor.js';
 import { bindFloorBrowser, refreshFloorBrowser } from './floorBrowser.js';
 import { bindDiscussionRecords, refreshDiscussionRecords } from './discussionRecords.js';
-import { bindBatchSettings } from './batchSettings.js';
+import { bindBatchSettings, refreshBatchPreview, scheduleRefreshBatchPreview, disposeBatchPreview } from './batchSettings.js';
 import { applyBusyRules, refreshTaskWidget } from './taskView.js';
 import { isBusy, assertRecordWritable } from '../../platform/lifecycle.js';
 import { parseMegaSummaryEntryName } from '../utils.js';
@@ -730,6 +730,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
         .querySelector(`.sa-tab-pane[data-pane="${tabName}"]`)
         .classList.add("active");
       if (tabName === 'worldbook') overlay._refreshWorldbooks?.();
+      if (tabName === 'settings') scheduleRefreshBatchPreview(overlay, 0);
       overlay.classList.toggle('sa-discussion-view', tabName === 'discussion');
       if (tabName === 'status') refreshVisibilityControls(overlay);
       if (tabName === 'discussion') refreshDiscussionRecords(overlay, { force: true });
@@ -758,6 +759,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
       overlay
         .querySelector(`.sa-settings-pane[data-sub-pane="${subNavName}"]`)
         .classList.add("active");
+      if (subNavName === 'core') scheduleRefreshBatchPreview(overlay, 0);
     });
   });
 
@@ -1042,6 +1044,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
   // ---- 自动保存（防抖） ----
   let _autoSaveTimer = null;
   let panelToken = captureContext();
+  const settingsChanged = () => { autoSave(); scheduleRefreshBatchPreview(overlay); };
   overlay._flush = async () => {
     if (!_autoSaveTimer) return;
     clearTimeout(_autoSaveTimer); _autoSaveTimer = null;
@@ -1050,7 +1053,10 @@ const bindPanelEvents = (overlay, initialSettings) => {
     refreshVisibilityControls(overlay);
     feedback.success('总结设置已保存，下次任务生效');
   };
-  overlay._dispose = () => { clearTimeout(_autoSaveTimer); _autoSaveTimer = null; };
+  // service.refresh drives the same preview so runtime changes (new messages,
+  // finished tasks) update it without reopening the panel.
+  overlay._refreshPlan = () => refreshBatchPreview(overlay);
+  overlay._dispose = () => { clearTimeout(_autoSaveTimer); _autoSaveTimer = null; disposeBatchPreview(overlay); };
   const autoSave = () => {
     if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
     feedback.info('总结设置待保存…');
@@ -1073,7 +1079,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
     autoSave();
   };
   overlay.addEventListener("summary-blocks-changed", autoSave);
-  bindTagEditors(overlay,autoSave);
+  bindTagEditors(overlay,settingsChanged);
   bindBatchSettings(overlay);
   overlay.querySelector('#sa-api-url').addEventListener('input', e => { overlay.querySelector('#sa-api-key').value = getKeyForUrl(e.target.value); });
   overlay.addEventListener('input', onFieldChange);
@@ -1224,6 +1230,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
 
   overlay.querySelector('#sa-enabled').addEventListener('change', async e => {
     try { await updateSettings({ enabled: e.target.checked }); panelToken = captureContext(); feedback.success(e.target.checked?'自动总结已开启':'自动总结已暂停；当前任务可继续完成'); } catch(error) { e.target.checked = getSettings().enabled; getHost().status(error.message, 'error'); }
+    scheduleRefreshBatchPreview(overlay, 0);
   });
   // ---- 绑定板块事件 ----
   bindBlockEvents(overlay);
