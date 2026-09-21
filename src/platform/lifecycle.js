@@ -1,4 +1,5 @@
 import { helperApi, tavernContext } from './ambient.js';
+import { createUuid } from './uuid.js';
 let host;
 let epoch = 0;
 let operation = null;
@@ -53,7 +54,7 @@ export function disposeRuntime() { invalidate(); disposed = true; }
 export async function requestGeneration(fn, config) {
   assertCurrent();
   const token = captureContext();
-  const generation_id = `destined-summary-${crypto.randomUUID()}`;
+  const generation_id = `destined-summary-${createUuid()}`;
   const stop = () => { try { Promise.resolve(helperApi('stopGenerationById')?.(generation_id)).catch(() => {}); } catch {} };
   let rejectCancelled;
   const requestAbort=new AbortController();

@@ -1,5 +1,6 @@
 import { legacySettingItems, serializeSettingItems, readSettingTemplate, migrateCustomSettingPrompts } from './setting-items.js';
 import { expandIdentityMacros } from '../platform/identity-macros.js';
+import { createUuid as createPromptId } from '../platform/uuid.js';
 
 // These structural markers are consumed by the preset's message processor.
 // They must survive both assistant macro passes until that processor runs.
@@ -507,15 +508,6 @@ export function createManaged(ctx) {
     if (malformedNames.length > 0) {
       toastr.warning(`以下自建条目的 XML 包装异常，未自动改写：${malformedNames.join('、')}`, ctx.BUTTON_NAME);
     }
-  }
-
-  function createPromptId() {
-    if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/gu, character => {
-      const random = Math.floor(Math.random() * 16);
-      const value = character === 'x' ? random : (random & 0x3) | 0x8;
-      return value.toString(16);
-    });
   }
 
   return {

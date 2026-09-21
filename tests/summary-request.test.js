@@ -37,7 +37,13 @@ test('summary sends exact natural roles and content directly through generateRaw
   assert.deepEqual(stopped, []);
 });
 
-test('parallel summary requests use independent snapshots and cancellation targets only their own ids', async () => {
+for (const missingUuid of [false, true]) test(`parallel summary requests use independent snapshots and cancellation targets only their own ids (missing UUID: ${missingUuid})`, async t => {
+  if (missingUuid) {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    const getRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { getRandomValues } });
+    t.after(() => Object.defineProperty(globalThis, 'crypto', original));
+  }
   const calls = [], input = prepared();
   globalThis.generateRaw = config => new Promise(resolve => calls.push({ config, resolve }));
   const one = sendPreparedGeneration(input, settings), two = sendPreparedGeneration(input, settings);

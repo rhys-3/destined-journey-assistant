@@ -317,6 +317,23 @@ test('generation saves body then hides without CHAT_CHANGED reloads',async()=>{
   assert(messages.slice(0,20).every(message=>message.is_hidden));assert(messages.slice(20).every(message=>!message.is_hidden));
   assert.equal(readArchive().records['总结0-19楼'].sources.length,20);
 });
+
+test('summary without randomUUID creates task and request ids, saves and hides completed floors',async t=>{
+  const original=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+  const getRandomValues=globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+  Object.defineProperty(globalThis,'crypto',{configurable:true,value:{getRandomValues}});
+  t.after(()=>Object.defineProperty(globalThis,'crypto',original));
+  await saveSettings({...FLOW_SETTINGS,enabled:true});seedFloors();let request;
+  globalThis.generateRaw=async config=>{request=config;return '<summary_result>两人抵达城门。</summary_result>';};
+  assert.equal(await executeSummary(0,19,'总结0-19楼'),true);
+  const task=getTask(),uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  assert.match(task.id,uuid);assert.match(request.generation_id.replace(/^destined-summary-/,''),uuid);
+  assert.notEqual(request.generation_id,`destined-summary-${task.id}`);
+  assert.equal(task.phase,'complete');assert.equal(books.book[0].content,'两人抵达城门。');
+  assert(messages.slice(0,20).every(message=>message.is_hidden));
+  assert(messages.slice(20).every(message=>!message.is_hidden));
+  assert.equal(readArchive().records['总结0-19楼'].sources.length,20);
+});
 test('visibility failures retry only visibility and survive recovery reload',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:true});seedFloors();let calls=0;
   globalThis.generateRaw=async()=>{calls++;return '<summary_result>正文</summary_result>';};

@@ -1,5 +1,6 @@
 import { captureContext, checkContext, contextKey, onCancel, cancelOwnRequests, setTaskRuntime } from '../platform/lifecycle.js';
 import { readStore, patchSummaryStore } from '../platform/store.js';
+import { createUuid } from '../platform/uuid.js';
 
 const RUNTIME_KEY = 'summary_assistant_runtime';
 const listeners = new Set();
@@ -38,7 +39,7 @@ export function restoreTaskState() {
 }
 export function beginTask(spec, previous = null) {
   if (taskRunning()) throw new Error('当前总结任务尚未结束');
-  current = { ...copy(previous), id: crypto.randomUUID(), key: contextKey(), token: captureContext(), spec: copy(spec), phase: 'preparing', running: true, startedAt: Date.now(), endedAt: null, dismissedProgress: false, dismissedFinal: false, message: '', details: '', errorKind: null, attempt: 0 };
+  current = { ...copy(previous), id: createUuid(), key: contextKey(), token: captureContext(), spec: copy(spec), phase: 'preparing', running: true, startedAt: Date.now(), endedAt: null, dismissedProgress: false, dismissedFinal: false, message: '', details: '', errorKind: null, attempt: 0 };
   current.log = [{ at: current.startedAt, phase: 'preparing' }];
   try { persist(current); } catch (error) { current.running = false; publish(); throw error; }
   publish();

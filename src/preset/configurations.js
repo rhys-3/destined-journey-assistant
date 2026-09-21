@@ -1,6 +1,7 @@
 import * as summary from '../summary/service.js';
 import { DISCUSSION_SETTINGS_KEY } from '../discussion/preferences.js';
 import { writePresetStore } from '../platform/store.js';
+import { createUuid } from '../platform/uuid.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createConfigurations(ctx) {
@@ -266,7 +267,7 @@ export function createConfigurations(ctx) {
       try {
         const complete=ctx.validateSnapshot(item.snapshot);
         const snapshot={version:2,...(ctx.exportScopes.preset&&complete.preset?{preset:complete.preset}:{}),...(ctx.exportScopes.summary&&complete.summary?{summary:complete.summary}:{})};
-        if(snapshot.preset||snapshot.summary) items.push({id:String(item.id ?? crypto.randomUUID()),name:String(item.name ?? '恢复的配置'),createdAt:String(item.createdAt ?? ''),updatedAt:String(item.updatedAt ?? ''),snapshot});
+        if(snapshot.preset||snapshot.summary) items.push({id:String(item.id ?? createUuid()),name:String(item.name ?? '恢复的配置'),createdAt:String(item.createdAt ?? ''),updatedAt:String(item.updatedAt ?? ''),snapshot});
       } catch { /* Invalid records cannot be safely shared; the original remains stored. */ }
     }
     ctx.assertData(items.length, '没有可安全导出的有效配置；原始数据仍保留在脚本变量中');

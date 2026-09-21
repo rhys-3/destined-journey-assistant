@@ -40,6 +40,11 @@ module.exports=async(cdp,evaluate)=>{
   const exported=JSON.parse(ui.exportConfigurations(both,{preset:false,summary:true}));check('导出可再次筛选范围',exported.version===2&&exported.items[0].snapshot.summary&&!exported.items[0].snapshot.preset);
   const legacy={format:'destined-configurations',version:1,items:[{id:'old-config',name:'旧版配置',snapshot:ui.captureConfiguration()}]};await ui.importConfigurations(JSON.stringify(legacy));
   const old=ui.configLibrary().items.find(i=>i.id==='old-config');check('旧版配置导入为仅预设',old.snapshot.preset&&!old.snapshot.summary);
+  const savedLibrary=vars.configuration_library;
+  try {
+    vars.configuration_library={items:[{name:'缺编号配置',snapshot:ui.captureConfiguration()}]};
+    const recovered=JSON.parse(ui.exportRecoverableConfigurations()).items[0];check('缺编号配置在 HTTP 环境恢复导出 UUID',!!recovered?.snapshot.preset&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(recovered.id));
+  } finally { vars.configuration_library=savedLibrary; }
   const exp=ui.exportConfigurations();check('配置导出不含密钥、世界书和记录',!exp.includes('customApiKey')&&!exp.includes('summary_assistant_worldbook')&&!exp.includes('summary_assistant_mega_summary_map'));
   let failed=false;try{ui.exportConfigurations('',{preset:false,summary:false})}catch{failed=true}check('导出不允许空范围',failed);
   // Exercise actual summary action, review and worldbook save through the UI.
