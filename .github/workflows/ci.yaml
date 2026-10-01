@@ -48,7 +48,7 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/verify-changes.mjs --docs
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: needs.plan.outputs.python == 'true' && runner.os == 'Linux'
         with:
           python-version: '3.x'
