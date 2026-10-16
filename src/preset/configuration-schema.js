@@ -2,6 +2,7 @@ import * as summary from '../summary/service.js';
 import { sanitizeDiscussionSettings } from '../discussion/preferences.js';
 import { DESCRIPTION_KEYS, DESCRIPTION_LIMIT } from './descriptions.js';
 import { migrateCustomSettingPrompts } from './setting-items.js';
+import { GEMINI_TAIL_MODES, OPTIONAL_MODEL_PROMPT_IDS, geminiTailMode } from './definitions.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createConfigurationSchema(ctx) {
@@ -40,7 +41,7 @@ export function createConfigurationSchema(ctx) {
         assertData(typeof id === 'string' && /^[a-f0-9-]{36}$/iu.test(id) && !used.has(id), '模型条目 ID 无效或重复');
         used.add(id);
       }
-      assertData(['prefill', 'no-prefill'].includes(model.tailMode), '尾部类型无效');
+      assertData(GEMINI_TAIL_MODES.includes(model.tailMode), '尾部类型无效');
       assertData(plainObject(model.tailBaseline) && typeof model.tailBaseline.content === 'string' && ['system', 'user', 'assistant'].includes(model.tailBaseline.role), '尾部模板基线缺失');
       return { id: model.id, label, ids: [...model.ids], tailMode: model.tailMode, tailBaseline: { content: model.tailBaseline.content, role: model.tailBaseline.role } };
     });
@@ -137,7 +138,7 @@ export function createConfigurationSchema(ctx) {
       entry_points: ctx.sanitizeEntryPoints(config.entry_points),
       custom_models,
       connection_link: { enabled: config.connection_link?.enabled === true, bindings },
-      model_tail_modes: { Gemini: config.model_tail_modes?.Gemini === 'prefill' ? 'prefill' : 'no-prefill' },
+      model_tail_modes: { Gemini: geminiTailMode(config.model_tail_modes?.Gemini) },
     };
   }
 
@@ -177,7 +178,10 @@ export function createConfigurationSchema(ctx) {
       assertData(result.prompts.some(p => p.id === id && p.enabled), nsfwBoundaries.includes(id) ? 'NSFW 板块起始和结束条目必须一同保留并启用。' : '配置缺少或禁用了基础条目：' + id);
     }
     for (const adapter of Object.values(modelRegistry(result.config))) {
-      for (const id of [...adapter.ids, ...adapter.tails]) assertData(result.prompts.some(p => p.id === id), '配置缺少模型条目：' + id);
+      for (const id of [...adapter.ids, ...adapter.tails]) {
+        if (OPTIONAL_MODEL_PROMPT_IDS.has(id)) continue;
+        assertData(result.prompts.some(p => p.id === id), '配置缺少模型条目：' + id);
+      }
     }
     const mode = ctx.variablePresetMode(result);
     assertData(mode === 'main' || mode === 'extra', '配置中的变量模式必须二选一');

@@ -1,7 +1,11 @@
+import { FLAVOR } from '../flavor.js';
+
 /** Shared, non-secret protocol used by the preset, message UI and summary pipeline. */
 export const DISCUSSION_VERSION = 1;
 export const DISCUSSION_KEY = 'destined_discussion';
-export const DISCUSSION_CHAT_KEY = 'destined_discussion_mode';
+// The discussion mode flag is assistant-owned chat state, so each flavor keeps
+// its own; everything below is preset/protocol text both flavors must share.
+export const DISCUSSION_CHAT_KEY = FLAVOR.discussionChatKey;
 export const DISCUSSION_OPEN = '<discussion_record>';
 export const DISCUSSION_CLOSE = '</discussion_record>';
 export const LEGACY_DISCUSSION_OPEN = '<destined_discussion>';

@@ -1,9 +1,11 @@
 // Preset identifiers, managed fields and interface defaults.
-export const SCRIPT_NAME = '命定预设助手';
+import { FLAVOR } from '../flavor.js';
 
-export const BUTTON_NAME = '命定预设助手';
+export const SCRIPT_NAME = FLAVOR.scriptName;
 
-export const LEGACY_BUTTON_NAMES = Object.freeze(['命定预设设置', '命定设置']);
+export const BUTTON_NAME = FLAVOR.buttonName;
+
+export const LEGACY_BUTTON_NAMES = Object.freeze([...FLAVOR.legacyButtonNames]);
 
 export const UI_THEMES = Object.freeze([
   { id: 'midnight', label: '曜石黑金' },
@@ -58,7 +60,40 @@ export const MANAGED_MACROS = Object.freeze({
 
 export const MANAGED_MACRO_PATTERN = /<\|(字数|字数要求|对白比例|对白轮次|战斗回合|人称|人称要求|正文语言|思维链语言|全局设定|全局偏好|用户附加设定)\|>/gu;
 
+// Managed entries this flavor manages. Unsupported macros are never injected
+// and their controls stay out of the settings pages.
+export const MANAGED_MACRO_KEYS = Object.freeze([...FLAVOR.managed.macros]);
+
+export const MANAGED_CONTROLS = Object.freeze({
+  dialogue: Object.freeze([...FLAVOR.managed.controls.dialogue]),
+  length: Object.freeze([...FLAVOR.managed.controls.length]),
+  languages: Object.freeze([...FLAVOR.managed.controls.languages]),
+});
+
 export const UNKNOWN_DESTINED_MACRO_PATTERN = /<\|命定[^|>]*\|>/gu;
+
+// Variable-update choices of this flavor, in display order. The general preset
+// adds a third "no variable" entry; prime keeps its two shipped options.
+export const VARIABLE_MODES = Object.freeze(FLAVOR.variableModes.map(mode => Object.freeze({ ...mode })));
+
+// id -> mode key, so preset entries can be matched without relying on order.
+export const VARIABLE_MODE_BY_ID = new Map(VARIABLE_MODES.map(mode => [mode.id, mode.key]));
+
+export const VARIABLE_MODE_KEYS = Object.freeze(VARIABLE_MODES.map(mode => mode.key));
+
+// Entries that identify this flavor's own preset. An empty list means "act on
+// the loaded preset as before" (Prime); otherwise every id must be present.
+export const OWNED_PRESET_PROMPT_IDS = Object.freeze([...FLAVOR.ownPresetPromptIds]);
+
+export const FOREIGN_PRESET_MESSAGE = `当前预设不是${FLAVOR.presetLabel}，本助手不会修改它的条目。`;
+
+// True when the loaded preset carries every marker this flavor requires. An
+// empty marker list means "no restriction" and keeps the shipped behavior.
+export function presetBelongsToFlavor(preset, markers = OWNED_PRESET_PROMPT_IDS) {
+  if (markers.length === 0) return true;
+  if (!Array.isArray(preset?.prompts)) return false;
+  return markers.every(id => preset.prompts.some(prompt => prompt.id === id));
+}
 
 export const USER_ADDITIONAL_OPEN = '{{#setvar 用户设定}}';
 
@@ -113,6 +148,18 @@ export function normalizeBlockId(id) {
   return LEGACY_BLOCK_ALIASES[id] ?? id;
 }
 
+export const GEMINI_TAIL_MODES = Object.freeze(['prefill', 'no-prefill', 'tool', 'tool-split']);
+
+export const GEMINI_TAIL_LABELS = Object.freeze({ prefill: '预填充', 'no-prefill': '非预填充', tool: '工具一次调用', 'tool-split': '工具两次调用' });
+
+// Presets and saved configurations from before the tool-output tails lack these
+// entries; they are treated as disabled options rather than missing dependencies.
+export const OPTIONAL_MODEL_PROMPT_IDS = new Set(['22349298-676f-4e54-b9d5-1804242dd414', '9439d30d-d279-4fdc-be8e-d81ef68bb31b']);
+
+export function geminiTailMode(value, fallback = 'no-prefill') {
+  return GEMINI_TAIL_MODES.includes(value) ? value : fallback;
+}
+
 export const BUILTIN_MODEL_ADAPTERS = Object.freeze({
   Gemini: {
     label: 'Gemini',
@@ -120,9 +167,12 @@ export const BUILTIN_MODEL_ADAPTERS = Object.freeze({
       'ecc2c6ea-0d97-4640-8aa4-2ff1544e688f',
       '7ecc16c0-7a77-468f-92e2-8154e508cf2c',
     ],
+    // Indexed like GEMINI_TAIL_MODES.
     tails: [
       '771b8391-c2d9-428e-8a36-9871cdb41c50',
       '8f1a8391-1cb6-46fc-bc47-11bcb0fc256f',
+      '22349298-676f-4e54-b9d5-1804242dd414',
+      '9439d30d-d279-4fdc-be8e-d81ef68bb31b',
     ],
   },
   Claude: {
@@ -213,10 +263,7 @@ export const GROUPS = Object.freeze({
   'variable-mode': {
     label: '变量处理模式',
     section: 'system',
-    options: [
-      ['85c7f45b-e3b4-430c-bbab-822498d93de2', '主 API'],
-      ['9103b46e-5810-4ed9-b06e-4365070fca35', '附加 API'],
-    ],
+    options: VARIABLE_MODES.map(mode => [mode.id, mode.label]),
   },
 });
 

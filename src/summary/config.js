@@ -1,4 +1,6 @@
 import { ARCHIVE_PROMPTS as PRESET_PROMPTS, PROMPT_VERSION } from './archiveDefaults.js';
+import { FLAVOR } from '../flavor.js';
+import { CHAT_WB_VAR_KEY, MEGA_SUMMARY_VAR_KEY, SETTINGS_VAR_KEY } from '../platform/storage-keys.js';
 
 /**
  * config.js
@@ -7,14 +9,14 @@ import { ARCHIVE_PROMPTS as PRESET_PROMPTS, PROMPT_VERSION } from './archiveDefa
 
 const CONFIG = {
   MAIN_BUTTON_NAME: "总结设置",
-  WORLDBOOK_NAME_PREFIX: "命定之诗总结世界书",
+  WORLDBOOK_NAME_PREFIX: FLAVOR.summaryWorldbookPrefix,
   ENTRY_START_ORDER: 100,
   ENTRY_DEPTH: 9998,
   ENTRY_ROLE: "system",
-  SETTINGS_VAR_KEY: "summary_assistant_settings",
-  CHAT_WB_VAR_KEY: "summary_assistant_worldbook",
+  SETTINGS_VAR_KEY,
+  CHAT_WB_VAR_KEY,
   MEGA_SUMMARY_DEPTH: 9999,
-  MEGA_SUMMARY_VAR_KEY: "summary_assistant_mega_summary_map",
+  MEGA_SUMMARY_VAR_KEY,
 };
 
 const BLOCK_TYPES = {

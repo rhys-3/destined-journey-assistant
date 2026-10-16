@@ -13,8 +13,10 @@ import {
   PANEL_MIN_WIDTH,
   PANEL_MIN_HEIGHT,
   DEFAULT_MANAGED_VALUES,
+  MANAGED_CONTROLS,
   MANAGED_MACROS,
   MANAGED_MACRO_PATTERN,
+  MANAGED_MACRO_KEYS,
   UNKNOWN_DESTINED_MACRO_PATTERN,
   USER_ADDITIONAL_OPEN,
   USER_ADDITIONAL_CLOSE,
@@ -32,6 +34,11 @@ import {
   DEFAULT_GROUP_OPTION_IDS,
   USER_CREATABLE_GROUPS,
   VARIABLE_WORLD_ENTRIES,
+  VARIABLE_MODES,
+  VARIABLE_MODE_BY_ID,
+  OWNED_PRESET_PROMPT_IDS,
+  FOREIGN_PRESET_MESSAGE,
+  presetBelongsToFlavor,
   WORLD_TIMEOUT,
   FIELD_DEFINITIONS,
   LANGUAGE_DEFINITIONS,
@@ -59,6 +66,8 @@ import { createConfigurations } from './configurations.js';
 import { createCustomModels } from './custom-models.js';
 import * as summary from '../summary/service.js';
 import { startDiscussion } from '../discussion/service.js';
+import { installToolOutputTransport } from './tool-output.js';
+import { FLAVOR } from '../flavor.js';
 
 import { createDialogs, DIALOG_STYLES } from '../ui/dialogs.js';
 import { PANEL_CSS } from '../ui/styles.js';
@@ -70,6 +79,7 @@ export async function startPresetAssistant() {
   // Live references preserve instance ownership, pending writes and cleanup across modules.
   const ctx = {
     get discussion() { return discussion; },
+    get toolOutput() { return toolOutput; },
     get AFTER_BODY_IDS() { return AFTER_BODY_IDS; },
     get BEAUTIFY_IDS() { return BEAUTIFY_IDS; },
     get BUILTIN_MODEL_ADAPTERS() { return BUILTIN_MODEL_ADAPTERS; },
@@ -86,6 +96,8 @@ export async function startPresetAssistant() {
     get LANGUAGE_PRESETS() { return LANGUAGE_PRESETS; },
     get LEGACY_BUTTON_NAMES() { return LEGACY_BUTTON_NAMES; },
     get MANAGED_MACROS() { return MANAGED_MACROS; },
+    get MANAGED_MACRO_KEYS() { return MANAGED_MACRO_KEYS; },
+    get MANAGED_CONTROLS() { return MANAGED_CONTROLS; },
     get MANAGED_MACRO_PATTERN() { return MANAGED_MACRO_PATTERN; },
     get MANAGED_VALUES_VERSION() { return MANAGED_VALUES_VERSION; },
     get MOBILE_BREAKPOINT() { return MOBILE_BREAKPOINT; },
@@ -113,6 +125,11 @@ export async function startPresetAssistant() {
     get USER_ADDITIONAL_TRIM() { return USER_ADDITIONAL_TRIM; },
     get USER_CREATABLE_GROUPS() { return USER_CREATABLE_GROUPS; },
     get VARIABLE_WORLD_ENTRIES() { return VARIABLE_WORLD_ENTRIES; },
+    get VARIABLE_MODES() { return VARIABLE_MODES; },
+    get VARIABLE_MODE_BY_ID() { return VARIABLE_MODE_BY_ID; },
+    get OWNED_PRESET_PROMPT_IDS() { return OWNED_PRESET_PROMPT_IDS; },
+    get FOREIGN_PRESET_MESSAGE() { return FOREIGN_PRESET_MESSAGE; },
+    get presetIsMine() { return presetIsMine; },
     get WAND_CONTAINER_ID() { return WAND_CONTAINER_ID; },
     get WORLD_TIMEOUT() { return WORLD_TIMEOUT; },
     get app() { return app; }, set app(value) { app = value; },
@@ -166,6 +183,7 @@ export async function startPresetAssistant() {
     get initializeManagedSettings() { return initializeManagedSettings; },
     get getCurrentProfileName() { return getCurrentProfileName; },
     get getGeminiTail() { return getGeminiTail; },
+    get geminiTailAvailable() { return geminiTailAvailable; },
     get getGroupOptions() { return getGroupOptions; },
     get getNumericMode() { return getNumericMode; },
     get getPrompt() { return getPrompt; },
@@ -354,7 +372,7 @@ export async function startPresetAssistant() {
     selectVariableMode,
     renderVariablePanel
   } = createWorldbook(ctx);
-  const { getGroupOptions, getPromptGroupId, applyGroup, detectModelAdapter, getGeminiTail, applyModelToPreset, selectModelAdapter, setGeminiTail } = createModels(ctx);
+  const { getGroupOptions, getPromptGroupId, applyGroup, detectModelAdapter, getGeminiTail, geminiTailAvailable, applyModelToPreset, selectModelAdapter, setGeminiTail } = createModels(ctx);
   const {
     countOccurrences,
     hasManagedMacro,
@@ -560,9 +578,9 @@ export async function startPresetAssistant() {
 
   const SCRIPT_ID = getScriptId();
 
-  const HOST_ID = `destined-settings-${SCRIPT_ID}`;
-  const WAND_CONTAINER_ID = `destined-settings-wand-${SCRIPT_ID}`;
-  const STORAGE_KEY = `destined-settings-ui:${SCRIPT_ID}`;
+  const HOST_ID = `${FLAVOR.elementIdPrefix}-${SCRIPT_ID}`;
+  const WAND_CONTAINER_ID = `${FLAVOR.elementIdPrefix}-wand-${SCRIPT_ID}`;
+  const STORAGE_KEY = `${FLAVOR.elementIdPrefix}-ui:${SCRIPT_ID}`;
 
   let MODEL_ADAPTERS = { ...BUILTIN_MODEL_ADAPTERS };
   let MODEL_IDS = new Set(
@@ -571,6 +589,13 @@ export async function startPresetAssistant() {
   const ID_TO_GROUP = new Map();
   for (const [groupId, group] of Object.entries(GROUPS)) {
     for (const [id] of group.options) ID_TO_GROUP.set(id, groupId);
+  }
+
+  // Prime keeps an empty marker list and therefore edits whatever preset is
+  // loaded. The general flavor carries its own variable-mode entries, so the
+  // same check also refuses Prime's preset after a preset switch.
+  function presetIsMine(preset = ctx.state.preset) {
+    return presetBelongsToFlavor(preset);
   }
 
   const state = {
@@ -606,6 +631,7 @@ export async function startPresetAssistant() {
   let destroyed = false;
   let dialogs = null;
   let discussion = null;
+  let toolOutput = null;
   let configurationScopes = { preset: true, summary: true };
   let exportScopes = { preset: true, summary: true };
   let metadataEnriching = false;
@@ -642,7 +668,29 @@ export async function startPresetAssistant() {
 
   const STYLES = PANEL_CSS + SUMMARY_STYLES + DIALOG_STYLES + TASK_STYLES;
 
-  globalThis.__destinedJourneyAssistant = { destroy: cleanup, open: openPanel };
+  function reportToolOutput(stats) {
+    // Arrival times (seconds after the request was sent) show whether the calls came in separately.
+    const gaps = stats.arrivals.map((time, index) => time - (index ? stats.arrivals[index - 1] : 0));
+    // stopReason: complete | single (one-call reply left open) | empty (a round added nothing) | limit | error | cancelled.
+    console.info(`[${SCRIPT_NAME}] 工具输出`, { used: stats.used, streamed: stats.streamed, rounds: stats.rounds, stopReason: stats.stopReason, calls: stats.calls, chunks: stats.toolChunks, chars: stats.toolChars, plainChars: stats.plainChars, arrivals: stats.arrivals, longestWait: gaps.length ? Math.max(...gaps) : null, ending: stats.delivered.slice(-160) });
+    if (!stats.used) toastr.warning('本轮模型没有通过工具交付正文，已按普通回复显示。频繁出现时，当前渠道可能不支持函数调用，可改用非预填充尾部。', BUTTON_NAME);
+    if (stats.stopReason === 'single') {
+      toastr.warning('工具一次调用没有交付完整回复，正文可能不完整。可重新生成，或改用工具两次调用。', BUTTON_NAME, { timeOut: 15000 });
+    }
+    if (stats.stopReason === 'empty' || stats.stopReason === 'limit') {
+      toastr.warning(`工具输出在 ${stats.rounds} 次请求后仍未写完（${stats.stopReason === 'empty' ? '最后一次没有返回新内容' : '已达请求次数上限'}），正文可能不完整，可重新生成。`, BUTTON_NAME, { timeOut: 15000 });
+    }
+  }
+
+  function reportToolOutputRoundError({ status, round }) {
+    toastr.warning(`工具输出第 ${round} 次请求失败（HTTP ${status}），已保留此前收到的内容，正文可能不完整，可重新生成。`, BUTTON_NAME, { timeOut: 15000 });
+  }
+
+  function reportToolOutputTimeout() {
+    toastr.warning('工具输出请求超时（524）：工具输出要等正文完整生成后才一次返回，期间连接没有数据，等待过久会被接口或网关断开。可缩短回复、换用超时更宽松的接口，或切回非预填充尾部。', BUTTON_NAME, { timeOut: 15000 });
+  }
+
+  globalThis[FLAVOR.singletonKey] = { destroy: cleanup, open: openPanel };
   try {
     const version = await getTavernHelperVersion();
     if (typeof version === 'string' && typeof isVersionLessThan === 'function' && isVersionLessThan(version, '4.0.0')) {
@@ -656,6 +704,7 @@ export async function startPresetAssistant() {
 
   createUi();
   discussion = startDiscussion(ctx);
+  toolOutput = installToolOutputTransport({ host: window.parent, onResult: reportToolOutput, onTimeout: reportToolOutputTimeout, onRoundError: reportToolOutputRoundError });
   dialogs = createDialogs({ getRoot: () => shadow, open: () => { if (!state.open) openPanel(); } });
   await summary.initialize({
     popup: (...args) => dialogs.popup(...args),

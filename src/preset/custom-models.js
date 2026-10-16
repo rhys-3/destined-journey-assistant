@@ -1,3 +1,9 @@
+import { FLAVOR } from '../flavor.js';
+import { GEMINI_TAIL_MODES, GEMINI_TAIL_LABELS } from './definitions.js';
+
+const tailSource = mode => GEMINI_TAIL_MODES.indexOf(mode);
+const tailOptions = selected => GEMINI_TAIL_MODES.map(mode => '<option value="' + mode + '" ' + (selected === mode ? 'selected' : '') + '>' + GEMINI_TAIL_LABELS[mode] + '</option>').join('');
+
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createCustomModels(ctx) {
   async function addCustomModel(name, tailMode = 'no-prefill', bindingKey = '') {
@@ -5,17 +11,17 @@ export function createCustomModels(ctx) {
     return ctx.runWorkspaceOperation('新增模型', async current => {
       const config = ctx.clone(ctx.state.config);
       const label = ctx.validName(name, Object.entries(ctx.MODEL_ADAPTERS).map(([id, adapter]) => ({ id, name: adapter.label })));
-      ctx.assertData(['prefill', 'no-prefill'].includes(tailMode), '尾部必须二选一');
+      ctx.assertData(GEMINI_TAIL_MODES.includes(tailMode), '尾部类型无效');
       const preset = ctx.clone(getPreset('in_use'));
       const expected = ctx.fingerprintPresetValue(preset);
       const gemini = ctx.BUILTIN_MODEL_ADAPTERS.Gemini;
-      const sourceIds = [gemini.ids[0], gemini.ids[1], gemini.tails[tailMode === 'prefill' ? 0 : 1]];
+      const sourceIds = [gemini.ids[0], gemini.ids[1], gemini.tails[tailSource(tailMode)]];
       const indices = sourceIds.map(id => preset.prompts.findIndex(prompt => prompt.id === id));
       ctx.assertData(indices.every(index => index >= 0) && indices[0] < indices[1] && indices[1] < indices[2], 'Gemini 模板缺失或头部、思维链、尾部区域顺序异常。');
       const id = 'model:' + ctx.createPromptId();
       const ids = sourceIds.map(() => ctx.createPromptId());
       const parts = ['head', 'thinking', 'tail'];
-      const titles = ['🔌 ' + label + '头部', '🧠 ' + label + '思维链', '🔌 ' + label + (tailMode === 'prefill' ? '预填充' : '非预填充')];
+      const titles = ['🔌 ' + label + '头部', '🧠 ' + label + '思维链', '🔌 ' + label + GEMINI_TAIL_LABELS[tailMode]];
       for (let part = 0; part < 3; part++) {
         const source = ctx.requirePrompt(preset, sourceIds[part]);
         const prompt = { ...ctx.clone(source), id: ids[part], name: titles[part], enabled: false };
@@ -49,7 +55,7 @@ export function createCustomModels(ctx) {
       const previousLabel = model.label;
       model.label = ctx.validName(name, Object.entries(ctx.MODEL_ADAPTERS).map(([key, adapter]) => ({ id: key, name: adapter.label })), id);
       const preset = ctx.clone(getPreset('in_use'));
-      const suffixes = ['头部', '思维链', model.tailMode === 'prefill' ? '预填充' : '非预填充'];
+      const suffixes = ['头部', '思维链', GEMINI_TAIL_LABELS[model.tailMode]];
       model.ids.forEach((promptId, index) => {
         const prompt = ctx.requirePrompt(preset, promptId);
         const prefix = index === 1 ? '🧠 ' : '🔌 ';
@@ -81,7 +87,7 @@ export function createCustomModels(ctx) {
   async function setCustomTail(id, mode, replaceEdited = false) {
     ctx.assertData(ctx.state.editorUnlocked,'请先打开编辑模式');
     return ctx.runWorkspaceOperation('切换尾部类型', async current => {
-      ctx.assertData(['prefill', 'no-prefill'].includes(mode), '尾部必须二选一');
+      ctx.assertData(GEMINI_TAIL_MODES.includes(mode), '尾部类型无效');
       const next = ctx.clone(ctx.state.config);
       const model = next.custom_models.find(item => item.id === id);
       ctx.assertData(model, '自定义模型不存在');
@@ -90,12 +96,13 @@ export function createCustomModels(ctx) {
       const tail = ctx.requirePrompt(preset, model.ids[2]);
       const edited = tail.content !== model.tailBaseline.content || tail.role !== model.tailBaseline.role;
       ctx.assertData(!edited || replaceEdited, '尾部正文已修改，请确认替换后再切换。');
-      const source = ctx.requirePrompt(preset, ctx.BUILTIN_MODEL_ADAPTERS.Gemini.tails[mode === 'prefill' ? 0 : 1]);
+      const source = ctx.getPrompt(preset, ctx.BUILTIN_MODEL_ADAPTERS.Gemini.tails[tailSource(mode)]);
+      ctx.assertData(source, '当前预设没有 Gemini「' + GEMINI_TAIL_LABELS[mode] + '」尾部条目，请更新预设。');
       ctx.saveRecovery(current);
       next.configuration_library = ctx.clone(ctx.state.config.configuration_library);
       tail.content = source.content;
       tail.role = source.role;
-      tail.name = '🔌 ' + model.label + (mode === 'prefill' ? '预填充' : '非预填充');
+      tail.name = '🔌 ' + model.label + GEMINI_TAIL_LABELS[mode];
       model.tailMode = mode;
       model.tailBaseline = { content: source.content, role: source.role };
       await ctx.writeWorkspace(preset, next, current);
@@ -157,14 +164,14 @@ export function createCustomModels(ctx) {
     const draft = ctx.state.modelDraft;
     return '<article class="card"><h4>新增自定义模型</h4><p>复制 Gemini 的头部、思维链和选中的一种尾部，共三个独立条目。</p>'
       + '<div class="field-grid"><label class="field-label">模型名称<input data-action="model-draft" data-field="name" maxlength="100" value="' + ctx.escapeHtml(draft.name) + '"></label>'
-      + '<label class="field-label">尾部类型<select data-action="model-draft" data-field="tailMode"><option value="no-prefill" ' + (draft.tailMode === 'no-prefill' ? 'selected' : '') + '>非预填充</option><option value="prefill" ' + (draft.tailMode === 'prefill' ? 'selected' : '') + '>预填充</option></select></label>'
+      + '<label class="field-label">尾部类型<select data-action="model-draft" data-field="tailMode">' + tailOptions(draft.tailMode) + '</select></label>'
       + '<label class="field-label">酒馆连接配置<select data-action="model-draft" data-field="binding"><option value="">不绑定</option>'
       + ctx.state.profiles.map(profile => '<option value="' + ctx.escapeHtml(ctx.profileKey(profile)) + '" ' + (draft.binding === ctx.profileKey(profile) ? 'selected' : '') + '>' + ctx.escapeHtml(profile.name) + '</option>').join('')
       + '</select></label></div><div class="configuration-actions">' + configButton('model-add', '添加模型') + '</div></article>'
       + (ctx.state.config.custom_models ?? []).map(model => '<article class="card"><h4>' + ctx.escapeHtml(model.label) + '</h4><div class="configuration-actions">'
         + configButton('model-rename', '重命名', model.id) + configButton('model-delete', '删除', model.id)
         + model.ids.map((id, index) => configButton('prompt-open', ['头部', '思维链', '尾部'][index], id)).join('')
-        + '</div><label class="field-label">尾部类型<select data-action="custom-tail" data-model="' + ctx.escapeHtml(model.id) + '"><option value="no-prefill" ' + (model.tailMode === 'no-prefill' ? 'selected' : '') + '>非预填充</option><option value="prefill" ' + (model.tailMode === 'prefill' ? 'selected' : '') + '>预填充</option></select></label></article>').join('');
+        + '</div><label class="field-label">尾部类型<select data-action="custom-tail" data-model="' + ctx.escapeHtml(model.id) + '">' + tailOptions(model.tailMode) + '</select></label></article>').join('');
   }
 
   async function handleConfigurationAction(action, target) {
@@ -183,10 +190,10 @@ export function createCustomModels(ctx) {
     if (action === 'configuration-delete' && await ctx.dialogs.confirm('删除这份命名配置？当前设置不会被删除。')) return ctx.deleteConfiguration(id);
     if (action === 'configuration-export') {
       const item = ctx.configLibrary().items.find(item => item.id === id);
-      ctx.downloadConfiguration(ctx.exportConfigurations(id), item?.name ?? '命定配置');
+      ctx.downloadConfiguration(ctx.exportConfigurations(id), item?.name ?? FLAVOR.exportLabel+'配置');
     }
-    if (action === 'configuration-export-all') ctx.downloadConfiguration(ctx.exportConfigurations(), '命定配置库');
-    if (action === 'configuration-raw') ctx.downloadConfiguration(ctx.exportRecoverableConfigurations(), '命定配置恢复备份');
+    if (action === 'configuration-export-all') ctx.downloadConfiguration(ctx.exportConfigurations(), FLAVOR.exportLabel+'配置库');
+    if (action === 'configuration-raw') ctx.downloadConfiguration(ctx.exportRecoverableConfigurations(), FLAVOR.exportLabel+'配置恢复备份');
     if (action === 'configuration-import') ctx.shadow.querySelector('[data-action="configuration-file"]')?.click();
     if (action === 'model-add') return addCustomModel(ctx.state.modelDraft.name, ctx.state.modelDraft.tailMode, ctx.state.modelDraft.binding);
     if (action === 'model-rename') {

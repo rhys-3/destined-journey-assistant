@@ -1,5 +1,5 @@
 // Dependencies use live accessors so asynchronous operations share the current state.
-import { NSFW_GROUP, normalizeBlockId } from './definitions.js';
+import { NSFW_GROUP, normalizeBlockId, GEMINI_TAIL_MODES, GEMINI_TAIL_LABELS, OPTIONAL_MODEL_PROMPT_IDS, geminiTailMode } from './definitions.js';
 
 export function createModels(ctx) {
   function getGroupOptions(groupId, preset = ctx.state.preset) {
@@ -26,8 +26,10 @@ export function createModels(ctx) {
 
   function applyGroup(groupId, selectedId) {
     if (groupId === 'variable-mode') {
-      const index = ctx.GROUPS['variable-mode'].options.findIndex(([id]) => id === selectedId);
-      if (index >= 0) return ctx.selectVariableMode(index === 0 ? 'main' : 'extra');
+      // Match by entry id instead of position so the general flavor's third
+      // 无变量 option routes correctly and prime keeps its two choices.
+      const mode = ctx.VARIABLE_MODE_BY_ID.get(selectedId);
+      if (mode) return ctx.selectVariableMode(mode);
       return;
     }
     const group = ctx.GROUPS[groupId];
@@ -62,20 +64,26 @@ export function createModels(ctx) {
   }
 
   function getGeminiTail(preset = ctx.state.preset) {
-    const [prefill, noPrefill] = ctx.MODEL_ADAPTERS.Gemini.tails;
-    if (ctx.getPrompt(preset, prefill)?.enabled && !ctx.getPrompt(preset, noPrefill)?.enabled) return 'prefill';
-    if (!ctx.getPrompt(preset, prefill)?.enabled && ctx.getPrompt(preset, noPrefill)?.enabled) return 'no-prefill';
-    return null;
+    const enabled = ctx.MODEL_ADAPTERS.Gemini.tails
+      .map((id, index) => ctx.getPrompt(preset, id)?.enabled ? GEMINI_TAIL_MODES[index] : null)
+      .filter(Boolean);
+    return enabled.length === 1 ? enabled[0] : null;
+  }
+
+  // The tool-output tail is absent from presets that predate it.
+  function geminiTailAvailable(mode, preset = ctx.state.preset) {
+    return !!ctx.getPrompt(preset, ctx.BUILTIN_MODEL_ADAPTERS.Gemini.tails[GEMINI_TAIL_MODES.indexOf(mode)]);
   }
 
   function applyModelToPreset(preset, adapterName) {
-    const geminiTail = getGeminiTail(preset) ?? ctx.state.config.model_tail_modes?.Gemini ?? 'no-prefill';
+    let geminiTail = geminiTailMode(getGeminiTail(preset) ?? ctx.state.config.model_tail_modes?.Gemini);
+    if (!geminiTailAvailable(geminiTail, preset)) geminiTail = 'no-prefill';
     for (const [name, adapter] of Object.entries(ctx.MODEL_ADAPTERS)) {
       for (const id of adapter.ids) ctx.requirePrompt(preset, id).enabled = name === adapterName;
-      for (const id of adapter.tails) {
-        ctx.requirePrompt(preset, id).enabled = name === adapterName
-          && (geminiTail === 'prefill' ? id === adapter.tails[0] : id === adapter.tails[1]);
-      }
+      adapter.tails.forEach((id, index) => {
+        const prompt = OPTIONAL_MODEL_PROMPT_IDS.has(id) ? ctx.getPrompt(preset, id) : ctx.requirePrompt(preset, id);
+        if (prompt) prompt.enabled = name === adapterName && GEMINI_TAIL_MODES[index] === geminiTail;
+      });
     }
   }
 
@@ -95,17 +103,19 @@ export function createModels(ctx) {
 
   function setGeminiTail(mode) {
     return ctx.runWorkspaceOperation('Gemini 尾部模式', async current => {
-      ctx.assertData(['prefill', 'no-prefill'].includes(mode), '尾部必须二选一');
+      ctx.assertData(GEMINI_TAIL_MODES.includes(mode), '尾部模式无效');
       ctx.assertData(detectModelAdapter() === 'Gemini', '请先切换到 Gemini 适配');
       const preset = ctx.clone(getPreset('in_use'));
-      const [prefill, noPrefill] = ctx.BUILTIN_MODEL_ADAPTERS.Gemini.tails;
-      ctx.requirePrompt(preset, prefill).enabled = mode === 'prefill';
-      ctx.requirePrompt(preset, noPrefill).enabled = mode === 'no-prefill';
+      ctx.assertData(geminiTailAvailable(mode, preset), '当前预设没有「' + GEMINI_TAIL_LABELS[mode] + '」尾部条目，请更新预设。');
+      ctx.BUILTIN_MODEL_ADAPTERS.Gemini.tails.forEach((id, index) => {
+        const prompt = ctx.getPrompt(preset, id);
+        if (prompt) prompt.enabled = GEMINI_TAIL_MODES[index] === mode;
+      });
       const config = ctx.clone(ctx.state.config);
       config.model_tail_modes.Gemini = mode;
       await ctx.writeWorkspace(preset, config, current);
     }).catch(ctx.showErrorToast);
   }
 
-  return { getGroupOptions, getPromptGroupId, applyGroup, detectModelAdapter, getGeminiTail, applyModelToPreset, selectModelAdapter, setGeminiTail };
+  return { getGroupOptions, getPromptGroupId, applyGroup, detectModelAdapter, getGeminiTail, geminiTailAvailable, applyModelToPreset, selectModelAdapter, setGeminiTail };
 }

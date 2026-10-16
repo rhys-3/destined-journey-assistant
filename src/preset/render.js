@@ -1,6 +1,8 @@
 import * as summary from '../summary/service.js';
 import { promptDescription } from './descriptions.js';
 import { SEARCH_FIELDS, searchFields, searchPlaceholder, filterSearchPrompts } from './search.js';
+import { FLAVOR } from '../flavor.js';
+import { GEMINI_TAIL_MODES, GEMINI_TAIL_LABELS } from './definitions.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createRender(ctx) {
@@ -75,6 +77,10 @@ export function createRender(ctx) {
     if (ctx.state.activeTab === 'summary' && content.querySelector('.summary-slot')) { summary.refresh(); return; }
     summary.detach();
     content.innerHTML = ctx.state.preset ? renderActiveTab() : '<div class="empty">无法读取当前预设。</div>';
+    // Both assistants can be installed at once; only the owning preset is editable.
+    if (ctx.state.preset && !ctx.presetIsMine()) {
+      content.insertAdjacentHTML('afterbegin', `<div class="warning" data-foreign-preset="true">${ctx.escapeHtml(ctx.FOREIGN_PRESET_MESSAGE)}</div>`);
+    }
     ctx.resizeSettingInputs();
     if (ctx.state.activeTab === 'summary') summary.mount(content.querySelector('.summary-slot'));
     restoreContentScroll(content, scrollTop);
@@ -171,13 +177,13 @@ export function createRender(ctx) {
     return `
       <section class="panel" data-tt-mobile-surface="free-window" role="dialog" aria-modal="false" aria-labelledby="destined-title">
         <header class="panel-head" data-panel-drag-handle title="拖动窗口">
-          <div class="panel-title-row"><h2 id="destined-title">命定·黄昏 Prime <span>预设助手</span></h2></div>
+          <div class="panel-title-row"><h2 id="destined-title">${FLAVOR.panelTitleHtml}</h2></div>
           <div class="head-actions"><label class="edit-mode-switch"><input type="checkbox" data-action="edit-mode" aria-label="编辑模式" ${ctx.state.editorUnlocked?'checked':''} ${ctx.state.reorderSaving||ctx.state.promptEditor?.saving?'disabled':''}><span>编辑模式</span></label><button type="button" class="secondary-button" data-action="tab" data-tab="advanced">预设条目</button><button class="icon-button" type="button" data-action="close" aria-label="关闭设置">×</button></div>
         </header>
         <div class="configuration-shortcut">${ctx.renderConfigurationShortcut()}</div>
         <div class="panel-layout">
           <nav class="tabs" aria-label="设置页面">${ctx.renderPlacementNavigation()}</nav>
-          <main class="content content-${ctx.state.activeTab}" tabindex="-1">${ctx.state.preset ? renderActiveTab() : '<div class="empty">无法读取当前预设，请确认已加载命定预设后重新打开。</div>'}</main>
+          <main class="content content-${ctx.state.activeTab}" tabindex="-1">${ctx.state.preset ? renderActiveTab() : `<div class="empty">无法读取当前预设，请确认已加载${FLAVOR.presetLabel}后重新打开。</div>`}</main>
         </div>
         <footer class="status status-${ctx.state.saveState}" role="status" aria-live="polite"><span class="status-dot"></span><span>${ctx.escapeHtml(ctx.state.saveMessage)}</span></footer>
         <span class="sr-only theme-feedback" role="status" aria-live="polite"></span><div class="editor-layer-slot">${renderStyleEditor()}</div><div class="panel-resize-handle" data-panel-resize-handle aria-hidden="true"></div>
@@ -223,10 +229,9 @@ export function createRender(ctx) {
         `).join('')}
       </div>
       <article class="card">
-        <div class="card-title"><div><h4>Gemini 尾部模式</h4><p>仅在 Gemini 适配时生效。</p></div></div>
+        <div class="card-title"><div><h4>Gemini 尾部模式</h4><p>仅在 Gemini 适配时生效。一般使用非预填充即可；输出经常被截断时再改用工具输出，适用于 Gemini 3.7 Flash、3.8 Flash、4 Argon 等，无需开启酒馆的函数调用。工具调用基本非流式：一次调用要等全文写完才显示，回复较长时可能超时；两次调用先交公开检查、再自动请求正文，不易超时，但会发送两次请求、花费更多。</p></div></div>
         <div class="segmented">
-          ${choiceButton('gemini-tail', 'prefill', '预填充', tail === 'prefill', current !== 'Gemini')}
-          ${choiceButton('gemini-tail', 'no-prefill', '非预填充', tail === 'no-prefill', current !== 'Gemini')}
+          ${GEMINI_TAIL_MODES.map(mode => choiceButton('gemini-tail', mode, GEMINI_TAIL_LABELS[mode], tail === mode, current !== 'Gemini' || !ctx.geminiTailAvailable(mode))).join('')}
         </div>
       </article>
       <article class="card connection-card">

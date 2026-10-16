@@ -73,11 +73,18 @@
   reset(true, false, false); bound.push('另一绑定世界书'); books['另一绑定世界书'] = fixture(false, true, true, renamedNames); localMode('extra'); await ui.scanWorldbookMode();
   check('多本新旧世界书冲突不自动跟随', ui.variablePresetMode() === 'extra' && ui.worldLink.phase === 'warning');
   await ui.selectVariableMode('main'); check('手动模式统一所有新旧绑定世界书', Object.values(books).every(book => book[0].enabled && !book[1].enabled && !book[2].enabled));
+  const flavorId = window.__assistantFlavorId ?? 'prime';
   const counts = {};
   for (const tab of ['daily', 'style', 'tools']) { ui.state.activeTab = tab; ui.render(); for (const input of ui.shadow.querySelectorAll('input[data-key^="prompt:"]')) counts[input.dataset.key] = (counts[input.dataset.key] || 0) + 1; }
   check('三个主页面无重复提示词开关', Object.values(counts).every(n => n === 1));
   check('事件链只出现一次', counts['prompt:' + ui.IDS.eventChain] === 1);
-  check('数值和人称规则仍有启停能力', [ui.IDS.dialogue, ui.IDS.outputLength, ui.IDS.narration].every(id => counts['prompt:' + id] === 1));
+  const managedToggles = flavorId === 'general' ? [ui.IDS.dialogue, ui.IDS.narration] : [ui.IDS.dialogue, ui.IDS.outputLength, ui.IDS.narration];
+  check('数值和人称规则仍有启停能力', managedToggles.every(id => counts['prompt:' + id] === 1));
+  if (flavorId === 'general') {
+    ui.state.activeTab = 'daily'; ui.render();
+    check('通用版不渲染命定专有字数控件', counts['prompt:' + ui.IDS.outputLength] === undefined && !ui.shadow.querySelector('[data-action="length-mode"]') && !ui.shadow.querySelector('[data-action="field-number"][data-field="hanzi"]') && !!ui.shadow.querySelector('[data-action="field-number"][data-field="dialogueRatio"]'));
+    ui.state.activeTab = 'tools'; ui.render();
+  }
   ui.state.activeTab = 'advanced'; ui.render(); check('全部条目页不再重复开关', ui.shadow.querySelectorAll('input[data-key^="prompt:"]').length === 0);
   q('[data-action="prompt-open"][data-id="' + ui.IDS.eventChain + '"]').click(); check('条目列表打开独立只读编辑器', !!q('.prompt-editor') && q('[data-field="content"]').readOnly); ui.closePromptEditor(); ui.state.activeTab='daily'; ui.render();
   reset(true, false, false); const readsBefore = readCount; for (let i = 0; i < 30; i++) ui.scheduleWorldbookScan(); await pause(650);

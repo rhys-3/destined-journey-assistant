@@ -248,10 +248,16 @@ export function createStore(ctx) {
     const callerGuard = guard;
     guard = () => !ctx.destroyed && getLoadedPresetName() === startingName && (!callerGuard || callerGuard());
     if (guard && !guard()) throw new Error('上下文已变化，已停止保存');
-    setSaveStatus('saving', `正在保存：${label}`);
-
     const loadedName = getLoadedPresetName();
     const targets = loadedName && loadedName !== 'in_use' ? [loadedName, 'in_use'] : ['in_use'];
+    // Both assistants can be installed at once; a foreign preset is never written.
+    for (const target of targets) {
+      if (ctx.presetIsMine(getPreset(target))) continue;
+      setSaveStatus('error', ctx.FOREIGN_PRESET_MESSAGE);
+      throw new Error(ctx.FOREIGN_PRESET_MESSAGE);
+    }
+    setSaveStatus('saving', `正在保存：${label}`);
+
     const before = new Map();
     const after = new Map();
     const current = fromCurrent ? clone(getPreset('in_use')) : null;
@@ -323,6 +329,7 @@ export function createStore(ctx) {
   }
 
   function queuePresetMutation(label, mutator, debounceKey = null) {
+    if (!ctx.presetIsMine()) return Promise.reject(new Error(ctx.FOREIGN_PRESET_MESSAGE));
     try {
       const optimistic = clone(ctx.state.preset);
       mutator(optimistic);

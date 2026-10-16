@@ -2,12 +2,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { selectChangedFiles, checkDocs, command, report } from './verification-common.mjs';
+import { FLAVORS } from '../src/flavor.js';
 
+// Generated flavor bundles are build outputs, not runtime sources.
+const GENERATED_BUNDLES = new Set(Object.values(FLAVORS).map(flavor => flavor.output));
 export function classify(files) {
   let full = files === null, build = false, python = false;
   const browser = new Set();
   for (const file of files ?? []) {
-    if (file === 'dist/destined-journey-assistant.js') continue;
+    if (GENERATED_BUNDLES.has(file)) continue;
     if (/^(?:[^/]+\.md|docs\/.*\.md|LICENSE)$/.test(file)) continue;
     if (file.startsWith('@types/') || /^(?:scripts\/update-types\.py|tests\/test_update_types\.py)$/.test(file)) { python = true; continue; }
     build = true;
@@ -33,6 +36,7 @@ export function run(plan) {
   for (const name of ['ui', 'assistant', 'themes', 'settings']) if (plan[name]) {
     command([`tests/ui/test-${name}.cjs`]);
     if (name === 'ui') command(['tests/ui/test-ui.cjs', '--modern-length']);
+    if (name === 'ui') command(['tests/ui/test-general.cjs']);
     if (name === 'assistant') command(['tests/ui/test-discussion-records.cjs']);
   }
 }

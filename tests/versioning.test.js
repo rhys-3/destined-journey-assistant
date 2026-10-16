@@ -61,14 +61,24 @@ test('tag publication includes the committed bundle and never moves an existing 
   await writeFile(join(root, '.gitignore'), 'remote.git/\n');
   await mkdir(join(root, 'dist'));
   const bundlePath = join(root, 'dist/destined-journey-assistant.js');
+  const generalPath = join(root, 'dist/destined-journey-assistant-general.js');
   await writeFile(bundlePath, '"命定预设助手 v3.0.0";\nconsole.log("verified");');
-  git('add', '.'); git('commit', '-m', 'verified bundle');
-  const original = git('rev-parse', 'HEAD');
   const script = fileURLToPath(new URL('../scripts/publish-version.mjs', import.meta.url));
   const publish = () => execFileSync(process.execPath, [script], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Both flavor bundles must be present and versioned before a tag is created.
+  git('add', '.'); git('commit', '-m', 'prime bundle only');
+  assert.throws(publish, /destined-journey-assistant-general\.js/u);
+  await writeFile(generalPath, '"通用预设助手 v2.9.0";');
+  git('add', '.'); git('commit', '-m', 'stale general bundle');
+  assert.throws(publish, /destined-journey-assistant-general\.js/u);
+  assert.equal(git('tag', '--list', 'v3.0.0'), '');
+  await writeFile(generalPath, '"通用预设助手 v3.0.0";\nconsole.log("verified general");');
+  git('add', '.'); git('commit', '-m', 'verified bundle');
+  const original = git('rev-parse', 'HEAD');
   publish();
   assert.equal(git('rev-parse', 'v3.0.0'), original);
   assert(git('show', 'v3.0.0:dist/destined-journey-assistant.js').includes('verified'));
+  assert(git('show', 'v3.0.0:dist/destined-journey-assistant-general.js').includes('verified general'));
   await writeFile(bundlePath, 'unreleased development change');
   git('add', 'dist'); git('commit', '-m', 'unreleased work');
   assert(publish().includes('保持原标签'));

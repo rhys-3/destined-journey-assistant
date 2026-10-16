@@ -1,5 +1,5 @@
 // All script-variable writes pass through this synchronous coordinator.
-const SUMMARY_KEYS = ['summary_assistant_settings', 'summary_assistant_secrets', 'summary_assistant_migration', 'summary_assistant_runtime', 'summary_assistant_owned_books', 'summary_assistant_books'];
+import { SUMMARY_SCRIPT_VAR_KEYS } from './storage-keys.js';
 export function readStore() { return structuredClone(getVariables({ type: 'script' }) ?? {}); }
 export function writeStore(value) {
   const next = structuredClone(value);
@@ -11,7 +11,7 @@ export function writeStore(value) {
 export function writePresetStore(value) {
   const latest = readStore();
   const next = structuredClone(value);
-  for (const key of SUMMARY_KEYS) {
+  for (const key of SUMMARY_SCRIPT_VAR_KEYS) {
     if (Object.hasOwn(latest, key)) next[key] = latest[key];
     else delete next[key];
   }

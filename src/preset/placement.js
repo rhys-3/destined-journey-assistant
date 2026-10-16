@@ -278,8 +278,9 @@ export function createPlacement(ctx) {
     const description=promptDescription(prompt);
     const edit=placementEdit(prompt);
     if(prompt.id===ctx.IDS.dialogue||prompt.id===ctx.IDS.outputLength){
-      const keys=prompt.id===ctx.IDS.dialogue?['dialogueRatio','dialogueRounds']:['hanzi','combatRounds'];
-      const languages=prompt.id===ctx.IDS.outputLength?'<div class="language-grid">'+['body','thinking'].map(ctx.renderLanguageControl).join('')+'</div>':'';
+      const keys=prompt.id===ctx.IDS.dialogue?ctx.MANAGED_CONTROLS.dialogue:ctx.MANAGED_CONTROLS.length;
+      const languageKeys=ctx.MANAGED_CONTROLS.languages;
+      const languages=prompt.id===ctx.IDS.outputLength&&languageKeys.length?'<div class="language-grid">'+languageKeys.map(ctx.renderLanguageControl).join('')+'</div>':'';
       return '<div class="placed-fields" data-placement-id="'+ctx.escapeHtml(prompt.id)+'">'+(edit?'<div class="numeric-edit">'+edit+'</div>':'')+languages+'<div class="field-grid">'+keys.map(ctx.renderNumericControl).join('')+'</div></div>';
     }
     let control='',content='';

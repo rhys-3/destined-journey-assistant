@@ -12,10 +12,10 @@ export function createWorldbook(ctx) {
   }
 
   function variablePresetMode(preset = ctx.state.preset) {
-    const options = ctx.GROUPS['variable-mode'].options;
-    const main = ctx.getPrompt(preset, options[0][0])?.enabled === true;
-    const extra = ctx.getPrompt(preset, options[1][0])?.enabled === true;
-    return main !== extra ? (main ? 'main' : 'extra') : null;
+    // Exactly one selected entry decides the mode; anything else stays unknown
+    // so the assistant never guesses. The general flavor has a third choice.
+    const selected = ctx.VARIABLE_MODES.filter(entry => ctx.getPrompt(preset, entry.id)?.enabled === true);
+    return selected.length === 1 ? selected[0].key : null;
   }
 
   function captureWorldContext() {
@@ -129,9 +129,7 @@ export function createWorldbook(ctx) {
     const task = ctx.saveChain.then(() => {
       if (!guard()) throw new Error('聊天、预设或世界书绑定已变化，本次切换已停止');
       return ctx.commitPresetMutation('变量模式', preset => {
-        const options = ctx.GROUPS['variable-mode'].options;
-        for (const [id] of options) ctx.requirePrompt(preset, id);
-        options.forEach(([id], index) => { ctx.requirePrompt(preset, id).enabled = index === (mode === 'main' ? 0 : 1); });
+        for (const entry of ctx.VARIABLE_MODES) ctx.requirePrompt(preset, entry.id).enabled = entry.key === mode;
       }, guard);
     });
     ctx.saveChain = task.catch(() => {});
@@ -163,7 +161,11 @@ export function createWorldbook(ctx) {
       try {
         context = captureWorldContext();
         // Unrelated presets must never receive automatic changes.
-        if (!ctx.GROUPS['variable-mode'].options.every(([id]) => ctx.getPrompt(ctx.state.preset, id))) {
+        if (!ctx.presetIsMine()) {
+          showWorldLink('warning', ctx.FOREIGN_PRESET_MESSAGE);
+          return;
+        }
+        if (!ctx.VARIABLE_MODES.every(entry => ctx.getPrompt(ctx.state.preset, entry.id))) {
           showWorldLink('warning', '当前预设缺少变量模式选项，无法联动。');
           return;
         }
@@ -175,17 +177,21 @@ export function createWorldbook(ctx) {
           ? result.books[0].mode : null;
         const pending = ctx.configLibrary().pendingWorld;
         if (pending?.key === context.key) follow = false;
-        if (mode && follow && variablePresetMode() !== mode) {
+        const current = variablePresetMode();
+        // 无变量 is a deliberate opt-out: a variable worldbook never flips it back.
+        if (mode && follow && current !== mode && current !== 'none') {
           ownsBusy = true;
           ctx.worldLink.busy = true;
           ctx.worldOperationContext = context.key;
           await saveVariablePreset(mode, context, epoch);
         }
         if (!worldContextIsCurrent(context, epoch)) return;
-        const hasIssue = result.issues.length > 0 || result.books.some(book => book.issue) || !mode || pending?.key === context.key;
+        const diverged = Boolean(mode) && current === 'none';
+        const label = ctx.VARIABLE_MODES.find(entry => entry.key === mode)?.label ?? mode;
+        const hasIssue = result.issues.length > 0 || result.books.some(book => book.issue) || !mode || pending?.key === context.key || diverged;
         const message = pending?.key === context.key ? '配置已应用，世界书待同步。点击重新检查可重试同步。' : result.books.length === 0
           ? (result.issues.length ? '世界书未完整读取，保留当前预设选择。可稍后重新检查。' : '当前绑定的世界书中未找到变量条目。你仍可选择预设模式，绑定世界书后再检查。')
-          : mode ? `世界书使用${mode === 'main' ? '主 API' : '额外 API'}${hasIssue ? '，部分条目需要检查。' : '，预设模式已对应。'}`
+          : mode ? `世界书使用${label}${diverged ? '，当前预设为无变量，未自动切换。' : hasIssue ? '，部分条目需要检查。' : '，预设模式已对应。'}`
           : '世界书状态不明确或彼此不一致，保留当前选择。选择一种模式可统一已有条目的开关。';
         showWorldLink(hasIssue ? 'warning' : 'ready', message, result);
       } catch (error) { if (!ctx.destroyed && (!context || worldContextIsCurrent(context, epoch))) showWorldLink('warning', `检查未完成：${error.message ?? error}`); }
@@ -198,7 +204,7 @@ export function createWorldbook(ctx) {
   }
 
   async function selectVariableMode(mode) {
-    if (!['main', 'extra'].includes(mode) || ctx.worldLink.busy || ctx.worldWrites.size) return;
+    if (!ctx.VARIABLE_MODES.some(entry => entry.key === mode) || ctx.worldLink.busy || ctx.worldWrites.size) return;
     clearTimeout(ctx.worldTimer);
     ctx.worldTimer = 0;
     const epoch = ++ctx.worldEpoch;
@@ -212,6 +218,11 @@ export function createWorldbook(ctx) {
       // Finish the preset transaction first; unavailable worldbooks never block other preset saves.
       await saveVariablePreset(mode, context, epoch);
       if (!worldContextIsCurrent(context, epoch)) return;
+      // 无变量 only changes the preset selection; worldbook entries stay untouched.
+      if (mode === 'none') {
+        showWorldLink('ready', '已切换为无变量：世界书条目保持原样，预设不再更新世界状态变量。需要联动时重新选择一种变量模式。');
+        return;
+      }
       const result = await readVariableBooks(context);
       if (!worldContextIsCurrent(context, epoch)) return;
       const issues = [...result.issues];
@@ -267,14 +278,19 @@ export function createWorldbook(ctx) {
 
   function renderVariablePanel() {
     const mode = variablePresetMode();
-    const unavailable = !ctx.GROUPS['variable-mode'].options.every(([id]) => ctx.getPrompt(ctx.state.preset, id));
+    const unavailable = !ctx.VARIABLE_MODES.every(entry => ctx.getPrompt(ctx.state.preset, entry.id));
     const disabled = ctx.worldLink.busy || ctx.worldWrites.size > 0 || unavailable;
+    const selected = ctx.VARIABLE_MODES.find(entry => entry.key === mode);
+    const reminder = mode === 'none'
+      ? '已选择不通过预设更新变量：助手不会改动世界书条目，也不会代改 MVU 框架设置。'
+      : mode ? `请在 <strong>MVU 变量框架</strong> 中，将 <strong>变量更新方式</strong> 设为 <strong>${mode === 'main' ? '随 AI 输出' : '额外模型解析'}</strong>。`
+      : '请选择一种变量模式；世界书状态明确时会自动匹配。';
     return `<article class="card variable-card" data-anchor="variables">
-      <div class="card-title"><div><span class="step-label">开始前 · 变量更新</span><h4>由谁来更新世界状态？</h4><p>选择后联动当前绑定世界书中的变量条目。</p></div><span class="badge">${mode === 'main' ? '主 API' : mode === 'extra' ? '额外 API' : '待选择'}</span></div>
-      <div class="variable-options">
-        ${[['main', '主 API', '随正文一起更新变量'], ['extra', '额外 API', '额外模型单独解析变量']].map(([value, title, hint]) => `<button type="button" data-action="variable-mode" data-value="${value}" aria-pressed="${mode === value}" class="${mode === value ? 'selected' : ''}" ${disabled ? 'disabled' : ''}><strong>${title}</strong><small>${hint}</small><span aria-hidden="true">${mode === value ? '✓' : '○'}</span></button>`).join('')}
+      <div class="card-title"><div><span class="step-label">开始前 · 变量更新</span><h4>由谁来更新世界状态？</h4><p>选择后联动当前绑定世界书中的变量条目。</p></div><span class="badge">${selected ? ctx.escapeHtml(selected.label) : '待选择'}</span></div>
+      <div class="variable-options" data-mode-count="${ctx.VARIABLE_MODES.length}">
+        ${ctx.VARIABLE_MODES.map(entry => `<button type="button" data-action="variable-mode" data-value="${entry.key}" aria-pressed="${mode === entry.key}" class="${mode === entry.key ? 'selected' : ''}" ${disabled ? 'disabled' : ''}><strong>${ctx.escapeHtml(entry.label)}</strong><small>${ctx.escapeHtml(entry.hint)}</small><span aria-hidden="true">${mode === entry.key ? '✓' : '○'}</span></button>`).join('')}
       </div>
-      <p class="mvu-reminder">${mode ? `请在 <strong>MVU 变量框架</strong> 中，将 <strong>变量更新方式</strong> 设为 <strong>${mode === 'main' ? '随 AI 输出' : '额外模型解析'}</strong>。` : '请选择一种变量模式；世界书状态明确时会自动匹配。'}<small>这里联动预设与世界书，不会代改 MVU 框架设置。</small></p>
+      <p class="mvu-reminder">${reminder}<small>${mode === 'none' ? '世界书条目保持原样，需要联动时再选择一种变量模式。' : '这里联动预设与世界书，不会代改 MVU 框架设置。'}</small></p>
       <div class="world-link-status ${ctx.worldLink.phase}" role="status"><span>${ctx.escapeHtml(ctx.worldLink.message)}</span><button type="button" class="text-button" data-action="refresh-worldbook" ${ctx.worldLink.busy ? 'disabled' : ''}>重新检查</button></div>
       ${ctx.worldWrites.size ? '<p class="inline-warning">世界书写入尚未返回确认，暂不重复切换；其他设置可以继续使用。</p>' : ''}
       ${ctx.worldLink.books.length || ctx.worldLink.issues.length ? `<details class="world-link-details"><summary>联动详情 · ${ctx.worldLink.books.length} 本世界书${ctx.worldLink.issues.length || ctx.worldLink.books.some(book => book.issue) ? ' · 需要检查' : ''}</summary>${ctx.worldLink.books.map(book => `<div><strong>${ctx.escapeHtml(book.name)}</strong><small>${['main', 'extra', 'input'].map(role => `${({main:'主 API 输出',extra:'额外模型输出',input:'用户最新输入'})[role]}：${book.roles[role].length === 1 ? book.roles[role][0].enabled ? '开' : '关' : book.roles[role].length ? '重复' : '缺失'}`).join(' · ')}</small>${book.issue ? `<p>${ctx.escapeHtml(book.issue)}</p>` : ''}</div>`).join('')}${ctx.worldLink.issues.map(issue => `<p>${ctx.escapeHtml(issue)}</p>`).join('')}<small>只调整已有条目的启用状态；缺失条目需要在世界书中补齐。共享世界书的更改也会影响其他使用它的聊天。</small></details>` : ''}

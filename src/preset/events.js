@@ -414,6 +414,7 @@ export function createEvents(ctx) {
     if (ctx.destroyed) return;
     ctx.destroyed = true;
     ctx.discussion?.dispose();
+    ctx.toolOutput?.dispose();
     summary.dispose();
     ctx.dialogs?.destroy();
     for (const item of ctx.debounceTimers.values()) { clearTimeout(item.timer); item.resolve({ cancelled: true }); }

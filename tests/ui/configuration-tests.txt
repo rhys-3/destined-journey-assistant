@@ -54,7 +54,9 @@
   const alt = ui.state.config.custom_models.find(model => model.id === altId);
   check('另一模型预填充也只增加三个条目', data.prompts.length === originalCount + 6 && data.prompts.find(p => p.id === alt.ids[2]).role === 'assistant');
   await ui.selectModelAdapter(gid);
-  check('动态模型切换互斥', ui.detectModelAdapter() === gid && Object.entries(ui.modelRegistry()).every(([id,a]) => [...a.ids,...a.tails].every(pid => data.prompts.find(p=>p.id===pid).enabled === (id===gid))));
+  check('动态模型切换互斥', ui.detectModelAdapter() === gid && Object.entries(ui.modelRegistry()).every(([id,a]) => [...a.ids,...a.tails].every(pid => (data.prompts.find(p=>p.id===pid)?.enabled ?? false) === (id===gid))));
+  // The fixture predates the Gemini tool-output tail; it must read as a disabled option.
+  check('旧预设缺少工具输出尾部时仍可切换且该按钮不可用', !data.prompts.some(p=>p.id==='22349298-676f-4e54-b9d5-1804242dd414'||p.id==='9439d30d-d279-4fdc-be8e-d81ef68bb31b') && !ui.geminiTailAvailable('tool') && !ui.geminiTailAvailable('tool-split') && ui.geminiTailAvailable('no-prefill'));
   ui.state.editorUnlocked = true; ui.openPromptEditor(glm.ids[2]);
   check('动态模型编辑器保护联动启停', ui.shadow.querySelector('[data-field="enabled"]').disabled && ui.shadow.querySelector('[data-field="included"]').disabled);
   ui.setEditorField('content', 'GLM 独立尾部'); await ui.savePromptEditor(); ui.closePromptEditor(true);

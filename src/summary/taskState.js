@@ -1,8 +1,9 @@
 import { captureContext, checkContext, contextKey, onCancel, cancelOwnRequests, setTaskRuntime } from '../platform/lifecycle.js';
 import { readStore, patchSummaryStore } from '../platform/store.js';
 import { createUuid } from '../platform/uuid.js';
+import { RUNTIME_VAR_KEY } from '../platform/storage-keys.js';
 
-const RUNTIME_KEY = 'summary_assistant_runtime';
+const RUNTIME_KEY = RUNTIME_VAR_KEY;
 const listeners = new Set();
 let current = null;
 const copy = value => value == null ? null : structuredClone(value);

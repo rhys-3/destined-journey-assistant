@@ -6,6 +6,7 @@ import { bindBatchSettings, refreshBatchPreview, scheduleRefreshBatchPreview, di
 import { applyBusyRules, refreshTaskWidget } from './taskView.js';
 import { isBusy, assertRecordWritable } from '../../platform/lifecycle.js';
 import { parseMegaSummaryEntryName } from '../utils.js';
+import { BINDING_PAUSED_VAR_KEY } from '../../platform/storage-keys.js';
 import { getMegaSummaryMapping } from '../storage.js';
 import { upsertMegaSummaryEntry, deleteBoundSummaryBook, deleteMegaSummaryEntry } from '../worldbook.js';
 import { reconcileChatBinding } from '../worldbook.js';
@@ -710,7 +711,7 @@ const refreshStatus = async (panel) => {
       applyBusyRules(panel);
     }
     const hint=panel.querySelector('[data-binding-hint]');
-    if(hint) hint.textContent=isChatWorldbookBound()?`本聊天总结书：${getActiveWorldbookName()}`:getVariables({type:'chat'})?.summary_assistant_binding_paused?'已主动解绑；重新绑定后可继续总结。':'未绑定世界书：首次总结时将自动创建并绑定本聊天的独立总结书。';
+    if(hint) hint.textContent=isChatWorldbookBound()?`本聊天总结书：${getActiveWorldbookName()}`:getVariables({type:'chat'})?.[BINDING_PAUSED_VAR_KEY]?'已主动解绑；重新绑定后可继续总结。':'未绑定世界书：首次总结时将自动创建并绑定本聊天的独立总结书。';
   } catch (err) {
     el.innerHTML = `加载状态失败: ${err.message}`;
   }

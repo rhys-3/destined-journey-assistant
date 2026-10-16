@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { classify } from '../scripts/verify-changes.mjs';
 
 test('documentation does not build, launch browsers or publish', () => {
-  const plan = classify(['README.md', 'docs/USAGE.md', 'dist/destined-journey-assistant.js']);
+  const plan = classify(['README.md', 'docs/USAGE.md', 'dist/destined-journey-assistant.js', 'dist/destined-journey-assistant-general.js']);
   for (const key of ['build', 'full', 'python', 'ui', 'assistant', 'themes', 'settings']) assert.equal(plan[key], false);
 });
 test('summary, styles, preset behavior and declarations choose their related checks', () => {

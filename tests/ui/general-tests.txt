@@ -1,0 +1,107 @@
+(async () => {
+  const results = [];
+  const check = (name, ok) => { if (!ok) throw new Error(name); results.push(name); };
+  const q = selector => ui.shadow.querySelector(selector);
+  const click = selector => { const node = q(selector); if (!node) throw new Error('Missing ' + selector); node.click(); };
+  const noneId = '0257f4b5-bfa7-4729-8d79-96e9abf760bc';
+  const mainId = '85c7f45b-e3b4-430c-bbab-822498d93de2';
+  const enabledOf = id => data.prompts.find(prompt => prompt.id === id)?.enabled === true;
+  await ui.settle();
+
+  check('通用版启动无错误', window.errors.length === 0 && !!ui.state.preset && !!q('.panel'));
+  // Own script identity and own global singleton, with no trace of prime's.
+  check('通用版使用独立全局单例', !!window.__generalRoleplayAssistant && window.__destinedJourneyAssistant === undefined);
+  check('通用版脚本标识独立', ui.FLAVOR.id === 'general' && ui.BUTTON_NAME === '通用预设助手' && ui.SCRIPT_NAME === '通用预设助手' && ui.FLAVOR.singletonKey === '__generalRoleplayAssistant');
+  check('通用版面板标题独立', q('.panel-head')?.textContent.includes('通用角色扮演'));
+  // Own storage namespace; prime's keys must be absent from the module.
+  check('通用版设置键使用独立命名空间', uiStorageKeys.SETTINGS_VAR_KEY === 'general_summary_settings' && uiStorageKeys.MIGRATION_VAR_KEY === 'general_summary_migration' && uiStorageKeys.CHAT_WB_VAR_KEY === 'general_summary_worldbook');
+  check('通用版不携带命定总结键', !Object.values(uiStorageKeys).some(value => typeof value === 'string' && value.startsWith('summary_assistant_')));
+  check('通用版总结世界书前缀独立', uiSummaryConfig.WORLDBOOK_NAME_PREFIX === '通用总结世界书');
+  // The discussion flag is assistant-owned chat state; the protocol names the
+  // shared message processor needs stay exactly Prime's.
+  check('讨论聊天变量使用通用键', uiDiscussion.DISCUSSION_CHAT_KEY === 'general_discussion_mode');
+  check('讨论协议名与命定一致', uiDiscussion.DISCUSSION_KEY === 'destined_discussion' && uiDiscussion.DISCUSSION_BRIDGE === '__destinedDiscussionV1' && uiDiscussion.DISCUSSION_VERSION === 1 && uiDiscussion.DISCUSSION_OPEN === '<discussion_record>');
+
+  // Variable modes: three choices, general labels, prime labels never shown.
+  ui.state.activeTab = 'daily'; ui.render();
+  const modeButtons = () => [...q('.variable-options').querySelectorAll('button')];
+  check('变量面板提供三种模式', modeButtons().length === 3 && modeButtons().map(button => button.dataset.value).join(',') === 'main,extra,none');
+  check('变量模式使用通用命名', modeButtons().map(button => button.dataset.value + '=' + button.querySelector('strong').textContent).join('|') === 'main=主接口变量|extra=额外接口变量|none=无变量');
+  check('变量模式容器带数量标记', q('.variable-options').dataset.modeCount === '3');
+  check('默认选中主接口变量', ui.variablePresetMode() === 'main' && enabledOf(mainId) && !enabledOf(noneId) && q('[data-action="variable-mode"][data-value="main"]').classList.contains('selected'));
+
+  window.ctx = { characterId: '角色A', chatId: '聊天A', groupId: '' };
+  SillyTavern.getContext = () => ctx;
+  window.bound = ['通用测试世界书'];
+  window.books = { 通用测试世界书: [
+    { uid: 1, name: 'output_format_(随AI输出开，主API)', enabled: false, content: '正文一' },
+    { uid: 2, name: '[mvu_update]output_format_(使用额外模型更新变量开)', enabled: false, content: '正文二' },
+    { uid: 3, name: '[mvu_update]用户最新输入(使用额外模型更新变量开)', enabled: false, content: '正文三' },
+  ] };
+  window.readCount = 0; window.writeCount = 0;
+  window.getCharWorldbookNames = () => ({ primary: bound[0] ?? null, additional: bound.slice(1) });
+  window.getGlobalWorldbookNames = () => [];
+  window.getChatWorldbookName = () => null;
+  window.getWorldbook = async name => { readCount++; return structuredClone(books[name]); };
+  window.updateWorldbookWith = async (name, updater) => { writeCount++; books[name] = await updater(structuredClone(books[name])); ui.scheduleWorldbookScan(); return structuredClone(books[name]); };
+  const entryFlags = () => JSON.stringify(books['通用测试世界书'].slice(0, 3).map(entry => entry.enabled));
+
+  await ui.selectVariableMode('extra'); await ui.settle();
+  check('额外接口变量联动三条目', ui.variablePresetMode() === 'extra' && entryFlags() === '[false,true,true]');
+  check('额外接口变量显示 MVU 提醒', q('.mvu-reminder').textContent.includes('额外模型解析'));
+  books['通用测试世界书'][0].enabled = true; books['通用测试世界书'][1].enabled = false;
+  await ui.scanWorldbookMode();
+  check('世界书主 API 自动匹配通用预设', ui.variablePresetMode() === 'main' && enabledOf(mainId));
+  const writesBefore = writeCount; const booksBefore = JSON.stringify(books);
+  click('[data-action="variable-mode"][data-value="none"]'); await ui.settle();
+  check('无变量只改预设不改世界书', ui.variablePresetMode() === 'none' && enabledOf(noneId) && !enabledOf(mainId) && !enabledOf('9103b46e-5810-4ed9-b06e-4365070fca35') && writeCount === writesBefore && JSON.stringify(books) === booksBefore);
+  check('无变量显示静态说明', q('.mvu-reminder').textContent.includes('不会改动世界书条目'));
+  await ui.scanWorldbookMode();
+  check('世界书不会自动翻转无变量', ui.variablePresetMode() === 'none' && ui.worldLink.phase === 'warning' && ui.worldLink.message.includes('未自动切换'));
+  await ui.selectVariableMode('main'); await ui.settle();
+  check('可重新选择主接口变量', ui.variablePresetMode() === 'main' && entryFlags() === '[true,false,false]');
+
+  // Model adapters.
+  click('[data-tab="tools"]'); await ui.settle();
+  check('模型页显示三个适配卡片', ui.shadow.querySelectorAll('[data-action="model"]').length === 3);
+  for (const model of Object.keys(ui.MODEL_ADAPTERS)) {
+    await ui.selectModelAdapter(model); await ui.settle();
+    check(model + ' 互斥切换', Object.entries(ui.MODEL_ADAPTERS).every(([name, adapter]) => adapter.ids.every(id => data.prompts.find(prompt => prompt.id === id).enabled === (name === model))));
+    check(model + ' 可被识别', ui.detectModelAdapter() === model);
+  }
+
+  // Connection profiles.
+  ui.state.config.connection_link.enabled = true;
+  ui.state.profiles = [{ id: 'profile-1', name: '通用连接 A', model: 'gpt-4o', api: '', mode: '' }];
+  ui.renderActiveContent();
+  let binding = q('[data-action="profile-binding"][data-model="Gemini"]');
+  check('连接配置下拉按模型渲染', !!binding && binding.querySelectorAll('option').length === 2 && binding.textContent.includes('通用连接 A'));
+  binding.value = 'profile-1'; binding.dispatchEvent(new Event('change', { bubbles: true })); await ui.settle();
+  check('连接绑定保存到本版本设置', ui.state.config.connection_link.bindings.Gemini?.id === 'profile-1' && ui.resolveBoundProfile(ui.state.config.connection_link.bindings.Gemini)?.name === '通用连接 A');
+  binding = q('[data-action="profile-binding"][data-model="Claude"]');
+  binding.value = 'profile-1'; binding.dispatchEvent(new Event('change', { bubbles: true })); await ui.settle();
+  check('多个模型可绑定同一连接', ui.state.config.connection_link.bindings.Claude?.id === 'profile-1');
+  ui.state.profiles = []; ui.renderActiveContent();
+  check('连接配置消失仍可关闭联动', !q('[data-key="connection-link"]').disabled && q('[data-action="refresh-profiles"]'));
+
+  // Foreign preset guard: prime's preset must never be edited.
+  const removed = [];
+  for (const preset of [data, stored]) {
+    const index = preset.prompts.findIndex(prompt => prompt.id === noneId);
+    removed.push([preset, index, preset.prompts[index]]);
+    preset.prompts.splice(index, 1);
+  }
+  ui.reconcilePreset('外部预设测试'); ui.renderActiveContent(true);
+  check('外部预设显示不修改提示', !!q('[data-foreign-preset]') && q('[data-foreign-preset]').textContent.includes('不会修改'));
+  const foreignBefore = JSON.stringify(data);
+  await ui.selectVariableMode('main'); await ui.settle();
+  check('外部预设不会被写入', JSON.stringify(data) === foreignBefore && ui.worldLink.message.includes('不会修改'));
+  const eventChainBefore = data.prompts.find(prompt => prompt.id === ui.IDS.eventChain).enabled;
+  ui.togglePrompt(ui.IDS.eventChain, !eventChainBefore); await ui.settle();
+  check('外部预设拒绝条目开关写入', data.prompts.find(prompt => prompt.id === ui.IDS.eventChain).enabled === eventChainBefore && JSON.stringify(data) === foreignBefore);
+  for (const [preset, index, prompt] of removed) preset.prompts.splice(index, 0, prompt);
+  ui.reconcilePreset('恢复自用预设'); ui.renderActiveContent(true);
+  check('恢复后重新识别为自己的预设', !q('[data-foreign-preset]') && ui.variablePresetMode() === 'main');
+  ui.state.activeTab = 'daily'; ui.render();
+  return results;
+})()

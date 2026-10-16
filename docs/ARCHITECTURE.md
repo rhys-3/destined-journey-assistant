@@ -9,6 +9,7 @@
 | src/preset/definitions.js | 预设条目 UUID、受管字段和界面默认值 |
 | src/preset/store.js | 预设读写队列、同步、失败回滚 |
 | src/preset/models.js、connections.js、managed.js | 模型选择、连接、受管宏和字段 |
+| src/preset/tool-output.js | Gemini 工具输出的请求补充与回复还原 |
 | src/preset/setting-items.js、setting-lists.js | 自定义设定列表、兼容迁移、文本展开与内联编辑 |
 | src/preset/worldbook.js | 变量世界书与预设模式联动 |
 | src/preset/styles-editor.js、prompt-editor.js、placement.js | 文风、条目编辑、排序与分区位置 |
@@ -28,11 +29,19 @@
 | src/summary/ui/batchSettings.js、tagEditor.js | 推荐批次方案、并发设置与逐项标签编辑 |
 | src/platform/store.js | 共享变量读写协调 |
 | src/platform/lifecycle.js、ambient.js | 互斥、上下文令牌、取消与宿主 API |
+| src/platform/storage-keys.js | 按版本命名空间生成持久化键名 |
+| src/flavor.js | 构建期版本标识、界面名称与存储命名空间 |
 | src/ui/、src/summary/ui/ | 设置主题、统一弹窗与总结子页面 |
 | src/summary/presetDefaults.js | 旧版默认提示词，仅用于迁移识别 |
 | loader.js | 固定版本加载与重试 |
 
-只有一份 ES 模块运行时源码与一个新版 bundle；旧总结 dist 是冻结兼容资产。
+只有一份 ES 模块运行时源码，构建按版本生成命定版（`dist/destined-journey-assistant.js`）与通用角色扮演版（`dist/destined-journey-assistant-general.js`）两个自包含 bundle：无模块导入、无 CDN 引用，可直接作为酒馆助手脚本内容；旧总结 dist 是冻结兼容资产。两个 bundle 的代码路径、界面与功能一致，区别只在 `src/flavor.js` 的标识和命名空间：脚本按钮与面板标题、全局单例键、界面元素前缀、总结脚本变量与聊天变量前缀、总结世界书名称前缀、讨论模式聊天变量。命定版沿用已发布标识，通用版使用 `general_summary_`、`general_discussion_mode` 与 `通用总结世界书_<后缀>`，因此两个助手可以同时安装而不会互相读取或覆盖设置、绑定、档案与显隐记录。构建期只注入所选版本，产物不包含另一方的标识。
+
+预设归属由 `src/preset/definitions.js` 的 `presetBelongsToFlavor` 判定：`FLAVOR.ownPresetPromptIds` 为空时不做限制（命定版保持原行为），否则当前预设必须带有全部标记条目。通用版以三个变量模式条目为标记，因此切换到命定预设后不会写入、迁移或联动它，界面顶部显示“当前预设不是通用预设”，受管字段与条目开关的写入被拒绝。变量处理模式同样按版本展开：命定版是“主 API / 额外 API”，通用版是“主接口变量 / 额外接口变量 / 无变量”；无变量只切换预设条目，不读写世界书，也不会被世界书状态自动翻转。
+
+命定 1.9 的消息处理器由两个预设共用，因此 `destined_discussion`、`<discussion_record>`、`__destinedDiscussionV1`、`__destinedPrimeMessageProcessor` 与 `本轮场外讨论` 保持共享；这些名字描述的是预设与消息协议，不是助手私有数据。助手私有的讨论模式聊天变量按版本命名，`destined_discussion_mode` 仅属命定版。
+
+两个版本共用预设结构约定：受管短宏与未知宏名称、Prime 正文起止边界、讨论桥接名（`__destinedPrimeMessageProcessor`、`__destinedDiscussionV1`）、预设扩展键 `destined_discussion` 与配置文件格式 `destined-configurations`。这些名字属于预设数据格式，不随助手版本变化；配套预设需自行提供对应条目、讨论配置与桥接脚本。通用版不迁移旧独立总结脚本，也不停用命定版脚本。
 
 NSFW 条目通过 `nsfw-mode` 单选组与 `nsfw-extra` 开关板块识别。`destined_ui` v3 的 `block` 只确定展示位置，`group` 才决定单选关系，四个模式必须显式填写 `group: "nsfw-mode"`，独立附加项使用空组。兼容早期误填数据时，仅对仍位于该板块、单选组缺失或为空的四个内置模式 UUID 回退到该单选组；保留明确的自定义分组、移动后的条目与自建独立开关。1.3.1 及更早的预设使用 `adult-mode`／`adult-extra`，读取时归一化到当前标识并迁移作者布局。回退不自动替用户决定已有多选状态，重新选择一个模式后互斥保存。显示层仅在两块位于同页且相邻时合并折叠，不改变原生发送顺序。旧作者布局补充附加板块时保留自定义页面与标题；起止标签 UUID 纳入必需条目保护。回归夹具仅含九个条目的显示元数据及中性测试文字，不包含正式提示词正文。
 
@@ -58,6 +67,18 @@ taskRunner 为一轮建立一个互斥任务，设置快照在整轮固定。串
 
 api 直接将编译好的自然 role、顺序和内容交给 generateRaw，不注入防合并标记，不注册发送事件或序列化补丁。配套预设只处理含其完整正文边界的请求，总结因此自然跳过。酒馆连接的后处理、停止词与接口角色转换保持原设置；助手不再承担旧全局 SP 合并器的隔离。独立 generation_id、取消、超时和上下文核对仍由 lifecycle 负责。
 
+## Gemini 工具输出
+
+Gemini 尾部按 `GEMINI_TAIL_MODES` 顺序对应预填充、非预填充、工具一次调用、工具两次调用四个条目，四者互斥。两个工具条目以 `<|命定_工具输出|>` 开头；两次调用条目另含 `<|命定_续写开始|>`…`<|命定_续写结束|>` 包裹的续写提示。受管宏展开时保留这些标记，不作为未知命定宏移除。
+
+助手启动时包装酒馆页面的 fetch，卸载时恢复；已被其他脚本再次包装时只停用自身。只有发往 `/api/backends/chat-completions/generate` 且消息含该标记的请求会被处理：移除标记，取出并移除续写提示，追加唯一的 `submit_recorder_output` 函数工具（参数 `content`）并设置 `tool_choice: auto`。调用方已指定 `none`、`required` 或具体工具时只移除标记与续写提示，不追加工具。其他请求、总结和 generateRaw 不受影响。
+
+响应在酒馆读取前改写：OpenAI 兼容格式的 `tool_calls` 参数按片段增量解码为 `delta.content`／`message.content`，`finish_reason: tool_calls` 改为 `stop`；Google 格式的 `functionCall` 按 `partialArgs` 或完整 `args` 改为文本 part，思考 part 原样保留。一轮回复可含多次调用，按到达顺序拼接：OpenAI 兼容格式按调用 index 区分，缺少 index 时以带名称的片段在上一调用结束后开始新调用；Google 格式的 `partialArgs` 在 `willContinue` 为真时继续同一调用。拼接处缺少换行时补一个换行。统计记录调用次数，以及从请求发出起算的各段到达时间。其他函数调用、非 JSON 数据行与错误响应不改动。酒馆因此按普通回复渲染、流式、swipe 与继续生成，不经过自身的函数调用流程，聊天记录中也没有工具消息。模型未调用工具时正文原样通过并提示。工具输出请求返回 524，或错误正文中含 524 时，另行提示等待完整参数导致的超时；错误响应本身仍原样交给酒馆。
+
+回复按可见文本判断是否完整，工具交付与普通文本一并计入：文档在正文（`<recorder_body>` 或 `<gametxt>`）出现后以 `</recorder_output>` 闭合才算完成。正文出现前的闭合标签（包括跨片段的半个标签）先暂缓转交，后续还有内容时丢弃，回复就此结束时再补发。没有续写提示时只发一次请求，未完成则以 single 结束并提示。有续写提示时，本轮有新内容且文档未完成就追加一轮请求，在原请求消息后附上已交付文本（assistant）和续写指令（user），工具定义不变，最多三轮：正文出现前使用条目的续写提示，正文已开始则使用内置的接续指令（同样要求跳过原生推理、从停下处接着写）。续写用普通文本而不是函数调用历史，避免依赖服务商的调用签名。流式时各轮还原后的数据行依次转交给酒馆，只在最后发送一次 `[DONE]`；非流式时把后续轮次的文本并入首个响应。统计记录停止原因（complete、single、empty、limit、error、cancelled）；未写完就停止时提示。后续轮次失败时结束响应并提示，已转交的内容保留；酒馆停止生成时中止当前轮次且不再续请求。
+
+多个助手实例各自包装时，外层先移除标记并追加工具，内层不再处理，回复只还原一次。旧预设和旧命名配置缺少工具条目时视为该选项不可用，模型切换回退到非预填充；应用旧配置时保留当前预设中的这些条目并关闭。
+
 ## 生命周期与存储
 
 写操作与生成检查聊天、预设和生命周期代次。切换上下文或卸载使令牌失效；暂停自动处理允许已启动的一组完成，后续批次标为未执行。每个并发请求使用独立 generation_id；停止或上下文失效时取消本轮所有活动 ID。互斥阻止连续消息和重复点击重复提交。取消／超时结束等待，迟到结果不能写入。任务状态经同一发布接口驱动顶部提示、入口标记和面板；浏览、草稿编辑不占生成互斥。
@@ -82,6 +103,8 @@ api 直接将编译好的自然 role、顺序和内容交给 generateRaw，不�
 | 聊天变量 | summary_assistant_archive：按书保存来源指纹、父记录与手动排除范围 |
 | 聊天变量 | summary_assistant_binding_paused：主动解绑后暂停自动建书 |
 | 世界书 | 普通／大总结正文 |
+
+上表列出命定版的键名。键名由 `src/platform/storage-keys.js` 按版本前缀生成，通用角色扮演版使用 `general_summary_` 前缀，世界书为 `通用总结世界书_<后缀>`，两个助手因此不会共用设置、绑定、档案、任务状态与显隐记录。
 
 设置整表写入先读取并保留最新总结字段；总结写入合并最新脚本变量。写入与读回验证失败均传播，不能显示成功或发布成功缓存。
 

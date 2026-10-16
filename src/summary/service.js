@@ -9,8 +9,10 @@ import { autoTriggerSummary } from './summary.js';
 import { reconcileChatBinding } from './worldbook.js';
 import { restoreTaskState, detachTaskState } from './taskState.js';
 import { createTaskView, refreshTaskWidget } from './ui/taskView.js';
+import { FLAVOR } from '../flavor.js';
+import { MIGRATION_VAR_KEY, SECRETS_VAR_KEY } from '../platform/storage-keys.js';
 
-const LEGACY_ID='3eb6e3eb-7a14-47dc-900c-759cd2f0bf64';
+const legacyScriptContent = new RegExp(`destined-journey-summarizer|${CONFIG.SETTINGS_VAR_KEY}`);
 let panel=null, slot=null, stops=[], refreshPromise=null;
 let savedPanel=null;
 let bindingChain=Promise.resolve();
@@ -27,24 +29,25 @@ function flatten(trees){return trees.flatMap(item=>item.type==='folder'?flatten(
 export async function migrate() {
   const raw=readStore();
   let old;
-  if(typeof getScriptTrees==='function') {
+  // Only the scripts this flavor replaces are adopted; the other flavor keeps its own.
+  if(typeof getScriptTrees==='function' && (FLAVOR.legacySummaryScriptIds.length||FLAVOR.legacySummaryScriptNames.length)) {
     const scripts=flatten(getScriptTrees({type:'preset'}));
-    old=scripts.find(s=>s.id===LEGACY_ID);
+    old=scripts.find(s=>FLAVOR.legacySummaryScriptIds.includes(s.id));
     if(!old) {
-      const matches=scripts.filter(s=>['【命定之诗】总结','命定之诗总结助手'].includes(s.name) && /destined-journey-summarizer|summary_assistant_settings/.test(s.content??''));
+      const matches=scripts.filter(s=>FLAVOR.legacySummaryScriptNames.includes(s.name) && legacyScriptContent.test(s.content??''));
       if(matches.length>1)throw new Error('发现多个旧总结脚本，未自动迁移或停用；请先保留一个需要接续的旧总结脚本');
       old=matches[0];
     }
   }
-  if(!raw.summary_assistant_migration || raw[CONFIG.SETTINGS_VAR_KEY]?.promptVersion !== DEFAULT_SETTINGS.promptVersion || raw[CONFIG.SETTINGS_VAR_KEY]?.behaviorVersion !== DEFAULT_SETTINGS.behaviorVersion) {
+  if(!raw[MIGRATION_VAR_KEY] || raw[CONFIG.SETTINGS_VAR_KEY]?.promptVersion !== DEFAULT_SETTINGS.promptVersion || raw[CONFIG.SETTINGS_VAR_KEY]?.behaviorVersion !== DEFAULT_SETTINGS.behaviorVersion) {
     let oldSettings=old?.data?.[CONFIG.SETTINGS_VAR_KEY];
     if(old) oldSettings=getVariables({type:'script',script_id:old.id})?.[CONFIG.SETTINGS_VAR_KEY]??oldSettings;
     const selected=raw[CONFIG.SETTINGS_VAR_KEY]??(old?{...oldSettings,enabled:old.enabled === true}:DEFAULT_SETTINGS);
     const settings=summarySnapshot(migrateOldSettings(structuredClone(selected)));
     patchSummaryStore({
       [CONFIG.SETTINGS_VAR_KEY]:settings,
-      summary_assistant_secrets:{keysByUrl:{...raw.summary_assistant_secrets?.keysByUrl,[settings.customApiUrl.trim()]:raw.summary_assistant_secrets?.keysByUrl?.[settings.customApiUrl.trim()]??raw.summary_assistant_secrets?.customApiKey??selected.customApiKey??''}},
-      summary_assistant_migration:{...raw.summary_assistant_migration,version:2,from:raw.summary_assistant_migration?.from??old?.id??null},
+      [SECRETS_VAR_KEY]:{keysByUrl:{...raw[SECRETS_VAR_KEY]?.keysByUrl,[settings.customApiUrl.trim()]:raw[SECRETS_VAR_KEY]?.keysByUrl?.[settings.customApiUrl.trim()]??raw[SECRETS_VAR_KEY]?.customApiKey??selected.customApiKey??''}},
+      [MIGRATION_VAR_KEY]:{...raw[MIGRATION_VAR_KEY],version:2,from:raw[MIGRATION_VAR_KEY]?.from??old?.id??null},
     });
   }
   if(old?.enabled) {

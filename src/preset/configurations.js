@@ -2,6 +2,11 @@ import * as summary from '../summary/service.js';
 import { DISCUSSION_SETTINGS_KEY } from '../discussion/preferences.js';
 import { writePresetStore } from '../platform/store.js';
 import { createUuid } from '../platform/uuid.js';
+import { FLAVOR } from '../flavor.js';
+import { OPTIONAL_MODEL_PROMPT_IDS } from './definitions.js';
+
+// Credentials and per-chat records never enter a shared configuration file.
+const redactedKeyPattern = new RegExp(`(?:api[_-]?key|secrets|${FLAVOR.summaryVariablePrefix}_(?:worldbook|mega_summary_map|auto_hidden_floors))`, 'i');
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createConfigurations(ctx) {
@@ -173,7 +178,7 @@ export function createConfigurations(ctx) {
     request.then(() => { settled = true; }, () => { settled = true; });
     try {
       await ctx.withWorldTimeout(request, '切换连接', ctx.PROFILE_TIMEOUT);
-      ctx.assertData(current(), '连接配置改变了当前预设或聊天，请使用绑定当前命定预设的连接配置。');
+      ctx.assertData(current(), `连接配置改变了当前预设或聊天，请使用绑定当前${FLAVOR.presetLabel}的连接配置。`);
       ctx.assertData(ctx.fingerprintPresetValue(getPreset('in_use')) === expected, '连接切换期间预设内容发生变化，未覆盖。');
       return await operation();
     } catch (error) {
@@ -201,6 +206,23 @@ export function createConfigurations(ctx) {
     }
   }
 
+  // A snapshot saved before an optional model entry existed would drop that
+  // entry from the preset. Keep the current copy, disabled, after its sibling tail.
+  function keepOptionalModelPrompts(snapshot, preset) {
+    const listed = new Set([...snapshot.prompts, ...snapshot.prompts_unused].map(prompt => prompt.id));
+    const result = { ...snapshot, prompts: [...snapshot.prompts], prompts_unused: [...snapshot.prompts_unused] };
+    for (const id of OPTIONAL_MODEL_PROMPT_IDS) {
+      const current = [...(preset?.prompts ?? []), ...(preset?.prompts_unused ?? [])].find(prompt => prompt.id === id);
+      if (listed.has(id) || !current) continue;
+      const copy = { ...ctx.snapshotPrompt(current), enabled: false };
+      const siblings = Object.values(ctx.BUILTIN_MODEL_ADAPTERS).find(adapter => adapter.tails.includes(id))?.tails ?? [];
+      const anchor = result.prompts.findLastIndex(prompt => siblings.includes(prompt.id));
+      if (anchor >= 0) result.prompts.splice(anchor + 1, 0, copy);
+      else result.prompts_unused.push(copy);
+    }
+    return result;
+  }
+
   async function applyConfiguration(id) {
     let worldMode = null;
     await runWorkspaceOperation('切换配置', async current => {
@@ -208,7 +230,7 @@ export function createConfigurations(ctx) {
       const source = id === '__recovery__' ? library.recovery : library.items.find(item => item.id === id);
       ctx.assertData(source, '配置或恢复点不存在。');
       const complete = ctx.validateSnapshot(ctx.clone(source.snapshot));
-      const snapshot = complete.preset;
+      const snapshot = complete.preset ? keepOptionalModelPrompts(complete.preset, getPreset('in_use')) : null;
       const modelId = snapshot ? ctx.detectModelAdapter(snapshot, ctx.modelRegistry(snapshot.config)) : null;
       if(snapshot) ctx.assertData(modelId || !snapshot.config.connection_link.enabled, '配置的模型条目未正确互斥，无法联动连接。');
       saveRecovery(current, ctx.selectedScopes(complete));
@@ -256,7 +278,7 @@ export function createConfigurations(ctx) {
   function redactSecrets(value) {
     if(Array.isArray(value))return value.map(redactSecrets);
     if(!ctx.plainObject(value))return value;
-    return Object.fromEntries(Object.entries(value).filter(([key])=>!/(?:api[_-]?key|secrets|summary_assistant_(?:worldbook|mega_summary_map|auto_hidden_floors))/i.test(key)).map(([key,entry])=>[key,redactSecrets(entry)]));
+    return Object.fromEntries(Object.entries(value).filter(([key])=>!redactedKeyPattern.test(key)).map(([key,entry])=>[key,redactSecrets(entry)]));
   }
 
   function exportRecoverableConfigurations() {
@@ -286,7 +308,7 @@ export function createConfigurations(ctx) {
     ctx.assertData(typeof text === 'string' && text.length <= 20 * 1024 * 1024, '配置文件超过 20 MB 或格式无效');
     const document = JSON.parse(text.replace(/^\uFEFF/u, ''));
     rejectUnsafeKeys(document);
-    ctx.assertData(document.format === 'destined-configurations' && [1,2].includes(document.version), '不支持的命定配置文件或版本');
+    ctx.assertData(document.format === 'destined-configurations' && [1,2].includes(document.version), `不支持的${FLAVOR.exportLabel}配置文件或版本`);
     const imported = ctx.validateLibrary({ ...ctx.emptyLibrary(), items: document.items }).items;
     return runWorkspaceOperation('导入配置', async current => {
       const next = ctx.clone(ctx.state.config);

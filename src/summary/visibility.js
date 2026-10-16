@@ -1,10 +1,11 @@
 import { assertRecordWritable, writeVariableKeys, setChatMessages, captureContext, checkContext } from '../platform/lifecycle.js';
 import { sourceOf } from './provenance.js';
 import { isDiscussionMessage } from '../discussion/protocol.js';
+import { AUTO_HIDDEN_FLOORS_VAR_KEY, VISIBILITY_AUTOMATION_VAR_KEY, VISIBILITY_OVERRIDES_VAR_KEY } from '../platform/storage-keys.js';
 
-export const VISIBILITY_OVERRIDES_KEY = 'summary_assistant_visibility_overrides';
-export const VISIBILITY_AUTOMATION_KEY = 'summary_assistant_visibility_auto';
-const AUTO_HIDDEN_KEY = 'summary_assistant_auto_hidden_floors';
+export const VISIBILITY_OVERRIDES_KEY = VISIBILITY_OVERRIDES_VAR_KEY;
+export const VISIBILITY_AUTOMATION_KEY = VISIBILITY_AUTOMATION_VAR_KEY;
+const AUTO_HIDDEN_KEY = AUTO_HIDDEN_FLOORS_VAR_KEY;
 export function allFloorMessages() {
   const last = getLastMessageId();
   return last < 0 ? [] : getChatMessages(`0-${last}`, {role:'all',hide_state:'all',include_swipes:false}).filter(message => Number.isInteger(message.message_id) && message.message_id >= 0).sort((a,b)=>a.message_id-b.message_id);

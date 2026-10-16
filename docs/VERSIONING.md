@@ -34,14 +34,14 @@ pnpm version:prepare 3.2.1
 
 `Build and version` 按文件范围选择验证：文档只检查链接，局部功能选择相关浏览器组；工具、依赖、共享状态和未知变更才执行完整回归及双平台构建。手动运行强制完整验证，详细规则见 [验证说明](VERIFICATION.md)。
 
-主分支验证成功后，将同一次验证产生的单文件产物提交到 `dist/`。若 main 在验证期间已经变化，工作流拒绝写入过时产物，需基于最新 main 重新运行。PR 只验证，不提交产物或创建标签。
+主分支验证成功后，将同一次验证产生的命定版与通用版单文件产物提交到 `dist/`。若 main 在验证期间已经变化，工作流拒绝写入过时产物，需基于最新 main 重新运行。PR 只验证，不提交产物或创建标签。
 
 随后根据 `package.json` 版本号处理标签：
 
-- 标签不存在：检查加载器、更新日志和构建版本，给包含产物的提交创建标签并推送。
+- 标签不存在：检查加载器、更新日志和两个产物的构建版本，给包含产物的提交创建标签并推送。
 - 标签已存在：保留原标签。本次 main 改动不会改变已发布版本，需要增加版本号才会发布新版本。
 
-创建新标签后检查 CDN 内容与该标签产物一致；重试同一标签发布也会重新检查。仅修改 main、版本标签仍指向旧提交时，不重复检查旧版本 CDN。此过程不创建 GitHub Release、不上传完整预设，也不会自动增加版本号。
+创建新标签后检查 CDN 上两个产物与该标签中的一致；重试同一标签发布也会重新检查。仅修改 main、版本标签仍指向旧提交时，不重复检查旧版本 CDN。此过程不创建 GitHub Release、不上传完整预设，也不会自动增加版本号。
 
 ## CDN 与安装
 
@@ -49,7 +49,10 @@ pnpm version:prepare 3.2.1
 
 ```text
 https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v<版本号>/dist/destined-journey-assistant.js
+https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v<版本号>/dist/destined-journey-assistant-general.js
 ```
+
+前者是命定版加载器使用的地址；通用版也可以直接把产物内容作为酒馆助手脚本使用。
 
 版本标签创建后可单独校验：
 

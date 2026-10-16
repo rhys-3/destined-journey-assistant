@@ -1,8 +1,9 @@
 import { writeVariableKeys } from '../platform/lifecycle.js';
 import { CONFIG } from './config.js';
 import { parseSummaryEntryName, parseMegaSummaryEntryName } from './utils.js';
+import { ARCHIVE_VAR_KEY } from '../platform/storage-keys.js';
 
-export const ARCHIVE_VAR_KEY = 'summary_assistant_archive';
+export { ARCHIVE_VAR_KEY };
 export const parseRange = name => parseSummaryEntryName(name) ?? parseMegaSummaryEntryName(name);
 // Two independent 32-bit accumulators; stable across browser sessions and hide changes.
 export function fingerprint(value) {

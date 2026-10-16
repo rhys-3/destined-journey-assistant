@@ -7,6 +7,7 @@ import * as definitions from '../src/preset/definitions.js';
 import { createManaged } from '../src/preset/managed.js';
 import { createStore } from '../src/preset/store.js';
 import { discussionAdapterSupport } from '../src/discussion/adapter.js';
+import { prepareToolOutputRequest, TOOL_OUTPUT_NAME } from '../src/preset/tool-output.js';
 
 const sourceArgument = process.argv.indexOf('--source');
 if (sourceArgument < 0 || !process.argv[sourceArgument + 1]) {
@@ -29,7 +30,7 @@ const byName = new Map(prompts.map(prompt => [prompt.__split_name, prompt]));
 // notice are shared, but every provider keeps its own native head, thinking
 // container, tail, and visible body schema.
 const discussionModels = {
-  Gemini: { head: 'Gemini头部', thinking: 'Gemini思维链', tail: 'Gemini非预填充', prefillTail: 'Gemini预填充', audit: 'recorder_audit_format', bodyThinking: true },
+  Gemini: { head: 'Gemini头部', thinking: 'Gemini思维链', tail: 'Gemini非预填充', prefillTail: 'Gemini预填充', toolTails: { single: 'Gemini工具一次调用', split: 'Gemini工具两次调用' }, audit: 'recorder_audit_format', bodyThinking: true },
   Claude: { head: 'Claude头部', thinking: 'Claude思维链', tail: 'Claude尾部', audit: 'recorder_audit_format', bodyThinking: true },
   DeepSeek: { head: 'DeepSeek头部', thinking: 'DeepSeek思维链', tail: 'DeepSeek尾部', audit: 'think_format', bodyThinking: false },
   Glm: { head: 'Glm头部', thinking: 'Glm思维链', tail: 'Glm尾部', audit: 'think_format', bodyThinking: false },
@@ -50,6 +51,8 @@ const requestText = messages => messages.map(message => bodyText(message.content
 const adapters = [
   { name: 'gemini-prefill', model: 'Gemini', prefill: true, modes: ['story', 'discussion'] },
   { name: 'gemini-no-prefill', model: 'Gemini', prefill: false, modes: ['story', 'discussion'] },
+  { name: 'gemini-tool', model: 'Gemini', prefill: false, tool: 'single', modes: ['story', 'discussion'] },
+  { name: 'gemini-tool-split', model: 'Gemini', prefill: false, tool: 'split', modes: ['story', 'discussion'] },
   {
     name: 'custom-prefill',
     prefill: true,
@@ -61,6 +64,20 @@ const adapters = [
     prefill: false,
     modes: ['story', 'discussion'],
     customAdapter: createCustomGeminiAdapter({ id: 'model:integration-no-prefill', label: '集成自定义非预填充', prefill: false }),
+  },
+  {
+    name: 'custom-tool',
+    prefill: false,
+    tool: 'single',
+    modes: ['story', 'discussion'],
+    customAdapter: createCustomGeminiAdapter({ id: 'model:integration-tool', label: '集成自定义工具', tool: 'single' }),
+  },
+  {
+    name: 'custom-tool-split',
+    prefill: false,
+    tool: 'split',
+    modes: ['story', 'discussion'],
+    customAdapter: createCustomGeminiAdapter({ id: 'model:integration-tool-split', label: '集成自定义工具', tool: 'split' }),
   },
   { name: 'deepseek', model: 'DeepSeek', prefill: false, modes: ['story', 'discussion'] },
   { name: 'claude', model: 'Claude', prefill: false, modes: ['story', 'discussion'] },
@@ -149,7 +166,7 @@ function resolveModelRegistry(model) {
 function adapterSupportFor(adapter) {
   const model = adapter.customAdapter ? adapter.customAdapter.id : adapter.model;
   const spec = discussionModels[adapter.customAdapter ? 'Gemini' : adapter.model];
-  const enabledTail = adapter.prefill && spec.prefillTail ? spec.prefillTail : spec.tail;
+  const enabledTail = adapter.prefill && spec.prefillTail ? spec.prefillTail : adapter.tool ? spec.toolTails[adapter.tool] : spec.tail;
   const ids = adapter.customAdapter
     ? adapter.customAdapter.entries.map(entry => entry.id)
     : [spec.head, spec.thinking, enabledTail].map(name => byName.get(name).identifier);
@@ -238,6 +255,18 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
     frozenMode = mode === 'story' ? 'discussion' : 'story';
     await emit(events.CHAT_COMPLETION_SETTINGS_READY, request);
 
+    // The assistant's fetch transport consumes the tool-output marker last.
+    const toolRequest = prepareToolOutputRequest(request);
+    if (adapter.tool) {
+      assert(toolRequest?.active, adapter.name + ' did not reach the transport as a tool-output request');
+      assert.deepEqual(toolRequest.body.tools.map(tool => tool.function.name), [TOOL_OUTPUT_NAME]);
+      assert.equal(toolRequest.body.tool_choice, 'auto');
+      // Only the two-call tail carries the continuation that asks for the body.
+      if (adapter.tool === 'split') assert(toolRequest.continuation.includes('<recorder_body>') && toolRequest.continuation.includes(TOOL_OUTPUT_NAME), adapter.name + ' lost its continuation prompt');
+      else assert.equal(toolRequest.continuation, '', adapter.name + ' unexpectedly asked for a second request');
+      main.prompt = toolRequest.body.messages;
+    } else assert.equal(toolRequest, null, adapter.name + ' unexpectedly carried the tool-output marker');
+
     const text = requestText(main.prompt);
     assert(!text.includes('<|命定_'), 'structural marker leaked');
     assert(!text.includes('{{getvar::本轮场外讨论}}'), 'conditional mode macro leaked');
@@ -264,7 +293,7 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
       const spec = discussionModels[specModel];
       const headName = adapter.customAdapter ? adapter.customAdapter.entries[0].__split_name : spec.head;
       const thinkingName = adapter.customAdapter ? adapter.customAdapter.entries[1].__split_name : spec.thinking;
-      const tailName = adapter.customAdapter ? adapter.customAdapter.entries[2].__split_name : spec.tail;
+      const tailName = adapter.customAdapter ? adapter.customAdapter.entries[2].__split_name : adapter.tool ? spec.toolTails[adapter.tool] : spec.tail;
       const headSource = adapter.customAdapter ? adapter.customAdapter.entries[0].content : byName.get(headName).content;
       const tailSource = adapter.customAdapter ? adapter.customAdapter.entries[2].content : byName.get(tailName).content;
       const expectedHead = managed.expandManagedMacros(nativeText(expanded.entries.find(entry => entry.name === headName).content))
@@ -315,8 +344,12 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
         assert(tail.content.endsWith('<recorder_thinking>'), 'native Gemini discussion prefill boundary changed');
       } else {
         assert.equal(tail.role, 'system', 'the native non-prefill discussion tail must stay a system entry');
-        assert.equal(tail.content, nativeText(tailSource).trim(), 'native ' + tailName + ' discussion tail changed');
-        assert(tail.content.includes(tailChannelMarker[specModel]), tailName + ' lost its native reasoning channel marker');
+        const nativeTail = nativeText(tailSource).trim();
+        const sentTail = adapter.tool ? prepareToolOutputRequest({ messages: [{ role: 'system', content: nativeTail }] }).body.messages[0].content.trim() : nativeTail;
+        assert.equal(tail.content, sentTail, 'native ' + tailName + ' discussion tail changed');
+        if (adapter.tool) assert(!tail.content.includes('<|命定_'), tailName + ' leaked a transport marker');
+        if (adapter.tool) assert(tail.content.includes(TOOL_OUTPUT_NAME) && tail.content.includes('<recorder_output>'), tailName + ' lost its tool delivery contract');
+        else assert(tail.content.includes(tailChannelMarker[specModel]), tailName + ' lost its native reasoning channel marker');
         if (spec.audit === 'think_format') {
           const opening = reasoningOpening(tail.content);
           assert(opening && opening === reasoningOpening(auditSource), tailName + ' reasoning opening must match its discussion thinking branch');
@@ -335,7 +368,7 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
     instance.dispose();
     assert.equal((listeners.get(events.CHAT_COMPLETION_SETTINGS_READY) ?? []).length, 0);
     reports.push({
-      adapter: adapter.name, model: adapter.model ?? 'custom Gemini', prefill: adapter.prefill,
+      adapter: adapter.name, model: adapter.model ?? 'custom Gemini', prefill: adapter.prefill, tool: adapter.tool || false,
       mode, configuration: config.name, lengthMode: config.lengthMode, lengthRequirement: config.requirement,
       eventOrder: processorFirst ? 'processor-first' : 'managed-first',
       finalRoles: main.prompt.map(item => item.role),
@@ -373,11 +406,12 @@ const report = {
   adapterSupport: adapterSupportResults,
   cases: reports,
   verified: [
-    'actual split prompt order and bodies; Gemini two tails plus two copied custom adapters and native Claude/DeepSeek/Glm in story and discussion; three length modes with style/variable settings and both assistant event orders',
+    'actual split prompt order and bodies; Gemini prefill, no-prefill, one-call and two-call tool-output tails plus four copied custom adapters and native Claude/DeepSeek/Glm in story and discussion; three length modes with style/variable settings and both assistant event orders',
     'every provider keeps its own native discussion head, thinking container (recorder_audit_format or think_format), tail and visible body schema; the five-step fields and the scope notice stay shared and ordered before the audit',
     'conditional branches share the original body and depth envelope, multimodal parts and native head/tail roles',
     'discussion retains narrative style/body/variable protocols inside reference boundaries and selects its own audit/output contract',
     'native Gemini prefill survives; the non-prefill Gemini, Claude, DeepSeek and Glm tails stay byte-identical to their split entries; only the additional connection prefill is cleared',
+    'tool-output tails keep the assistant marker through managed expansion and message processing; the fetch transport then removes it and adds exactly one tool; only the two-call tail yields a continuation prompt, while every other tail reaches it unmarked',
     'independent interleaved raw summaries remain untouched; request identity retains the frozen mode',
     'invalid or legacy-only routing markers block request serialization; registered processor listeners are removable',
     'the native head/thinking/tail ids selected for each model are admitted by the assistant discussionAdapterSupport gate through the real registry entry or the split destined_model metadata',

@@ -6,6 +6,7 @@ import { readStore, patchSummaryStore } from '../platform/store.js';
 import { summarySnapshot } from './settingsSchema.js';
 import { PRESET_PROMPTS as LEGACY_PROMPTS } from './presetDefaults.js';
 import { OUTPUT_CONTRACT, PREVIOUS_ARCHIVE_PROMPTS, PREVIOUS_COMPACT_PROMPTS, optionBlocks, PROMPT_VERSION } from './archiveDefaults.js';
+import { SECRETS_VAR_KEY } from '../platform/storage-keys.js';
 /**
  * storage.js
  * 设置的加载、保存、迁移、重置
@@ -133,7 +134,7 @@ const validateBlocks = (blocks, defaultBlocks = DEFAULT_PROMPT_BLOCKS) => {
 };
 
 export function getKeyForUrl(url) {
-  const vars=readStore(), secrets=vars.summary_assistant_secrets ?? {};
+  const vars=readStore(), secrets=vars[SECRETS_VAR_KEY] ?? {};
   const key=String(url??'').trim();
   return secrets.keysByUrl?.[key] ?? (String(vars[CONFIG.SETTINGS_VAR_KEY]?.customApiUrl??'').trim()===key ? secrets.customApiKey ?? vars[CONFIG.SETTINGS_VAR_KEY]?.customApiKey ?? '' : '');
 }
@@ -149,7 +150,7 @@ const saveSettings = async settings => {
   const validated = summarySnapshot(settings);
   patchSummaryStore({
     [CONFIG.SETTINGS_VAR_KEY]: validated,
-    summary_assistant_secrets: { keysByUrl: { ...readStore().summary_assistant_secrets?.keysByUrl, [validated.customApiUrl.trim()]: String(settings.customApiKey ?? '') } },
+    [SECRETS_VAR_KEY]: { keysByUrl: { ...readStore()[SECRETS_VAR_KEY]?.keysByUrl, [validated.customApiUrl.trim()]: String(settings.customApiKey ?? '') } },
   });
   _cachedSettings = { ...validated, customApiKey: String(settings.customApiKey ?? '') };
   setRuntimeEnabled(validated.enabled);

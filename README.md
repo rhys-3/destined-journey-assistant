@@ -28,7 +28,7 @@
 在预设的酒馆助手脚本列表中，将 **命定预设助手**（旧版名为“【命定之诗】预设设置”） 的内容替换为 [loader.js](loader.js)，保留脚本 UUID 和已有变量。标准 UUID 为 `3a01f9c2-f6e8-4754-ad75-347741051662`。加载器通过固定版本地址载入助手：
 
 ```text
-https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.9.0/dist/destined-journey-assistant.js
+https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.10.0/dist/destined-journey-assistant.js
 ```
 
 加载失败时会显示版本、原因和重试按钮。重试使用同一个版本，不会切换到开发分支。
@@ -38,6 +38,16 @@ https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.9.0/dist/destin
 可用版本见 [Git 标签](https://github.com/rhys-3/destined-journey-assistant/tags)。安装指定版本时使用该标签下的加载器；`main` 可能包含尚未发布的改动。更新固定版本需要替换加载器，已安装脚本不会自动跟随 `main`。
 
 总结新装默认关闭，在“总结设置”页面启用并绑定当前聊天的总结世界书。由旧独立总结脚本升级时，可迁移的参数与启用状态会被保留。详见 [迁移说明](docs/MIGRATION.md)。
+
+## 通用角色扮演版
+
+同一份源码可构建独立的通用角色扮演版助手，输出为 `dist/destined-journey-assistant-general.js`：自包含、不依赖 CDN、无模块导入，内容可直接作为酒馆助手脚本保存。该产物只用于本地构建，不进入发布通道。
+
+通用版与命定版功能一致（设置、模型与连接、条目编辑、总结、讨论），但界面名称、脚本按钮、面板标题、全局单例键与持久化命名空间都分开：按钮为“通用预设助手”，总结键使用 `general_summary_` 前缀，讨论模式聊天变量为 `general_discussion_mode`，总结世界书为 `通用总结世界书_<后缀>`。两个助手可以同时安装，互不读取或覆盖对方的数据。
+
+通用版只在自带变量模式条目的预设上生效：切到命定预设后不会迁移、改写或联动该预设，面板会提示“当前预设不是通用预设”。变量处理模式提供“主接口变量 / 额外接口变量 / 无变量”三种选择，选择“无变量”只改预设条目，不修改世界书。通用版不迁移旧独立总结脚本，也不停用命定版的脚本。
+
+预设侧的共享协议名不随助手版本变化：`destined_discussion`、`<discussion_record>`、`__destinedDiscussionV1` 与 `__destinedPrimeMessageProcessor` 仍与命定 1.9 的消息处理器通用。
 
 ## 数据与总结机制
 
@@ -60,7 +70,7 @@ pnpm verify -- --full
 
 首次安装可完整验证。日常使用 `pnpm verify` 按改动选择检查，`pnpm verify -- --plan` 只查看范围；已提交改动使用 `--base <提交>`。文档修改不构建，局部功能只跑相关浏览器组；共享逻辑和工具变更保留完整检查。详见 [验证说明](docs/VERIFICATION.md)。
 
-`src/` 为 ES 模块源码，`src/preset/` 按功能拆分。esbuild 生成单个 `dist/destined-journey-assistant.js`。推送到主分支后，Actions 自动测试、打包并提交产物；版本号增加时创建对应 Git 标签，无需 GitHub Release。
+`src/` 为 ES 模块源码，`src/preset/` 按功能拆分，`src/flavor.js` 决定构建出的版本标识。esbuild 由同一份源码生成 `dist/destined-journey-assistant.js` 与 `dist/destined-journey-assistant-general.js`。推送到主分支后，Actions 自动测试、打包并提交命定版产物；版本号增加时创建对应 Git 标签，无需 GitHub Release。
 
 准备下一个修复版本：
 

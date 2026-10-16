@@ -5,6 +5,7 @@ import { buildSummaryPromptParams, buildMegaSummaryPromptParams } from '../promp
 import { prepareGeneration } from '../api.js';
 import { computeSummaryPlan, computeMegaPlan } from '../summary.js';
 import { snapshotContext } from '../macros.js';
+import { FLAVOR } from '../../flavor.js';
 
 export function collectCustomMacros(panel) { return structuredClone(panel._customMacros??[]); }
 export function bindPromptTools(panel, settings, {collect,rerender}) {
@@ -22,7 +23,7 @@ export function bindPromptTools(panel, settings, {collect,rerender}) {
     try{
       const value=summarySnapshot(collect(panel));
       const data={format:'destined-summary-prompts',version:4,promptBlocks:value.promptBlocks,megaPromptBlocks:value.megaPromptBlocks,customMacros:value.customMacros};
-      const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),link=panel.ownerDocument.createElement('a');link.href=url;link.download='命定总结提示词.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),link=panel.ownerDocument.createElement('a');link.href=url;link.download=FLAVOR.exportLabel+'总结提示词.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     }catch(error){report(error);}
   };
   const file=panel.querySelector('[data-prompts-file]');panel.querySelector('[data-prompts-import]').onclick=()=>file.click();

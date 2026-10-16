@@ -8,6 +8,8 @@ const MESSAGE_PROCESSING_MARKERS = new Set([
   '正文开始', '历史开始', '深度900分界', '深度2分界', '历史结束', '正文结束',
   '记忆区', '参考区', '运行规则区',
   '资料开始', '资料结束', '场外原生', '场外讨论',
+  // Consumed by the tool-output transport just before the request is sent.
+  '工具输出', '续写开始', '续写结束',
 ].map(name => `<|命定_${name}|>`));
 
 // Dependencies use live accessors so asynchronous operations share the current state.
@@ -15,6 +17,11 @@ export function createManaged(ctx) {
   let migrationTask = null;
   function countOccurrences(content, token) {
     return String(content ?? '').split(token).length - 1;
+  }
+
+  // Prime-only entries stay untouched in a flavor that has no such preset field.
+  function supportsManagedMacro(key) {
+    return ctx.MANAGED_MACRO_KEYS.includes(key);
   }
 
   function hasManagedMacro(promptId, token, minimum = 1, preset = ctx.state.preset) {
@@ -126,7 +133,7 @@ export function createManaged(ctx) {
 
   function languagePromptIds(key, preset = ctx.state.preset) {
     if (key === 'body') return [ctx.IDS.outputLength];
-    if (key !== 'thinking') return [];
+    if (key !== 'thinking' || !ctx.MANAGED_CONTROLS.languages.includes('thinking')) return [];
     return [...new Set(Object.values(ctx.MODEL_ADAPTERS).map(adapter => adapter.ids?.[1]))]
       .filter(id => id && ctx.getPrompt(preset, id));
   }
@@ -276,7 +283,9 @@ export function createManaged(ctx) {
       ?? extractLegacyAttribute(preset, ctx.IDS.outputLength, 'length_control', 'min_characters');
     const dialogueRatio = extractLegacyAttribute(preset, ctx.IDS.dialogue, 'dialogue', 'target_ratio')?.replace(/%$/u, '');
     const dialogueRounds = extractLegacyAttribute(preset, ctx.IDS.dialogue, 'dialogue', 'min_round_trips');
-    const combatRounds = extractLegacyAttribute(preset, ctx.IDS.outputLength, 'combat_pacing', 'max_rounds_per_response');
+    const combatRounds = supportsManagedMacro('combatRounds')
+      ? extractLegacyAttribute(preset, ctx.IDS.outputLength, 'combat_pacing', 'max_rounds_per_response')
+      : null;
     const narrationPerson = extractLegacyAttribute(preset, ctx.IDS.narration, 'narration', 'person');
     if (/^-?\d+$/u.test(minHanzi ?? '')) values.min_hanzi = minHanzi;
     if (/^-?\d+$/u.test(dialogueRatio ?? '')) values.dialogue_ratio = dialogueRatio;
@@ -309,20 +318,22 @@ export function createManaged(ctx) {
     let next = String(content ?? '');
     if (promptId === ctx.IDS.dialogue) {
       next = next.replace(/\sdata-destined-ui="dialogue"/gu, '');
-      if (!next.includes(ctx.MANAGED_MACROS.dialogueRounds)) next = replaceTagAttribute(next, 'dialogue', 'min_round_trips', ctx.MANAGED_MACROS.dialogueRounds);
-      if (!next.includes(ctx.MANAGED_MACROS.dialogueRatio)) next = replaceTagAttribute(next, 'dialogue', 'target_ratio', `${ctx.MANAGED_MACROS.dialogueRatio}%`);
+      if (supportsManagedMacro('dialogueRounds') && !next.includes(ctx.MANAGED_MACROS.dialogueRounds)) next = replaceTagAttribute(next, 'dialogue', 'min_round_trips', ctx.MANAGED_MACROS.dialogueRounds);
+      if (supportsManagedMacro('dialogueRatio') && !next.includes(ctx.MANAGED_MACROS.dialogueRatio)) next = replaceTagAttribute(next, 'dialogue', 'target_ratio', `${ctx.MANAGED_MACROS.dialogueRatio}%`);
       next = next.replace('不低于`min_round_trips`所指定轮数', `不低于${ctx.MANAGED_MACROS.dialogueRounds}轮`);
       next = next.replace('对白约占普通叙事与对白的比例遵循`target_ratio`', `对白约占普通叙事与对白的${ctx.MANAGED_MACROS.dialogueRatio}%`);
       return next;
     }
     if (promptId === ctx.IDS.outputLength) {
       next = next.replace(/\sdata-destined-ui="output"/gu, '');
-      if (!next.includes(ctx.MANAGED_MACROS.lengthRequirement)) {
+      // <|字数|> is Prime's length floor; a flavor without it keeps the entry.
+      if (supportsManagedMacro('hanzi') && !next.includes(ctx.MANAGED_MACROS.lengthRequirement)) {
         next = next.replace(/(<length_control\b[^>]*?)\bmin_hanzi=/iu, '$1min_characters=');
         if (!next.includes(ctx.MANAGED_MACROS.hanzi)) next = replaceTagAttribute(next, 'length_control', 'min_characters', ctx.MANAGED_MACROS.hanzi);
       }
-      if (!next.includes(ctx.MANAGED_MACROS.combatRounds)) next = replaceTagAttribute(next, 'combat_pacing', 'max_rounds_per_response', ctx.MANAGED_MACROS.combatRounds);
-      next = next.replace('本次推进回合数不得超过`max_rounds_per_response`；', `本次推进回合数不得超过${ctx.MANAGED_MACROS.combatRounds}回合；`);
+      // <|战斗回合|> comes from the preset's combat_pacing entry; skip when absent.
+      if (supportsManagedMacro('combatRounds') && !next.includes(ctx.MANAGED_MACROS.combatRounds)) next = replaceTagAttribute(next, 'combat_pacing', 'max_rounds_per_response', ctx.MANAGED_MACROS.combatRounds);
+      if (supportsManagedMacro('combatRounds')) next = next.replace('本次推进回合数不得超过`max_rounds_per_response`；', `本次推进回合数不得超过${ctx.MANAGED_MACROS.combatRounds}回合；`);
       next = next.replace(/<language\b[^>]*>\s*正文使用简体中文。\s*<\/language>/iu, `<language target="recorder_body">正文、对白与正文内面板使用${ctx.MANAGED_MACROS.bodyLanguage}；角色专名、原文引用和代码可按语境保留原语言。</language>`);
       return next;
     }
@@ -360,6 +371,9 @@ export function createManaged(ctx) {
   }
 
   async function migrateManagedSettings() {
+    // A foreign preset (for example Prime's, when both assistants are
+    // installed) is never migrated, rewritten or announced.
+    if (!ctx.presetIsMine()) return;
     if (!ctx.state.preset || !needsManagedPromptMigration(ctx.state.preset)) return;
     if (ctx.state.config.configuration_error) throw new Error(ctx.state.config.configuration_error);
     const name = getLoadedPresetName(), context = ctx.workspaceContextKey();
@@ -483,7 +497,7 @@ export function createManaged(ctx) {
   }
 
   async function initializeStyleStructures() {
-    if (!ctx.state.preset || ctx.state.config.style_structure_version >= ctx.STYLE_STRUCTURE_VERSION) return;
+    if (!ctx.presetIsMine() || !ctx.state.preset || ctx.state.config.style_structure_version >= ctx.STYLE_STRUCTURE_VERSION) return;
     const migratableIds = [];
     const malformedNames = [];
     for (const prompt of ctx.state.preset.prompts ?? []) {

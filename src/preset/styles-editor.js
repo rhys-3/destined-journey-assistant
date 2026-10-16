@@ -136,7 +136,8 @@ export function createStylesEditor(ctx) {
     if (/主文风\s*[｜|]/.test(name)) return { section: 'style', control: 'single-option', group: 'main-style', order: 20 };
     if (/^基调\s*[｜|]/.test(name)) return { section: 'style', control: 'single-option', group: 'base-tone', order: 10 };
     if (/剧情推进\s*[·｜|]/.test(name)) return { section: 'narrative', control: 'single-option', group: 'plot-pace', order: 10 };
-    if (/变量\s*[｜|].*API/i.test(name)) return { section: 'system', control: 'single-option', group: 'variable-mode', order: 10 };
+    // 通用预设的条目名为“主接口变量／额外接口变量／无变量”，命定预设为“变量｜…API”。
+    if (/变量\s*[｜|].*API|接口变量|无变量/i.test(name)) return { section: 'system', control: 'single-option', group: 'variable-mode', order: 10 };
     if (/主文风|基调|风格|文笔|书籍参考|美化/.test(name)) return { section: 'style', control: 'toggle', order: 100 };
     if (/剧情推进|叙事|视角|抢话|转述|结尾|对话量|全局设置/.test(name)) return { section: 'narrative', control: 'toggle', order: 100 };
     if (/NSFW内容|用户提示|用户设定|防|禁用词|表达约束/.test(name)) return { section: 'content', control: 'toggle', order: 100 };

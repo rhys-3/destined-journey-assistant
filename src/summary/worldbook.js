@@ -12,6 +12,7 @@ import { getSettings, getMegaSummaryMap, saveMegaSummaryMap, setMegaSummaryMappi
 import { recoverLegacyMegaSources } from './legacySources.js';
 import { getDiscussionMessageIds } from './messages.js';
 import { captureContext, checkContext, createWorldbook, rebindGlobalWorldbooks, createWorldbookEntries, updateWorldbookWith, setChatMessages, writeVariableKeys, replaceWorldbook, deleteWorldbook } from '../platform/lifecycle.js';
+import { AUTO_HIDDEN_FLOORS_VAR_KEY, BINDING_PAUSED_VAR_KEY, BOOKS_VAR_KEY, OWNED_BOOKS_VAR_KEY } from '../platform/storage-keys.js';
 /**
  * worldbook.js
  * 世界书绑定、条目管理、楼层可见性
@@ -19,7 +20,6 @@ import { captureContext, checkContext, createWorldbook, rebindGlobalWorldbooks, 
  */
 
 let _cachedChatWbName = null;
-const AUTO_HIDDEN_FLOORS_VAR_KEY = "summary_assistant_auto_hidden_floors";
 
 // ---- 世界书名称与绑定 ----
 
@@ -42,7 +42,7 @@ const readChatWorldbookBinding = () => {
 const writeChatWorldbookBinding = (name) => {
   try {
     writeVariableKeys(
-      { [CONFIG.CHAT_WB_VAR_KEY]: name || "", summary_assistant_binding_paused: false },
+      { [CONFIG.CHAT_WB_VAR_KEY]: name || "", [BINDING_PAUSED_VAR_KEY]: false },
       { type: "chat" },
     );
     _cachedChatWbName = name || null;
@@ -72,8 +72,8 @@ const isChatWorldbookBound = () => {
 
 // ---- 世界书绑定/解绑 ----
 
-export const getManagedSummaryBookNames = () => [...new Set([...(readStore().summary_assistant_books ?? []), readChatWorldbookBinding()].filter(Boolean))];
-function registerSummaryBook(name) { patchSummaryStore({ summary_assistant_books: [...new Set([...getManagedSummaryBookNames(),name])] }); }
+export const getManagedSummaryBookNames = () => [...new Set([...(readStore()[BOOKS_VAR_KEY] ?? []), readChatWorldbookBinding()].filter(Boolean))];
+function registerSummaryBook(name) { patchSummaryStore({ [BOOKS_VAR_KEY]: [...new Set([...getManagedSummaryBookNames(),name])] }); }
 const bindWorldbookToChat = errorCatched(async (name, { legacy = false } = {}) => {
   assertRecordWritable();
   if (!name) return;
@@ -106,7 +106,7 @@ const unbindWorldbookFromChat = errorCatched(async () => {
   }
   await applySummarizedFloorsVisibility({ autoHide: false });
   clearChatWorldbookBinding();
-  writeVariableKeys({ summary_assistant_binding_paused: true }, { type: 'chat' });
+  writeVariableKeys({ [BINDING_PAUSED_VAR_KEY]: true }, { type: 'chat' });
 });
 
 // ---- 聊天切换处理 ----
@@ -174,7 +174,7 @@ const migrateWorldbookEntries = errorCatched(async (oldName, newName) => {
           typeof rebindGlobalWorldbooks === "function"
         ) {
           const globalNames = getGlobalWorldbookNames() || [];
-          if (globalNames.includes(oldName) && (readStore().summary_assistant_owned_books ?? []).includes(oldName)) {
+          if (globalNames.includes(oldName) && (readStore()[OWNED_BOOKS_VAR_KEY] ?? []).includes(oldName)) {
             await rebindGlobalWorldbooks(
               globalNames.filter((n) => n !== oldName),
             );
@@ -213,7 +213,7 @@ const ensureWorldbookExists = errorCatched(async ({ taskId } = {}) => {
   assertRecordWritable(taskId);
   let wbName = getActiveWorldbookName();
   if (!wbName) {
-    if (getVariables({ type: 'chat' })?.summary_assistant_binding_paused) throw new Error('本聊天已解绑，请先绑定独立总结世界书');
+    if (getVariables({ type: 'chat' })?.[BINDING_PAUSED_VAR_KEY]) throw new Error('本聊天已解绑，请先绑定独立总结世界书');
     wbName = generateDefaultWorldbookName();
     await createWorldbook(wbName, []);
     registerSummaryBook(wbName);
@@ -648,20 +648,20 @@ const getMegaSummaryContentsBefore = errorCatched(async (entryName) => {
 const reconcileChatBinding = async () => {
   const token = captureContext(), name = readChatWorldbookBinding();
   const names = await getWorldbookNames(); checkContext(token);
-  const catalog = readStore().summary_assistant_books ?? [];
+  const catalog = readStore()[BOOKS_VAR_KEY] ?? [];
   const existing = catalog.filter(book => names.includes(book));
-  if (JSON.stringify(existing) !== JSON.stringify(catalog)) patchSummaryStore({ summary_assistant_books: existing });
+  if (JSON.stringify(existing) !== JSON.stringify(catalog)) patchSummaryStore({ [BOOKS_VAR_KEY]: existing });
   if (name && !names.includes(name)) {
     await applySummarizedFloorsVisibility({ autoHide: false });
     clearChatWorldbookBinding();
-    writeVariableKeys({ summary_assistant_binding_paused: true }, { type: 'chat' });
+    writeVariableKeys({ [BINDING_PAUSED_VAR_KEY]: true }, { type: 'chat' });
   }
   await syncOwnedBinding(name && names.includes(name) ? name : null);
   return names;
 };
 
 async function syncOwnedBinding(name) {
-  const token = captureContext(), owned = new Set(readStore().summary_assistant_owned_books ?? []);
+  const token = captureContext(), owned = new Set(readStore()[OWNED_BOOKS_VAR_KEY] ?? []);
   const before = helperApi('getGlobalWorldbookNames')() ?? [];
   const next = before.filter(book => !owned.has(book) || book === name);
   if (name && !next.includes(name)) next.push(name);
@@ -670,7 +670,7 @@ async function syncOwnedBinding(name) {
     finally {
       const actual = helperApi('getGlobalWorldbookNames')() ?? [], stillOwned = [...owned].filter(book => actual.includes(book));
       if (name && !before.includes(name) && actual.includes(name)) stillOwned.push(name);
-      patchSummaryStore({ summary_assistant_owned_books: [...new Set(stillOwned)] });
+      patchSummaryStore({ [OWNED_BOOKS_VAR_KEY]: [...new Set(stillOwned)] });
     }
     checkContext(token);
   }
@@ -683,10 +683,10 @@ export async function deleteBoundSummaryBook() {
   await applySummarizedFloorsVisibility({ autoHide: false });
   if (remaining.length) await replaceWorldbook(name, remaining); else await deleteWorldbook(name);
   await syncOwnedBinding(null); clearChatWorldbookBinding();
-  patchSummaryStore({ summary_assistant_books: (readStore().summary_assistant_books ?? []).filter(book => book !== name) });
+  patchSummaryStore({ [BOOKS_VAR_KEY]: (readStore()[BOOKS_VAR_KEY] ?? []).filter(book => book !== name) });
   writeArchive({ records: {}, excluded: [] }, name);
   writeVariableKeys({ [CONFIG.MEGA_SUMMARY_VAR_KEY]: {} }, { type: 'chat' });
-  writeVariableKeys({ summary_assistant_binding_paused: true }, { type: 'chat' });
+  writeVariableKeys({ [BINDING_PAUSED_VAR_KEY]: true }, { type: 'chat' });
   return { keptOtherEntries: remaining.length };
 }
 export async function getCoverage() {
