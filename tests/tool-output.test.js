@@ -87,6 +87,64 @@ test('array content parts are stripped too', () => {
   assert.equal(body.messages[0].content[1].type, 'image_url');
 });
 
+const PLACEHOLDER = '<Participant_input ref="tool">本轮输入见工具说明</Participant_input>';
+const relayTail = { role: 'system', content: TOOL_OUTPUT_MARKER + '\nThe closed <Participant_input> block in the description is the input.' };
+const toolDescription = body => body.tools.at(-1).function.description;
+
+test('the latest participant input moves into the tool description', () => {
+  const story = 'Participant: 旧输入\nRecorder: 旧回复\nParticipant:<Participant_input>\n我走进酒馆\n</Participant_input>\nREAD=<Participant_input> + rules';
+  const { body } = prepareToolOutputRequest({ messages: [{ role: 'user', content: story }, relayTail] });
+  assert.equal(body.messages[0].content, 'Participant: 旧输入\nRecorder: 旧回复\nParticipant:' + PLACEHOLDER + '\nREAD=<Participant_input> + rules');
+  assert.ok(toolDescription(body).endsWith('\n\n<Participant_input>\n我走进酒馆\n</Participant_input>'));
+  assert.equal(body.messages[1].content, relayTail.content.replace(TOOL_OUTPUT_MARKER + '\n', ''));
+});
+
+test('short and empty inputs are moved as well', () => {
+  for (const input of ['继续', '']) {
+    const { body } = prepareToolOutputRequest({ messages: [{ role: 'user', content: `a<Participant_input>\n${input}\n</Participant_input>b` }, relayTail] });
+    assert.equal(body.messages[0].content, 'a' + PLACEHOLDER + 'b');
+    assert.ok(toolDescription(body).endsWith(`<Participant_input>\n${input}\n</Participant_input>`));
+  }
+});
+
+test('text parts move and images stay beside the placeholder', () => {
+  const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AA' } };
+  const content = [
+    { type: 'text', text: 'before\nParticipant:<Participant_input>\n' },
+    { type: 'text', text: '看这张图' },
+    image,
+    { type: 'text', text: '\n</Participant_input>\nafter' },
+  ];
+  const { body } = prepareToolOutputRequest({ messages: [{ role: 'user', content }, relayTail] });
+  assert.deepEqual(body.messages[0].content, [
+    { type: 'text', text: 'before\nParticipant:' + PLACEHOLDER },
+    image,
+    { type: 'text', text: '\nafter' },
+  ]);
+  assert.ok(toolDescription(body).endsWith('<Participant_input>\n看这张图\n</Participant_input>'));
+});
+
+test('requests without a participant block keep the plain tool', () => {
+  const { body } = prepareToolOutputRequest({ messages: markedMessages() });
+  assert.equal(body.messages[0].content, 'story');
+  assert.ok(!toolDescription(body).includes('<Participant_input>'));
+});
+
+test('the follow-up round keeps the relayed request', async () => {
+  const story = 'x<Participant_input>\n输入\n</Participant_input>y';
+  const call = content => eventStream([{ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: TOOL_OUTPUT_NAME, arguments: JSON.stringify({ content }) } }] } }] }]);
+  const { sent, send } = fakeHost((_body, count) => count === 1
+    ? call('<recorder_output>\n<recorder_thinking>\naudit\n</recorder_thinking>\n')
+    : call('<recorder_body>\nbody\n</recorder_body>\n</recorder_output>'));
+  const messages = [{ role: 'user', content: story }, { role: 'system', content: TOOL_OUTPUT_MARKER + '\n' + CONTINUE_OPEN + TAIL_CONTINUATION + CONTINUE_CLOSE }];
+  await (await send({ stream: true, messages })).text();
+  assert.equal(sent.length, 2);
+  for (const request of sent) {
+    assert.equal(request.messages[0].content, 'x' + PLACEHOLDER + 'y');
+    assert.ok(toolDescription(request).endsWith('<Participant_input>\n输入\n</Participant_input>'));
+  }
+});
+
 test('a caller that pins tool choice keeps it, without the marker', () => {
   const { body, active } = prepareToolOutputRequest({ messages: markedMessages(), tool_choice: 'none' });
   assert.equal(active, false);

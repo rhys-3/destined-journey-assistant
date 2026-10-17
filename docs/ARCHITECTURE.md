@@ -71,7 +71,7 @@ api 直接将编译好的自然 role、顺序和内容交给 generateRaw，不�
 
 Gemini 尾部按 `GEMINI_TAIL_MODES` 顺序对应预填充、非预填充、工具一次调用、工具两次调用四个条目，四者互斥。两个工具条目以 `<|命定_工具输出|>` 开头；两次调用条目另含 `<|命定_续写开始|>`…`<|命定_续写结束|>` 包裹的续写提示。受管宏展开时保留这些标记，不作为未知命定宏移除。
 
-助手启动时包装酒馆页面的 fetch，卸载时恢复；已被其他脚本再次包装时只停用自身。只有发往 `/api/backends/chat-completions/generate` 且消息含该标记的请求会被处理：移除标记，取出并移除续写提示，追加唯一的 `submit_recorder_output` 函数工具（参数 `content`）并设置 `tool_choice: auto`。调用方已指定 `none`、`required` 或具体工具时只移除标记与续写提示，不追加工具。其他请求、总结和 generateRaw 不受影响。
+助手启动时包装酒馆页面的 fetch，卸载时恢复；已被其他脚本再次包装时只停用自身。只有发往 `/api/backends/chat-completions/generate` 且消息含该标记的请求会被处理：移除标记，取出并移除续写提示，追加唯一的 `submit_recorder_output` 函数工具（参数 `content`）并设置 `tool_choice: auto`。最后一个含闭合 `<Participant_input>` 块的 user 消息中，最后一个闭合块的文字移入该工具的说明末尾（无论长短，空块也移动），原位置留下 `<Participant_input ref="tool">` 占位；块内图片等非文本部分留在占位旁。调用方已指定 `none`、`required` 或具体工具时只移除标记与续写提示，不追加工具。其他请求、总结和 generateRaw 不受影响。
 
 响应在酒馆读取前改写：OpenAI 兼容格式的 `tool_calls` 参数按片段增量解码为 `delta.content`／`message.content`，`finish_reason: tool_calls` 改为 `stop`；Google 格式的 `functionCall` 按 `partialArgs` 或完整 `args` 改为文本 part，思考 part 原样保留。一轮回复可含多次调用，按到达顺序拼接：OpenAI 兼容格式按调用 index 区分，缺少 index 时以带名称的片段在上一调用结束后开始新调用；Google 格式的 `partialArgs` 在 `willContinue` 为真时继续同一调用。拼接处缺少换行时补一个换行。统计记录调用次数，以及从请求发出起算的各段到达时间。其他函数调用、非 JSON 数据行与错误响应不改动。酒馆因此按普通回复渲染、流式、swipe 与继续生成，不经过自身的函数调用流程，聊天记录中也没有工具消息。模型未调用工具时正文原样通过并提示。工具输出请求返回 524，或错误正文中含 524 时，另行提示等待完整参数导致的超时；错误响应本身仍原样交给酒馆。
 

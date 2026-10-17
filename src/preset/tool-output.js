@@ -54,6 +54,65 @@ function stripMarkers(message, continuations) {
   };
 }
 
+// On a tool tail the latest Participant input always moves from the
+// conversation into the tool description, leaving a placeholder where it
+// stood. The last closed block in the last user message that has one is moved;
+// prompt text that merely names the tag has no closing tag after it. Images and
+// other non-text parts inside the block stay in the message beside the
+// placeholder, because a tool description carries text only.
+const PARTICIPANT_OPEN = '<Participant_input>';
+const PARTICIPANT_CLOSE = '</Participant_input>';
+const PARTICIPANT_PLACEHOLDER = '<Participant_input ref="tool">本轮输入见工具说明</Participant_input>';
+
+const isTextPart = part => part?.type === 'text' && typeof part.text === 'string';
+
+function findParticipant(parts) {
+  for (let end = parts.length - 1; end >= 0; end -= 1) {
+    const close = isTextPart(parts[end]) ? parts[end].text.lastIndexOf(PARTICIPANT_CLOSE) : -1;
+    if (close < 0) continue;
+    for (let start = end; start >= 0; start -= 1) {
+      if (!isTextPart(parts[start])) continue;
+      const open = start === end ? parts[start].text.lastIndexOf(PARTICIPANT_OPEN, close) : parts[start].text.lastIndexOf(PARTICIPANT_OPEN);
+      if (open >= 0) return { start, open, end, close };
+    }
+    return null;
+  }
+  return null;
+}
+
+function relocateParticipant(messages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'user') continue;
+    const asString = typeof message.content === 'string';
+    const parts = asString ? [{ type: 'text', text: message.content }] : Array.isArray(message.content) ? message.content : [];
+    const found = findParticipant(parts);
+    if (!found) continue;
+    const { start, open, end, close } = found;
+    const head = parts[start].text.slice(0, open);
+    const tail = parts[end].text.slice(close + PARTICIPANT_CLOSE.length);
+    const inner = start === end
+      ? [{ type: 'text', text: parts[start].text.slice(open + PARTICIPANT_OPEN.length, close) }]
+      : [
+        { type: 'text', text: parts[start].text.slice(open + PARTICIPANT_OPEN.length) },
+        ...parts.slice(start + 1, end),
+        { type: 'text', text: parts[end].text.slice(0, close) },
+      ];
+    const payload = inner.filter(isTextPart).map(part => part.text).join('').trim();
+    const media = inner.filter(part => !isTextPart(part));
+    const rewritten = [
+      ...parts.slice(0, start),
+      ...(media.length
+        ? [{ ...parts[start], text: head + PARTICIPANT_PLACEHOLDER }, ...media, { ...parts[end], text: tail }]
+        : [{ ...parts[start], text: head + PARTICIPANT_PLACEHOLDER + tail }]),
+      ...parts.slice(end + 1),
+    ].filter(part => !isTextPart(part) || part.text);
+    const content = asString ? rewritten.map(part => part.text).join('') : rewritten;
+    return { messages: messages.map((item, i) => (i === index ? { ...item, content } : item)), payload };
+  }
+  return null;
+}
+
 /** Returns the rewritten request body, or null when the request is not a tool-output request. */
 export function prepareToolOutputRequest(body) {
   if (!body || !Array.isArray(body.messages)) return null;
@@ -66,8 +125,14 @@ export function prepareToolOutputRequest(body) {
   const continuation = continuations.filter(Boolean).at(-1) ?? '';
   if (callerPinned) return { body: { ...body, messages }, active: false, continuation: '' };
   const tools = (Array.isArray(body.tools) ? body.tools : []).filter(tool => tool?.function?.name !== TOOL_OUTPUT_NAME);
+  const definition = structuredClone(TOOL_DEFINITION);
+  const relayed = relocateParticipant(messages);
+  if (relayed) {
+    definition.function.description += `\n\n${PARTICIPANT_OPEN}\n${relayed.payload}\n${PARTICIPANT_CLOSE}`;
+    messages.splice(0, messages.length, ...relayed.messages);
+  }
   return {
-    body: { ...body, messages, tools: [...tools, structuredClone(TOOL_DEFINITION)], tool_choice: 'auto' },
+    body: { ...body, messages, tools: [...tools, definition], tool_choice: 'auto' },
     active: true,
     continuation,
   };
