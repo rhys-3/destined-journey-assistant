@@ -130,7 +130,7 @@ test('general flavor keeps its managed fields without Prime-only entries', async
   assert(!Object.hasOwn(generalManaged.legacy, 'combat_rounds'));
   for (const key of ['hanzi', 'combatRounds', 'thinkingLanguage'])
     assert(!generalManaged.macroKeys.includes(key), key);
-  assert.deepEqual(generalManaged.controls.length, []);
+  assert.deepEqual(generalManaged.controls.length, ['hanzi']);
   assert.deepEqual(generalManaged.controls.languages, ['body']);
   assert.deepEqual(generalManaged.controls.dialogue, ['dialogueRatio', 'dialogueRounds']);
   // Shared fields keep the static defaults even without preset data.

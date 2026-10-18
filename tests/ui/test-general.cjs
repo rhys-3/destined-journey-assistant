@@ -25,6 +25,8 @@ raw.prompts.push({
   extra: { destined_ui: { version: 3, control: 'toggle', order: 10, block: 'variable', group: 'variable-mode', section: 'system' } },
 });
 raw.prompt_order[0].order.push({identifier: noVariableId, enabled: false});
+// The general length entry carries <|字数要求|> without Prime's floor or combat pacing.
+raw.prompts.find(p => p.identifier === '31f1341f-e48c-415e-b917-207d46ea5e77').content = '{{#setvar 字数}}\n<language target="recorder_body">正文、对白与正文内面板使用<|正文语言|>；角色专名、原文引用和代码可按语境保留原语言。</language>\n<length_control requirement="<|字数要求|>" count_scope="narrative_and_dialogue">\n普通叙事与角色对白<|字数要求|>个可见文字字符；不统计空白、HTML/XML标签、代码与信息面板。\n</length_control>{{/setvar}}{{trim}}';
 const convert=(p,enabled)=>({...p,id:p.identifier,enabled,role:p.role??'system',position:p.injection_position===1?{type:'in_chat',depth:p.injection_depth,order:p.injection_order}:{type:'relative'}});
 const prompts=raw.prompt_order[0].order.map(o=>{const p=raw.prompts.find(p=>p.identifier===o.identifier);return p?convert(p,o.enabled):null}).filter(Boolean);
 const preset={settings:{should_stream:raw.stream_openai},prompts,prompts_unused:raw.prompts.filter(p=>!prompts.some(q=>q.id===p.identifier)).map(p=>convert(p,p.enabled)),extensions:{}};

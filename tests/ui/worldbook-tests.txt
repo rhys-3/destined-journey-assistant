@@ -78,11 +78,11 @@
   for (const tab of ['daily', 'style', 'tools']) { ui.state.activeTab = tab; ui.render(); for (const input of ui.shadow.querySelectorAll('input[data-key^="prompt:"]')) counts[input.dataset.key] = (counts[input.dataset.key] || 0) + 1; }
   check('三个主页面无重复提示词开关', Object.values(counts).every(n => n === 1));
   check('事件链只出现一次', counts['prompt:' + ui.IDS.eventChain] === 1);
-  const managedToggles = flavorId === 'general' ? [ui.IDS.dialogue, ui.IDS.narration] : [ui.IDS.dialogue, ui.IDS.outputLength, ui.IDS.narration];
+  const managedToggles = [ui.IDS.dialogue, ui.IDS.outputLength, ui.IDS.narration];
   check('数值和人称规则仍有启停能力', managedToggles.every(id => counts['prompt:' + id] === 1));
   if (flavorId === 'general') {
     ui.state.activeTab = 'daily'; ui.render();
-    check('通用版不渲染命定专有字数控件', counts['prompt:' + ui.IDS.outputLength] === undefined && !ui.shadow.querySelector('[data-action="length-mode"]') && !ui.shadow.querySelector('[data-action="field-number"][data-field="hanzi"]') && !!ui.shadow.querySelector('[data-action="field-number"][data-field="dialogueRatio"]'));
+    check('通用版渲染字数要求而不渲染战斗回合', !!ui.shadow.querySelector('[data-action="length-mode"]') && !ui.shadow.querySelector('[data-action="field-number"][data-field="combatRounds"]') &&!!ui.shadow.querySelector('[data-action="field-number"][data-field="dialogueRatio"]'));
     ui.state.activeTab = 'tools'; ui.render();
   }
   ui.state.activeTab = 'advanced'; ui.render(); check('全部条目页不再重复开关', ui.shadow.querySelectorAll('input[data-key^="prompt:"]').length === 0);
@@ -95,14 +95,14 @@
   const pendingReads = readCount; const rescan = ui.scanWorldbookMode(); await pause(30); check('超时后复查复用原请求不堆积', readCount === pendingReads); window.readGate = null; releaseRead(); await rescan;
   reset(true, false, false); let releaseWrite; window.writeGate = new Promise(r => { releaseWrite = r; }); await ui.selectVariableMode('extra');
   check('写入超时返回界面并标注待确认', ui.worldWrites.size === 1 && !ui.worldLink.busy && !!q('.inline-warning'));
-  await ui.setNumericField('hanzi', '1800'); check('世界书写入待确认不堵塞其他设置保存', vars.managed_values.min_hanzi === '1800');
+  await ui.setNumericField('dialogueRatio', '55'); check('世界书写入待确认不堵塞其他设置保存', vars.managed_values.dialogue_ratio === '55');
   const blockedWrites = writeCount; await ui.selectVariableMode('main'); check('未确认写入期间不重复提交切换', writeCount === blockedWrites);
   window.writeGate = null; releaseWrite(); await pause(650); check('超时请求未进入更新器时阻止迟到写入', books['命定之诗'][0].enabled && ui.worldWrites.size === 0);
   reset(true, false, false); window.readGate = new Promise(r => { releaseRead = r; }); const stale = ui.scanWorldbookMode(); await pause(30); ctx.chatId = '聊天B'; ui.scheduleWorldbookScan(); localMode('extra'); window.readGate = null; releaseRead(); await stale;
   check('切换聊天后丢弃旧读取结果', ui.variablePresetMode() === 'extra'); await pause(650);
   reset(true, false, false); window.writeGate = new Promise(r => { releaseWrite = r; }); const staleWrite = ui.selectVariableMode('extra'); await pause(30); ctx.chatId = '聊天C'; ui.scheduleWorldbookScan(); window.writeGate = null; releaseWrite(); await staleWrite;
   check('更新器提交前再次确认上下文', books['命定之诗'][0].enabled && !books['命定之诗'][1].enabled); await pause(650);
-  reset(true, false, false); await ui.scanWorldbookMode(); await ui.setNumericField('hanzi', '1500'); ui.state.activeTab = 'daily'; ui.render();
+  reset(true, false, false); await ui.scanWorldbookMode(); await ui.setNumericField('dialogueRatio', '40'); ui.state.activeTab = 'daily'; ui.render();
   reset(false, true, true); localMode('main'); ui.closePanel();
   for (const fn of handlers.get('WORLDINFO_UPDATED')) fn('命定之诗', {}); await pause(650);
   check('真实启动注册的世界书事件在面板关闭时也可同步', ui.variablePresetMode() === 'extra');

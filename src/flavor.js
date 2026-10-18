@@ -74,10 +74,11 @@ export const FLAVORS = {
     // The general preset keeps a collaborative writing schema: no <|字数|>
     // floor, no <|战斗回合|> pacing and no model-entry thinking language. Those
     // migrations and controls are left out instead of failing, and the shared
-    // fields keep the static defaults from DEFAULT_MANAGED_VALUES.
+    // fields keep the static defaults from DEFAULT_MANAGED_VALUES. The 'hanzi'
+    // control renders the length card, which only reads <|字数要求|>.
     managed: {
       macros: ['lengthRequirement', 'dialogueRatio', 'dialogueRounds', 'narrationPerson', 'narrationRequirement', 'bodyLanguage', 'globalPreference', 'userAdditional'],
-      controls: { dialogue: ['dialogueRatio', 'dialogueRounds'], length: [], languages: ['body'] },
+      controls: { dialogue: ['dialogueRatio', 'dialogueRounds'], length: ['hanzi'], languages: ['body'] },
     },
     output: 'dist/destined-journey-assistant-general.js',
   },
