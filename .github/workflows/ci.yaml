@@ -56,8 +56,6 @@ jobs:
         if: needs.plan.outputs.python == 'true' && runner.os == 'Linux'
       - uses: pnpm/action-setup@v4
         if: needs.plan.outputs.build == 'true'
-        with:
-          version: 10
       - run: pnpm install --frozen-lockfile
         if: needs.plan.outputs.build == 'true'
       - run: pnpm test
