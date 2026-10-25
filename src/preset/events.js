@@ -5,6 +5,16 @@ import { SEARCH_FIELDS, searchFields, searchPlaceholder } from './search.js';
 export function createEvents(ctx) {
   let searchCompositionTarget = null;
   function isSearchComposing() { return !!searchCompositionTarget?.isConnected; }
+  // A dialogue number only applies while the dialogue entry is on; choosing one
+  // leaves the 自由 mode. Returns whether the entry was switched on.
+  function enableDialogueEntry(field) {
+    if (ctx.FIELD_DEFINITIONS[field]?.promptId !== ctx.IDS.dialogue) return false;
+    const prompt = ctx.getPrompt(ctx.state.preset, ctx.IDS.dialogue);
+    if (!prompt || prompt.enabled) return false;
+    ctx.togglePrompt(ctx.IDS.dialogue, true);
+    ctx.shadow.querySelectorAll('[data-action="dialogue-free"]').forEach(button => { button.classList.remove('selected'); button.setAttribute('aria-pressed', 'false'); });
+    return true;
+  }
   function handleSearchComposition(event) {
     if (event.target.dataset?.action !== 'search') return;
     searchCompositionTarget = event.type === 'compositionstart' ? event.target : null;
@@ -108,9 +118,17 @@ export function createEvents(ctx) {
     if (action === 'gemini-tail') return ctx.setGeminiTail(target.dataset.value);
     if (action === 'person') return ctx.setNarrationPerson(target.dataset.value);
     if (action === 'group') return ctx.applyGroup(target.dataset.group, target.dataset.value);
+    if (action === 'dialogue-free') {
+      ctx.togglePrompt(ctx.IDS.dialogue, false);
+      return ctx.renderActiveContent(true);
+    }
     if (action === 'field-preset') {
       ctx.setNumericMode(target.dataset.field, 'preset');
       const task = ctx.setNumericField(target.dataset.field, target.dataset.value);
+      if (enableDialogueEntry(target.dataset.field)) {
+        ctx.renderActiveContent(true);
+        return task.catch(ctx.showErrorToast);
+      }
       const card = target.closest('.numeric-card');
       card?.querySelectorAll('.chips button').forEach(button => button.classList.toggle('selected', button === target));
       const input = card?.querySelector('[data-action="field-number"]');
@@ -121,6 +139,7 @@ export function createEvents(ctx) {
     }
     if (action === 'field-custom') {
       ctx.setNumericMode(target.dataset.field, 'custom');
+      enableDialogueEntry(target.dataset.field);
       const card = target.closest('.numeric-card');
       card?.querySelectorAll('.chips button').forEach(button => button.classList.toggle('selected', button === target));
       return card?.querySelector('[data-action="field-number"]')?.focus();
@@ -261,6 +280,7 @@ export function createEvents(ctx) {
         return;
       }
       if (error) error.textContent = '';
+      enableDialogueEntry(key);
       return ctx.setNumericField(key, value).catch(ctx.showErrorToast);
     }
     if (action === 'length-number') {

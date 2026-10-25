@@ -78,8 +78,14 @@
   for (const tab of ['daily', 'style', 'tools']) { ui.state.activeTab = tab; ui.render(); for (const input of ui.shadow.querySelectorAll('input[data-key^="prompt:"]')) counts[input.dataset.key] = (counts[input.dataset.key] || 0) + 1; }
   check('三个主页面无重复提示词开关', Object.values(counts).every(n => n === 1));
   check('事件链只出现一次', counts['prompt:' + ui.IDS.eventChain] === 1);
-  const managedToggles = [ui.IDS.dialogue, ui.IDS.outputLength, ui.IDS.narration];
-  check('数值和人称规则仍有启停能力', managedToggles.every(id => counts['prompt:' + id] === 1));
+  const managedToggles = [ui.IDS.outputLength, ui.IDS.narration];
+  check('数值和人称规则仍有启停能力', managedToggles.every(id => counts['prompt:' + id] === 1) && !counts['prompt:' + ui.IDS.dialogue]);
+  ui.state.activeTab = 'daily'; ui.render();
+  const dialogueOn = () => ui.state.preset.prompts.find(p => p.id === ui.IDS.dialogue).enabled;
+  q('[data-action="dialogue-free"][data-field="dialogueRatio"]').click();
+  check('对白自由档关闭对话量条目', dialogueOn() === false && [...ui.shadow.querySelectorAll('[data-action="dialogue-free"]')].every(b => b.classList.contains('selected')) && !ui.shadow.querySelector('[data-action="field-preset"][data-field="dialogueRounds"].selected'));
+  q('[data-action="field-preset"][data-field="dialogueRounds"][data-value="3"]').click();
+  check('选择对白数值重新启用条目', dialogueOn() === true && !ui.shadow.querySelector('[data-action="dialogue-free"].selected'));
   if (flavorId === 'general') {
     ui.state.activeTab = 'daily'; ui.render();
     check('通用版渲染字数要求而不渲染战斗回合', !!ui.shadow.querySelector('[data-action="length-mode"]') && !ui.shadow.querySelector('[data-action="field-number"][data-field="combatRounds"]') &&!!ui.shadow.querySelector('[data-action="field-number"][data-field="dialogueRatio"]'));

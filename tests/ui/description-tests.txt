@@ -15,7 +15,7 @@
   ui.state.activeTab='daily';ui.render();check('卡片完整显示转义后的简介',q('[data-placement-id="'+id+'"] small').textContent===text&&!q('[data-placement-id="'+id+'"] img'));
   open(id);type('description','');await save();check('清空隐藏简介并覆盖默认说明',desc(id)===''&&!q('[data-placement-id="'+id+'"] small'));open(id);check('重新打开保留空简介',q('[data-field="description:description"]').value==='');
   type('description','未保存');ui.closePromptEditor();check('简介草稿关闭时保护',ui.state.promptEditor.confirmClose&&desc(id)==='');ui.closePromptEditor(true);
-  open(ui.IDS.dialogue);check('对白条目提供两个独立说明',ui.shadow.querySelectorAll('[data-description-key]').length===2&&q('[data-field="description:dialogueRatio"]').value==='对白在正文中的占比');
+  open(ui.IDS.dialogue);check('对白条目提供两个独立说明',ui.shadow.querySelectorAll('[data-description-key]').length===2&&q('[data-field="description:dialogueRatio"]').value==='对白在正文中的占比；选「自由」则随场景');
   type('dialogueRatio','对白占比自定义');type('dialogueRounds','');await save();
   check('数字卡片独立自定义及清空生效',q('[data-action="field-number"][data-field="dialogueRatio"]').closest('.card').querySelector('p').textContent==='对白占比自定义'&&!q('[data-action="field-number"][data-field="dialogueRounds"]').closest('.card').querySelector('p'));
   open(ui.IDS.outputLength);check('输出条目提供四张卡片的简介',ui.shadow.querySelectorAll('[data-description-key]').length===4);

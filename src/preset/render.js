@@ -269,12 +269,17 @@ export function createRender(ctx) {
     const description = promptDescription(ctx.getPrompt(ctx.state.preset, definition.promptId), key);
     const current = ctx.readNumericField(key);
     const mode = current.ok ? ctx.getNumericMode(key, current.value) : 'custom';
+    // Dialogue cards replace the entry switch with a 自由 chip: free means the
+    // dialogue entry is disabled, and picking any number enables it again.
+    const dialoguePrompt = definition.promptId === ctx.IDS.dialogue ? ctx.getPrompt(ctx.state.preset, ctx.IDS.dialogue) : null;
+    const free = Boolean(dialoguePrompt && !dialoguePrompt.enabled);
     return `
       <article class="card numeric-card">
-        <div class="card-title"><div><h4>${ctx.escapeHtml(definition.label)}</h4>${description?`<p class="entry-description">${ctx.escapeHtml(description)}</p>`:''}</div>${['hanzi', 'dialogueRatio'].includes(key) && ctx.getPrompt(ctx.state.preset, definition.promptId) ? toggleHtml(`prompt:${definition.promptId}`, ctx.getPrompt(ctx.state.preset, definition.promptId).enabled) : ''}</div>
+        <div class="card-title"><div><h4>${ctx.escapeHtml(definition.label)}</h4>${description?`<p class="entry-description">${ctx.escapeHtml(description)}</p>`:''}</div>${key === 'hanzi' && ctx.getPrompt(ctx.state.preset, definition.promptId) ? toggleHtml(`prompt:${definition.promptId}`, ctx.getPrompt(ctx.state.preset, definition.promptId).enabled) : ''}</div>
         <div class="chips">
-          ${definition.presets.map(value => `<button type="button" data-action="field-preset" data-field="${key}" data-value="${value}" class="${current.ok && mode === 'preset' && current.value === String(value) ? 'selected' : ''}" ${current.ok ? disabledAttribute() : 'disabled'}>${value}${key === 'dialogueRatio' ? '%' : ''}</button>`).join('')}
-          <button type="button" data-action="field-custom" data-field="${key}" class="${mode === 'custom' ? 'selected' : ''}" ${current.ok ? disabledAttribute() : 'disabled'}>自定义</button>
+          ${dialoguePrompt ? `<button type="button" data-action="dialogue-free" data-field="${key}" class="${free ? 'selected' : ''}" aria-pressed="${free}" ${disabledAttribute()}>自由</button>` : ''}
+          ${definition.presets.map(value => `<button type="button" data-action="field-preset" data-field="${key}" data-value="${value}" class="${!free && current.ok && mode === 'preset' && current.value === String(value) ? 'selected' : ''}" ${current.ok ? disabledAttribute() : 'disabled'}>${value}${key === 'dialogueRatio' ? '%' : ''}</button>`).join('')}
+          <button type="button" data-action="field-custom" data-field="${key}" class="${!free && mode === 'custom' ? 'selected' : ''}" ${current.ok ? disabledAttribute() : 'disabled'}>自定义</button>
         </div>
         <label class="number-input"><span>自定义</span><input type="text" inputmode="numeric" data-action="field-number" data-field="${key}" value="${current.ok ? ctx.escapeHtml(current.value) : ''}" ${current.ok ? disabledAttribute() : 'disabled'}></label>
         <div class="field-error" data-field-error="${key}">${current.ok ? '' : '受管字段缺失或格式异常，已停止写入。'}</div>

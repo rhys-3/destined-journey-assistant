@@ -366,7 +366,7 @@ export const FIELD_DEFINITIONS = Object.freeze({
     presets: [20, 40, 60],
   },
   dialogueRounds: {
-    label: '最低对白轮次',
+    label: '对白轮次',
     promptId: IDS.dialogue,
     configKey: 'dialogue_round_trips',
     macro: MANAGED_MACROS.dialogueRounds,
