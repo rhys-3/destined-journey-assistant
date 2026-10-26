@@ -11,6 +11,8 @@ export const MACROS = [
   ['summary.history', '此前有效的大总结与普通总结'], ['summary.material', '本次带楼层编号的材料'], ['summary.start', '起始楼层'], ['summary.end', '结束楼层'], ['summary.kind', '总结类型'],
   ['summary.world_before', '世界书前置'], ['summary.persona', '用户设定'], ['summary.character', '角色描述'], ['summary.personality', '角色性格'], ['summary.scenario', '场景'], ['summary.world_after', '世界书后置'], ['summary.examples', '对话示例'], ['user', '用户名称'], ['char', '角色名称'],
 ];
+// Mirrors SillyTavern's defaultGlobalScanData; some builds read it without a default.
+const WORLD_SCAN_DATA = Object.freeze({ trigger: 'normal', personaDescription: '', characterDescription: '', characterPersonality: '', characterDepthPrompt: '', scenario: '', creatorNotes: '' });
 const builtinNames = { world_info_before: 'world_before', persona_description: 'persona', char_description: 'character', char_personality: 'personality', scenario: 'scenario', world_info_after: 'world_after', dialogue_examples: 'examples' };
 export async function snapshotContext(params, settings) {
   const token = captureContext(), st = tavernContext(), ctx = st?.getContext?.() ?? st ?? {};
@@ -25,7 +27,7 @@ export async function snapshotContext(params, settings) {
   const scan = st?.getWorldInfoPrompt ?? ctx.getWorldInfoPrompt;
   if (scan) {
     const memories = (await getWorldbookEntriesSafe()).filter(entry => parseRange(entry.name)).map(entry => entry.content).filter(Boolean);
-    const world = await scan([params.scanText ?? values['summary.material']], ctx.chatCompletionSettings?.openai_max_context ?? st?.chatCompletionSettings?.openai_max_context ?? 32000, true);
+    const world = await scan([params.scanText ?? values['summary.material']], ctx.chatCompletionSettings?.openai_max_context ?? st?.chatCompletionSettings?.openai_max_context ?? 32000, true, { ...WORLD_SCAN_DATA });
     checkContext(token);
     const clean = text => memories.reduce((value, memory) => value.split(memory).join(''), String(text ?? '')).trim();
     values['summary.world_before'] = clean(world?.worldInfoBefore);

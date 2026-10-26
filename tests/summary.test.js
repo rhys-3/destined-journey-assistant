@@ -494,10 +494,12 @@ test('check and tail entries are independently selectable and parse the actual a
 test('worldbook material includes only before and after context, excluding all depth entries',async()=>{
   books.book=[{name:'总结0-1楼',content:'OWN_MEMORY'}];
   globalThis.SillyTavern.getCharacterCardFields=()=>({description:'CHARACTER',personality:'PERSONALITY',persona:'PERSONA',scenario:'SCENARIO'});
-  let dryRun;globalThis.SillyTavern.getWorldInfoPrompt=async(text,budget,dry)=>{dryRun=dry;return {worldInfoBefore:'BEFORE OWN_MEMORY',worldInfoAfter:'AFTER',worldInfoDepth:[{entries:['EXTERNAL_DEPTH','OWN_MEMORY']}]};};
+  let dryRun,scanData;globalThis.SillyTavern.getWorldInfoPrompt=async(text,budget,dry,globalScanData)=>{dryRun=dry;scanData=globalScanData;return {worldInfoBefore:'BEFORE OWN_MEMORY',worldInfoAfter:'AFTER',worldInfoDepth:[{entries:['EXTERNAL_DEPTH','OWN_MEMORY']}]};};
   const compiled=await compilePrompt({promptBlocks:DEFAULT_SETTINGS.promptBlocks,mergedChatText:'MATERIAL'},DEFAULT_SETTINGS);
   const world=compiled.orderedPrompts.find(message=>message.content.includes('<world_and_characters>'));
   assert.equal(world.role,'user');assert(!world.content.includes('EXTERNAL_DEPTH'));assert(!world.content.includes('OWN_MEMORY'));assert(world.content.includes('CHARACTER'));assert.equal(dryRun,true);
+  // Builds between ST c292f6416 and 4177c829d read globalScanData.trigger without a default.
+  assert.equal(scanData?.trigger,'normal');for(const key of ['personaDescription','characterDescription','characterPersonality','characterDepthPrompt','scenario','creatorNotes'])assert.equal(scanData[key],'');
 });
 
 test('old prompt settings migrate to selectable entries while preserving edited lists and roles',()=>{
