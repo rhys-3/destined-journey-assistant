@@ -1,5 +1,6 @@
 import * as summary from '../summary/service.js';
 import { SEARCH_FIELDS, searchFields, searchPlaceholder } from './search.js';
+import { updateNoiseSegmentDraft } from './noise-controls.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createEvents(ctx) {
@@ -64,6 +65,10 @@ export function createEvents(ctx) {
       return ctx.openPromptEditor(editor.id);
     }
     if (ctx.state.promptEditor) return;
+    if (action === 'noise-mode' || action === 'noise-regenerate') {
+      const task = action === 'noise-mode' ? ctx.setNoiseSetting('mode', target.dataset.value) : ctx.regenerateNoise();
+      return task.catch(ctx.showErrorToast);
+    }
     if (action === 'close') return ctx.closePanel();
     if (action === 'close-backdrop' && event.target === target) return ctx.closePanel();
     if (action === 'close-style-editor' && event.target === target) {
@@ -188,6 +193,13 @@ export function createEvents(ctx) {
     if (action === 'ui-theme') return ctx.applyTheme(target.value, true);
     if (action === 'ui-transparency') return ctx.applyTransparency(Number(target.value), true);
     if (ctx.state.workspaceBusy) return;
+    if (action === 'noise-enabled' || action === 'noise-segments' || action === 'noise-segment-number') {
+      const value = action === 'noise-enabled' ? target.checked : updateNoiseSegmentDraft(target, ctx);
+      if (value === undefined) return;
+      try { await ctx.setNoiseSetting(action === 'noise-enabled' ? 'enabled' : 'segments', value); }
+      catch (error) { ctx.showErrorToast(error); }
+      return;
+    }
     if (action === 'setting-enabled') return ctx.handleSettingAction(action, target);
     if (action === 'placement-field') return ctx.setPlacementField(target.dataset.field,target.value);
     if (action === 'model-draft') { ctx.state.modelDraft[target.dataset.field] = target.value; return; }
@@ -239,6 +251,7 @@ export function createEvents(ctx) {
     const action = target.dataset.action;
     if (action === 'ui-transparency') return ctx.applyTransparency(Number(target.value));
     if (ctx.state.workspaceBusy) return;
+    if (action === 'noise-segments' || action === 'noise-segment-number') return updateNoiseSegmentDraft(target, ctx);
     if (action === 'setting-text') return ctx.handleSettingInput(target, event.isComposing || ctx.isSettingComposing());
     if (action === 'configuration-name') { ctx.state.configurationName = target.value; return; }
     if (action === 'model-draft') { ctx.state.modelDraft[target.dataset.field] = target.value; return; }
@@ -435,6 +448,7 @@ export function createEvents(ctx) {
     ctx.destroyed = true;
     ctx.discussion?.dispose();
     ctx.toolOutput?.dispose();
+    ctx.disposeNoise?.();
     summary.dispose();
     ctx.dialogs?.destroy();
     for (const item of ctx.debounceTimers.values()) { clearTimeout(item.timer); item.resolve({ cancelled: true }); }

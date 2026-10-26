@@ -46,7 +46,8 @@
  check('保存失败回滚持久预设并保留草稿',JSON.stringify(stored)===JSON.stringify(before)&&ui.state.promptEditor.dirty&&q('[data-field="name"]').value==='失败测试');
  ui.closePromptEditor(true);ui.openPromptEditor(created);field('content','跨预设草稿');const loaded=getLoadedPresetName;window.getLoadedPresetName=()=> 'another';ui.reconcilePreset('切换预设');await ui.savePromptEditor();
  check('切换预设自动锁定并阻止旧草稿保存',!ui.state.editorUnlocked&&ui.state.promptEditor.contextChanged&&data.prompts.find(p=>p.id===created).content==='新内容');window.getLoadedPresetName=loaded;
- ui.closePromptEditor(true);ui.state.activeTab='tools';ui.render();check('重置命中缓存独立功能且无其他可用板块',!!q('[data-key="prompt:'+id+'"]')&&!q('.content').textContent.includes('其他可用设置'));
+ ui.closePromptEditor(true);ui.state.activeTab='tools';ui.render();check('工具页不重复显示重置命中缓存',!q('[data-key="prompt:'+id+'"]'));
+ ui.state.activeTab='daily';ui.render();check('重置命中缓存与噪声集中在日常页前部',!!q('[data-noise-controls] [data-key="prompt:'+id+'"]')&&q('.content').children[1]?.matches('[data-noise-controls]'));
  for(const tab of ['daily','style','tools']){ui.state.activeTab=tab;ui.render();check(tab+' 不展示必需条目开关',[...ui.PROTECTED_IDS].every(id=>!q('[data-key="prompt:'+id+'"]')));}
  ui.state.editorUnlocked=true;ui.closePanel();ui.openPanel();await ui.settle();check('关闭再打开自动恢复锁定',!ui.state.editorUnlocked);
  data=original;stored=savedOriginal;ui.reconcilePreset('还原测试');ui.state.activeTab='advanced';ui.state.entryFilter='all';ui.state.search='';ui.render();

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as definitions from '../src/preset/definitions.js';
 import { createManaged } from '../src/preset/managed.js';
+import { createNoise } from '../src/preset/noise.js';
 import { createStore } from '../src/preset/store.js';
 import { discussionAdapterSupport } from '../src/discussion/adapter.js';
 import { prepareToolOutputRequest, TOOL_OUTPUT_NAME } from '../src/preset/tool-output.js';
@@ -18,7 +19,7 @@ const processorSource = fs.readFileSync(sourcePath, 'utf8');
 const privateRoot = path.resolve(path.dirname(sourcePath), '../../../../..');
 const helperPath = path.join(privateRoot, 'tests/helpers/discussion-macros.mjs');
 const { createCustomGeminiAdapter, evaluateDiscussionPrompts, loadFinalPrimePrompts, CORE_IF_SOURCE } = await import(pathToFileURL(helperPath).href);
-const { installMessageProcessing, DISCUSSION_MACRO_MARKER } = await import(pathToFileURL(sourcePath).href);
+const { installMessageProcessing, processDestinedMessages, DISCUSSION_MACRO_MARKER } = await import(pathToFileURL(sourcePath).href);
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const adapterSourceUrl = new URL('../src/discussion/adapter.js', import.meta.url);
 const { prompts, extension } = loadFinalPrimePrompts();
@@ -194,7 +195,8 @@ function adapterSupportFor(adapter) {
 const adapterSupportResults = adapters.map(adapterSupportFor);
 
 const reports = [];
-for (const adapter of adapters) for (const mode of adapter.modes) {
+const noiseOnly = process.argv.includes('--noise-only');
+for (const adapter of noiseOnly ? [] : adapters) for (const mode of adapter.modes) {
   for (const config of configurations) for (const processorFirst of [true, false]) {
     const enabled = Object.fromEntries(prompts.filter(prompt => prompt.extra?.destined_ui?.group === 'main-style')
       .map(prompt => [prompt.__split_name, prompt.__split_name === config.style]));
@@ -212,6 +214,7 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
     } } } };
     ctx.sanitizeManagedValues = createStore(ctx).sanitizeManagedValues;
     const managed = createManaged(ctx);
+    const noise = createNoise(ctx);
     let frozenMode = mode, readinessCalls = 0;
     const preparedOutputs = [];
     const options = {
@@ -224,7 +227,7 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
       notify: value => errors.push(value),
       onPreparedOutput: output => { preparedOutputs.push(output); return true; },
     };
-    const expand = data => managed.expandOutgoingMessages(data?.prompt);
+    const expand = data => { noise.inspectNoiseOutgoing(data?.prompt); managed.expandOutgoingMessages(data?.prompt); };
     let instance;
     if (processorFirst) { instance = installMessageProcessing(options); on(events.GENERATE_AFTER_DATA, expand); }
     else { on(events.GENERATE_AFTER_DATA, expand); instance = installMessageProcessing(options); }
@@ -232,6 +235,7 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
     const inputCopy = structuredClone(main.prompt);
     // The early assistant pass precedes Prime. Its second pass can be registered
     // on either side of Prime without consuming structural markers.
+    noise.inspectNoiseOutgoing(main.prompt);
     managed.expandOutgoingMessages(main.prompt);
     await emit(events.GENERATE_AFTER_DATA, main, false);
     assert.deepEqual(preparedOutputs, [{ recorderPrefill: mode === 'discussion' && adapter.prefill === true }]);
@@ -269,6 +273,7 @@ for (const adapter of adapters) for (const mode of adapter.modes) {
 
     const text = requestText(main.prompt);
     assert(!text.includes('<|命定_'), 'structural marker leaked');
+    assert(!text.includes('{{destined_prompt_noise}}'), 'disabled noise macro leaked');
     assert(!text.includes('{{getvar::本轮场外讨论}}'), 'conditional mode macro leaked');
     assert(!/<\|(字数|字数要求|人称要求|正文语言|思维链语言)\|>/.test(text), 'assistant macro leaked');
     const lengthControl = text.match(/<length_control\b[^>]*>([\s\S]*?)<\/length_control>/)?.[1];
@@ -396,6 +401,54 @@ for (const [content, expected] of [
   assert.equal(errors.length, 1);
   instance.dispose();
 }
+// Exercise the real noise callback before Prime consumes its boundaries. The
+// Native substitution is simulated; the prebuilt corpus is checked offline.
+const noiseCases = [];
+{
+  for (const adapter of adapters) for (const mode of adapter.modes) for (const [segments, noiseMode] of [[10, 'fixed'], [48, 'random']]) {
+    let registration;
+    const expanded = evaluateDiscussionPrompts({ ...adapter, mode });
+    const original = assembleNativeFixture(expanded, mode);
+    const ctx = { ...definitions, macroStops: [], presetIsMine: () => true, workspaceContextKey: () => 'noise-contract',
+      getContext: () => ({ registerMacro: (name, callback) => { registration = { name, callback }; }, unregisterMacro() {} }),
+      state: { preset: { prompts: prompts.map(prompt => ({ ...prompt, id: prompt.identifier })) },
+        config: { managed_values: definitions.DEFAULT_MANAGED_VALUES, noise_padding: { enabled: true, segments, mode: noiseMode } } } };
+    ctx.sanitizeManagedValues = createStore(ctx).sanitizeManagedValues;
+    const managed = createManaged(ctx);
+    const noise = createNoise(ctx);
+    noise.registerNoiseMacro();
+    noise.beforeNoiseGeneration('normal');
+    const padding = noise.readNoiseControl();
+    assert.equal(padding.estimatedTokens, segments * 250);
+    assert(padding.text && /^[\x00-\x7f]+$/.test(padding.text));
+    const main = structuredClone(original);
+    for (const item of main) {
+      const expand = text => text.replaceAll('{{' + registration.name + '}}', registration.callback);
+      if (typeof item.content === 'string') item.content = expand(item.content);
+      else for (const part of item.content) if (part.type === 'text') part.text = expand(part.text);
+    }
+    assert.deepEqual(main.map(item => item.role), original.map(item => item.role), 'noise changed a native role');
+    noise.inspectNoiseOutgoing(main);
+    managed.expandOutgoingMessages(main);
+    const result = processDestinedMessages(main, { mode });
+    const protocol = result.find(item => bodyText(item.content).includes('<VOID_output_contract'));
+    assert.equal(protocol.role, 'user');
+    assert(bodyText(protocol.content).trimStart().startsWith(padding.text), 'noise must lead the output protocol in the same message');
+    assert.equal(requestText(result).split(padding.text).length - 1, 1, 'noise was inserted more than once');
+    assert(!requestText(result).includes('{{destined_prompt_noise}}'));
+    const baseline = structuredClone(original);
+    const off = createNoise({ state: { config: {} } });
+    off.inspectNoiseOutgoing(baseline);
+    managed.expandOutgoingMessages(baseline);
+    const expected = processDestinedMessages(baseline, { mode });
+    const normalize = messages => messages.map(item => ({ ...item, content: typeof item.content === 'string'
+      ? item.content.replace(padding.text, '').trimStart()
+      : item.content.map(part => part.type === 'text' ? { ...part, text: part.text.replace(padding.text, '').trimStart() } : part) }));
+    assert.deepEqual(normalize(result), normalize(expected), 'noise changed other prompts or message parts');
+    noiseCases.push({ adapter: adapter.name, mode, noiseMode, segments, estimatedTokens: padding.estimatedTokens, protocolRole: protocol.role });
+    noise.disposeNoise();
+  }
+}
 const report = {
   sourceSha256: hash(fs.readFileSync(sourcePath)),
   promptInputSha256: hash(JSON.stringify({ prompts, extension })),
@@ -405,6 +458,7 @@ const report = {
   adapterSourceSha256: hash(fs.readFileSync(adapterSourceUrl)),
   adapterSupport: adapterSupportResults,
   cases: reports,
+  noiseCases,
   verified: [
     'actual split prompt order and bodies; Gemini prefill, no-prefill, one-call and two-call tool-output tails plus four copied custom adapters and native Claude/DeepSeek/Glm in story and discussion; three length modes with style/variable settings and both assistant event orders',
     'every provider keeps its own native discussion head, thinking container (recorder_audit_format or think_format), tail and visible body schema; the five-step fields and the scope notice stay shared and ordered before the audit',
@@ -425,6 +479,7 @@ if (rejectedSupport.length) throw new Error('assistant discussionAdapterSupport 
   + rejectedSupport.map(item => item.adapter + ' (' + item.model + ') via ' + item.source + ': ' + item.reason).join(' | '));
 console.log(JSON.stringify({
   cases: reports.length,
+  noiseCases: noiseCases.length,
   sourceSha256: report.sourceSha256,
   adapterSupport: adapterSupportResults.map(item => item.adapter + '=' + (item.available ? item.model : 'REJECTED')),
   report: '.ui-review/message-processing-integration.json',

@@ -53,6 +53,8 @@ import { createStore } from './store.js';
 import { createWorldbook } from './worldbook.js';
 import { createModels } from './models.js';
 import { createManaged } from './managed.js';
+import { createNoise } from './noise.js';
+import { createNoiseControls } from './noise-controls.js';
 import { createSettingLists } from './setting-lists.js';
 import { createStylesEditor } from './styles-editor.js';
 import { createConnections } from './connections.js';
@@ -413,6 +415,8 @@ export async function startPresetAssistant() {
     initializeStyleStructures,
     createPromptId
   } = createManaged(ctx);
+  const noise = createNoise(ctx);
+  Object.assign(ctx, noise, createNoiseControls(ctx));
   Object.assign(ctx, createSettingLists(ctx));
   const { openStyleEditor, saveStyleEditor, deleteUserStyle, setStreaming, ensurePromptMetadata, inferPromptMeta } = createStylesEditor(ctx);
   const {
@@ -721,6 +725,7 @@ export async function startPresetAssistant() {
   window.parent.visualViewport?.addEventListener('scroll', handleViewportResize);
   handleViewportResize();
   registerManagedMacros();
+  noise.registerNoiseMacro();
   refreshPreset();
   (async () => {
     await initializeManagedSettings();
@@ -736,12 +741,19 @@ export async function startPresetAssistant() {
     tavern_events.OAI_PRESET_CHANGED_AFTER,
     tavern_events.SETTINGS_UPDATED,
   ]) subscribe(eventName, () => reconcilePreset('酒馆预设界面'));
+  subscribe(tavern_events.GENERATION_AFTER_COMMANDS, (...args) => noise.beforeNoiseGeneration(...args));
+  for (const eventName of [tavern_events.GENERATION_ENDED, tavern_events.GENERATION_STOPPED]) {
+    subscribe(eventName, noise.finishNoiseGeneration);
+  }
   subscribeLast(tavern_events.CHAT_COMPLETION_PROMPT_READY, eventData => {
+    noise.inspectNoiseOutgoing(eventData?.chat, eventData?.dryRun === true);
     expandOutgoingMessages(eventData?.chat);
   });
-  subscribeLast(tavern_events.GENERATE_AFTER_DATA, generateData => {
+  subscribeLast(tavern_events.GENERATE_AFTER_DATA, (generateData, dryRun) => {
+    noise.inspectNoiseOutgoing(generateData?.prompt, dryRun === true);
     expandOutgoingMessages(generateData?.prompt);
   });
+  subscribeLast(tavern_events.CHAT_COMPLETION_SETTINGS_READY, noise.validateNoiseRequest);
   for (const eventName of [
     tavern_events.CONNECTION_PROFILE_LOADED,
     tavern_events.CONNECTION_PROFILE_CREATED,

@@ -1,6 +1,7 @@
 import { writePresetStore } from '../platform/store.js';
 import { normalizeCustomSettingValues } from './setting-items.js';
 import { DISCUSSION_SETTINGS_KEY } from '../discussion/preferences.js';
+import { normalizeNoiseSettings } from './noise-text.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createStore(ctx) {
@@ -82,6 +83,7 @@ export function createStore(ctx) {
       managed_values_version: Number(raw.managed_values_version) || 0,
       style_structure_version: Number(raw.style_structure_version) || 0,
       managed_values: {},
+      noise_padding: normalizeNoiseSettings(raw.noise_padding),
       entry_points: sanitizeEntryPoints(raw.entry_points),
       connection_link: {
         enabled: source.enabled === true,
@@ -230,6 +232,7 @@ export function createStore(ctx) {
     try {
       ctx.state.preset = clone(getPreset('in_use'));
       ctx.presetFingerprint = fingerprintPresetValue(ctx.state.preset);
+      ctx.refreshNoise?.();
       if (shouldRender) ctx.renderActiveContent(true);
     } catch (error) {
       ctx.state.preset = null;

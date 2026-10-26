@@ -297,7 +297,7 @@ export function createPlacement(ctx) {
 
   function renderPlacementBlock(block) {
     if(block.hidden)return '';
-    let prompts=placementMembers(block.id);
+    let prompts=placementMembers(block.id).filter(prompt => prompt.id !== ctx.IDS.resetCache);
     let dedicated='';
     if(block.id==='variable'){
       if(prompts.some(p=>ctx.getPromptGroupId(p)==='variable-mode'))dedicated=`<div class="variable-slot">${ctx.renderVariablePanel()}</div>`;
@@ -348,6 +348,7 @@ export function createPlacement(ctx) {
     const layout=authorLayout(),page=layout.pages.find(p=>p.id===pageId);
     if(!page)return '';
     let html=ctx.renderSectionHeader(page.label,ctx.state.editorUnlocked?'编辑模式已开启 · 可新增、修改和删除条目':'');
+    if (pageId === 'daily') html += ctx.renderNoiseControls();
     const blocks=layout.blocks.filter(b=>b.page===pageId&&b.id!=='entry-points'&&!b.hidden).sort((a,b)=>a.order-b.order);
     for(let index=0;index<blocks.length;index++){
       const block=blocks[index];

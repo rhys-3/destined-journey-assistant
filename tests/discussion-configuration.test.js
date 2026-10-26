@@ -25,6 +25,19 @@ test('configuration snapshots retain all three length settings and normalize leg
   assert.deepEqual(legacy.config.managed_values, { ...DEFAULT_MANAGED_VALUES, min_hanzi: '5000', max_hanzi: '5000', length_mode: 'minimum' });
 });
 
+test('noise settings survive configuration export and import without including generated text', () => {
+  const noise = { enabled: true, segments: 29, mode: 'random', seed: '1234567890abcdef' };
+  const snapshot = schema().capturePresetConfiguration(preset(), { noise_padding: { ...noise, text: 'PRIVATE GENERATED TEXT' } });
+  assert.deepEqual(snapshot.config.noise_padding, noise);
+  assert.deepEqual(schema().validatePresetSnapshot(snapshot).config.noise_padding, noise);
+  assert(!JSON.stringify(snapshot).includes('PRIVATE GENERATED TEXT'));
+  const legacy = structuredClone(snapshot);
+  legacy.config.noise_padding = { ...noise, segments: undefined, tokens: 7311 };
+  assert.deepEqual(schema().validatePresetSnapshot(legacy).config.noise_padding, noise);
+  delete legacy.config.noise_padding;
+  assert.equal(schema().validatePresetSnapshot(legacy).config.noise_padding.enabled, false);
+});
+
 test('named configuration restore writes mode marks with native prompts and keeps unrelated extensions', async t => {
   const names = ['getPreset', 'getLoadedPresetName', 'getVariables', 'replaceVariables'];
   const previous = Object.fromEntries(names.map(name => [name, globalThis[name]])); t.after(() => Object.assign(globalThis, previous));

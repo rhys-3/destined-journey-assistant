@@ -14,7 +14,7 @@ const promptDefaults = {
   [IDS.nsfwPace]: '四阶段推进与射精、高潮控制。',
   [IDS.nsfwWords]: '禁用词、套式表达与医学专业术语。',
   [IDS.eventChain]: '配合世界书事件链使用；此处只切换预设条目。',
-  [IDS.resetCache]: '排查命中异常时启用，恢复正常后关闭。',
+  [IDS.resetCache]: '随机前缀用于改变请求，尝试减少重复标记影响；效果需实际观察。',
   '928d98d6-2128-4f9d-8406-440fa2d70f87': '总开关：启用基础表达规则及已勾选的细则。',
 };
 export const DESCRIPTION_KEYS = ['description', ...Object.keys(numericDefaults), 'body', 'thinking'];

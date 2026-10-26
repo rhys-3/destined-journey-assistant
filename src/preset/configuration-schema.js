@@ -3,6 +3,7 @@ import { sanitizeDiscussionSettings } from '../discussion/preferences.js';
 import { DESCRIPTION_KEYS, DESCRIPTION_LIMIT } from './descriptions.js';
 import { migrateCustomSettingPrompts } from './setting-items.js';
 import { GEMINI_TAIL_MODES, OPTIONAL_MODEL_PROMPT_IDS, geminiTailMode } from './definitions.js';
+import { normalizeNoiseSettings } from './noise-text.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createConfigurationSchema(ctx) {
@@ -135,6 +136,7 @@ export function createConfigurationSchema(ctx) {
     for (const id of Object.keys(modelRegistry({ custom_models }))) bindings[id] = ctx.sanitizeBinding(config.connection_link?.bindings?.[id]);
     return {
       managed_values: ctx.sanitizeManagedValues(config.managed_values, preset),
+      noise_padding: normalizeNoiseSettings(config.noise_padding),
       entry_points: ctx.sanitizeEntryPoints(config.entry_points),
       custom_models,
       connection_link: { enabled: config.connection_link?.enabled === true, bindings },

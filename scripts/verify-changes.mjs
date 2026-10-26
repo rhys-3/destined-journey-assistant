@@ -37,6 +37,7 @@ export function run(plan) {
     command([`tests/ui/test-${name}.cjs`]);
     if (name === 'ui') command(['tests/ui/test-ui.cjs', '--modern-length']);
     if (name === 'ui') command(['tests/ui/test-general.cjs']);
+    if (name === 'ui') command(['tests/ui/test-noise.cjs', '--integrated']);
     if (name === 'assistant') command(['tests/ui/test-discussion-records.cjs']);
   }
 }
