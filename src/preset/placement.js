@@ -31,6 +31,7 @@ export function createPlacement(ctx) {
       });
     }
     for (const block of layout.blocks) if (block.id === 'adult-extra') block.id = NSFW_EXTRA;
+    layout.blocks = layout.blocks.filter(block => block.id !== 'cache' || block.kind !== 'builtin');
     // v4 placed discussion-only prompt controls on their own page. v5 keeps
     // the native switch hidden and folds the actual prompt contracts back into
     // the shared model/native entries. Preserve user-created blocks by moving
@@ -58,7 +59,7 @@ export function createPlacement(ctx) {
       ['nsfw-mode', 'style', 'NSFW模式', 'single'], ['nsfw-extra', 'style', 'NSFW可选', 'toggles'],
       ['content-extra', 'style', '内容偏好与表达约束', 'toggles'],
       ['models', 'tools', '模型与连接', 'builtin'], ['streaming', 'tools', '流式输出', 'builtin'],
-      ['helpers', 'tools', '回复辅助', 'toggles'], ['cache', 'tools', '重置命中缓存', 'builtin'],
+      ['helpers', 'tools', '回复辅助', 'toggles'],
       ['entry-points', 'tools', '设置入口', 'builtin'], ['unclassified', 'tools', '未分类条目', 'toggles'],
     ];
     return {
@@ -144,7 +145,7 @@ export function createPlacement(ctx) {
     if (ctx.PROTECTED_IDS.has(prompt.id)) return 'hidden';
     if (ctx.MODEL_IDS.has(prompt.id)) return 'models';
     if (ctx.ID_TO_GROUP.has(prompt.id)) return ctx.ID_TO_GROUP.get(prompt.id) === 'variable-mode' ? 'variable' : ctx.ID_TO_GROUP.get(prompt.id);
-    const special = { [ctx.IDS.dialogue]: 'reply', [ctx.IDS.outputLength]: 'reply', [ctx.IDS.narration]: 'person', [ctx.IDS.globalPreference]: 'preference', [ctx.IDS.userAdditional]: 'user-additional', [ctx.IDS.eventChain]: 'event-chain', [ctx.IDS.resetCache]: 'cache' };
+    const special = { [ctx.IDS.dialogue]: 'reply', [ctx.IDS.outputLength]: 'reply', [ctx.IDS.narration]: 'person', [ctx.IDS.globalPreference]: 'preference', [ctx.IDS.userAdditional]: 'user-additional', [ctx.IDS.eventChain]: 'event-chain', [ctx.IDS.resetCache]: 'hidden' };
     if (special[prompt.id]) return special[prompt.id];
     if ([ctx.IDS.nsfwSfw, ctx.IDS.nsfwPace, ctx.IDS.nsfwWords].includes(prompt.id)) return NSFW_EXTRA;
     if (ctx.AFTER_BODY_IDS.includes(prompt.id)) return 'after-body';

@@ -1,6 +1,7 @@
 import { legacySettingItems, serializeSettingItems, readSettingTemplate, migrateCustomSettingPrompts } from './setting-items.js';
 import { expandIdentityMacros } from '../platform/identity-macros.js';
 import { createUuid as createPromptId } from '../platform/uuid.js';
+import { migrateNoisePlacement, needsNoisePlacementMigration } from './noise-placement.js';
 
 // These structural markers are consumed by the preset's message processor.
 // They must survive both assistant macro passes until that processor runs.
@@ -374,10 +375,21 @@ export function createManaged(ctx) {
     // A foreign preset (for example Prime's, when both assistants are
     // installed) is never migrated, rewritten or announced.
     if (!ctx.presetIsMine()) return;
-    if (!ctx.state.preset || !needsManagedPromptMigration(ctx.state.preset)) return;
+    if (!ctx.state.preset) return;
+    const migrateManaged = needsManagedPromptMigration(ctx.state.preset);
+    if (!migrateManaged && !needsNoisePlacementMigration(ctx.state.preset, ctx.MODEL_ADAPTERS)) return;
     if (ctx.state.config.configuration_error) throw new Error(ctx.state.config.configuration_error);
     const name = getLoadedPresetName(), context = ctx.workspaceContextKey();
     const current = () => !ctx.destroyed && getLoadedPresetName() === name && ctx.workspaceContextKey() === context;
+    if (!migrateManaged) {
+      await ctx.queuePresetMutation('迁移输入噪声位置', preset => {
+        if (!current()) throw new Error('上下文已变化，噪声迁移已停止。');
+        migrateNoisePlacement(preset, ctx.MODEL_ADAPTERS);
+        if (preset.extensions?.destined_author) preset.extensions.destined_author = ctx.validateAuthorLayout(preset.extensions.destined_author);
+      });
+      ctx.renderActiveContent(true);
+      return;
+    }
     const legacyValues = readLegacyManagedValues(ctx.state.preset);
     ctx.state.config.managed_values = ctx.sanitizeManagedValues({
       ...ctx.state.config.managed_values,
@@ -393,6 +405,7 @@ export function createManaged(ctx) {
         prompt.content = migrateManagedPromptContent(id, prompt.content);
       }
       migrateCustomSettingPrompts(preset);
+      migrateNoisePlacement(preset, ctx.MODEL_ADAPTERS);
       if (preset.extensions?.destined_author) preset.extensions.destined_author = ctx.validateAuthorLayout(preset.extensions.destined_author);
     });
     ctx.state.config.managed_values_version = ctx.MANAGED_VALUES_VERSION;

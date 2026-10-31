@@ -121,6 +121,7 @@ export const IDS = Object.freeze({
   antiEmpty: 'fda70f73-997d-480f-83da-1e6e76e8071a',
   outputSummary: 'fae61edb-c404-4640-8371-71fa654f81e6',
   writingEnd: 'a1acb123-3786-41d4-9287-ff3499d7895a',
+  // Kept to identify the retired cache entry in older presets and snapshots.
   resetCache: '72c1e074-152f-424f-818a-adcf32c58779',
   sceneInfo: '49524930-ad3f-4499-a300-564c5e995159',
   nsfwStart: '00918aed-b248-4afc-8ea1-8a83b82e86e4',

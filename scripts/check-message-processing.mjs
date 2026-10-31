@@ -286,7 +286,11 @@ for (const adapter of noiseOnly ? [] : adapters) for (const mode of adapter.mode
       assert(text.includes(value), 'lost injected material: ' + value);
     }
     assert.equal(main.prompt.filter(item => item.role === 'user').length, 1, 'common body envelope changed');
-    assert(text.includes('Participant:<Participant_input>'), 'latest input wrapper missing');
+    if (adapter.tool) {
+      assert(text.includes('Participant:<Participant_input ref="tool">'), 'tool input placeholder missing');
+      const latestInput = mode === 'discussion' ? '采用第二个方案，后续按这个动机写。' : '继续剧情，沿用已确认的动机。';
+      assert(toolRequest.body.tools[0].function.description.includes(latestInput), 'latest input did not reach the tool description');
+    } else assert(text.includes('Participant:<Participant_input>'), 'latest input wrapper missing');
     assert(text.includes('Recorder: <discussion_record>'), 'discussion record prefix missing');
     const content = main.prompt.find(item => item.role === 'user').content;
     assert(Array.isArray(content), 'multimodal body was flattened');
@@ -298,11 +302,12 @@ for (const adapter of noiseOnly ? [] : adapters) for (const mode of adapter.mode
       const spec = discussionModels[specModel];
       const headName = adapter.customAdapter ? adapter.customAdapter.entries[0].__split_name : spec.head;
       const thinkingName = adapter.customAdapter ? adapter.customAdapter.entries[1].__split_name : spec.thinking;
-      const tailName = adapter.customAdapter ? adapter.customAdapter.entries[2].__split_name : adapter.tool ? spec.toolTails[adapter.tool] : spec.tail;
+      const tailName = adapter.customAdapter ? adapter.customAdapter.entries[2].__split_name
+        : adapter.prefill && spec.prefillTail ? spec.prefillTail : adapter.tool ? spec.toolTails[adapter.tool] : spec.tail;
       const headSource = adapter.customAdapter ? adapter.customAdapter.entries[0].content : byName.get(headName).content;
-      const tailSource = adapter.customAdapter ? adapter.customAdapter.entries[2].content : byName.get(tailName).content;
+      const tailSource = expanded.entries.find(entry => entry.name === tailName).content;
       const expectedHead = managed.expandManagedMacros(nativeText(expanded.entries.find(entry => entry.name === headName).content))
-        .replaceAll(DISCUSSION_MACRO_MARKER, '').trim().replace(/\n{3,}/g, '\n\n');
+        .replaceAll('{{destined_prompt_noise}}', '').replaceAll(DISCUSSION_MACRO_MARKER, '').trim().replace(/\n{3,}/g, '\n\n');
       assert.equal(head, expectedHead, 'native discussion head changed during processing');
       // Gemini and Claude audit inside recorder_audit_format; DeepSeek and Glm
       // audit inside their native think_format. A model must never mix both.
@@ -349,7 +354,7 @@ for (const adapter of noiseOnly ? [] : adapters) for (const mode of adapter.mode
         assert(tail.content.endsWith('<recorder_thinking>'), 'native Gemini discussion prefill boundary changed');
       } else {
         assert.equal(tail.role, 'system', 'the native non-prefill discussion tail must stay a system entry');
-        const nativeTail = nativeText(tailSource).trim();
+        const nativeTail = nativeText(tailSource).trim().replace(/\n{3,}/g, '\n\n');
         const sentTail = adapter.tool ? prepareToolOutputRequest({ messages: [{ role: 'system', content: nativeTail }] }).body.messages[0].content.trim() : nativeTail;
         assert.equal(tail.content, sentTail, 'native ' + tailName + ' discussion tail changed');
         if (adapter.tool) assert(!tail.content.includes('<|命定_'), tailName + ' leaked a transport marker');
@@ -411,7 +416,7 @@ const noiseCases = [];
     const original = assembleNativeFixture(expanded, mode);
     const ctx = { ...definitions, macroStops: [], presetIsMine: () => true, workspaceContextKey: () => 'noise-contract',
       getContext: () => ({ registerMacro: (name, callback) => { registration = { name, callback }; }, unregisterMacro() {} }),
-      state: { preset: { prompts: prompts.map(prompt => ({ ...prompt, id: prompt.identifier })) },
+      state: { preset: { prompts: expanded.entries.map(prompt => ({ ...prompt, id: prompt.identifier, enabled: true })) },
         config: { managed_values: definitions.DEFAULT_MANAGED_VALUES, noise_padding: { enabled: true, segments, mode: noiseMode } } } };
     ctx.sanitizeManagedValues = createStore(ctx).sanitizeManagedValues;
     const managed = createManaged(ctx);
@@ -433,7 +438,13 @@ const noiseCases = [];
     const result = processDestinedMessages(main, { mode });
     const protocol = result.find(item => bodyText(item.content).includes('<VOID_output_contract'));
     assert.equal(protocol.role, 'user');
-    assert(bodyText(protocol.content).trimStart().startsWith(padding.text), 'noise must lead the output protocol in the same message');
+    assert(!bodyText(protocol.content).includes(padding.text), 'noise reached the output protocol');
+    const head = result.find(item => bodyText(item.content).includes(padding.text));
+    const sourceHead = expanded.entries.find(item => item.content.includes('{{destined_prompt_noise}}'));
+    assert.equal(head.role, sourceHead.role, 'noise must share the native model head role');
+    assert(bodyText(head.content).trimStart().startsWith(padding.text), 'noise must lead the model head in the same message');
+    assert(bodyText(head.content).indexOf(padding.text) < bodyText(head.content).indexOf('[CLEAR :: RESET ROLE'));
+    assert(result.indexOf(head) < result.indexOf(protocol), 'noise moved into the body');
     assert.equal(requestText(result).split(padding.text).length - 1, 1, 'noise was inserted more than once');
     assert(!requestText(result).includes('{{destined_prompt_noise}}'));
     const baseline = structuredClone(original);
@@ -445,7 +456,7 @@ const noiseCases = [];
       ? item.content.replace(padding.text, '').trimStart()
       : item.content.map(part => part.type === 'text' ? { ...part, text: part.text.replace(padding.text, '').trimStart() } : part) }));
     assert.deepEqual(normalize(result), normalize(expected), 'noise changed other prompts or message parts');
-    noiseCases.push({ adapter: adapter.name, mode, noiseMode, segments, estimatedTokens: padding.estimatedTokens, protocolRole: protocol.role });
+    noiseCases.push({ adapter: adapter.name, mode, noiseMode, segments, estimatedTokens: padding.estimatedTokens, headRole: head.role, protocolRole: protocol.role });
     noise.disposeNoise();
   }
 }
@@ -464,7 +475,7 @@ const report = {
     'every provider keeps its own native discussion head, thinking container (recorder_audit_format or think_format), tail and visible body schema; the five-step fields and the scope notice stay shared and ordered before the audit',
     'conditional branches share the original body and depth envelope, multimodal parts and native head/tail roles',
     'discussion retains narrative style/body/variable protocols inside reference boundaries and selects its own audit/output contract',
-    'native Gemini prefill survives; the non-prefill Gemini, Claude, DeepSeek and Glm tails stay byte-identical to their split entries; only the additional connection prefill is cleared',
+    'native Gemini prefill survives; non-prefill Gemini, Claude, DeepSeek and Glm tails match their expanded split entries after normal whitespace cleanup; only the additional connection prefill is cleared',
     'tool-output tails keep the assistant marker through managed expansion and message processing; the fetch transport then removes it and adds exactly one tool; only the two-call tail yields a continuation prompt, while every other tail reaches it unmarked',
     'independent interleaved raw summaries remain untouched; request identity retains the frozen mode',
     'invalid or legacy-only routing markers block request serialization; registered processor listeners are removable',

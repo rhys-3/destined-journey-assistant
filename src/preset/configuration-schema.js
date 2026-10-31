@@ -4,6 +4,7 @@ import { DESCRIPTION_KEYS, DESCRIPTION_LIMIT } from './descriptions.js';
 import { migrateCustomSettingPrompts } from './setting-items.js';
 import { GEMINI_TAIL_MODES, OPTIONAL_MODEL_PROMPT_IDS, geminiTailMode } from './definitions.js';
 import { normalizeNoiseSettings } from './noise-text.js';
+import { migrateNoisePlacement } from './noise-placement.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createConfigurationSchema(ctx) {
@@ -187,7 +188,7 @@ export function createConfigurationSchema(ctx) {
     }
     const mode = ctx.variablePresetMode(result);
     assertData(mode === 'main' || mode === 'extra', '配置中的变量模式必须二选一');
-    return migrateCustomSettingPrompts(result);
+    return migrateNoisePlacement(migrateCustomSettingPrompts(result), modelRegistry(result.config));
   }
 
   function selectedScopes(snapshot) { return { preset: !!snapshot.preset, summary: !!snapshot.summary }; }

@@ -9,7 +9,7 @@ const host=document.createElement('div');document.body.append(host);const shadow
 shadow.innerHTML='<style>'+PANEL_CSS+'</style><div class="destined-root"><section class="panel" style="inset:12px;width:auto;height:auto;min-width:0"><main class="content"></main></section></div>';
 const value={supported:true,enabled:false,mode:'fixed',segments:10,estimatedTokens:2500,text:'',error:'',busy:false};
 const state={disclosures:new Set(),editorUnlocked:true,workspaceBusy:false};
-const ctx={state,shadow,readNoiseControl:()=>({...value}),IDS:{resetCache:'cache'},getPrompt:()=>({id:'cache',enabled:false}),escapeHtml:s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;'),toggleHtml:()=>'<input type="checkbox" data-cache-toggle aria-label="重置命中缓存">',showErrorToast:e=>window.testFailure=String(e),async setNoiseSetting(key,v){window.noiseWrites++;if(window.failNoiseSave){ctx.renderActiveContent();throw Error('模拟保存失败');}value[key]=v;if(value.enabled){value.estimatedTokens=value.segments*250;value.text='Example log '.repeat(value.segments);}ctx.renderActiveContent(); },async regenerateNoise(){window.noiseRegenerations++;value.text='Replacement noise '.repeat(150);ctx.renderActiveContent();}};
+const ctx={state,shadow,readNoiseControl:()=>({...value}),escapeHtml:s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;'),showErrorToast:e=>window.testFailure=String(e),async setNoiseSetting(key,v){window.noiseWrites++;if(window.failNoiseSave){ctx.renderActiveContent();throw Error('模拟保存失败');}value[key]=v;if(value.enabled){value.estimatedTokens=value.segments*250;value.text='Example log '.repeat(value.segments);}ctx.renderActiveContent(); },async regenerateNoise(){window.noiseRegenerations++;value.text='Replacement noise '.repeat(150);ctx.renderActiveContent();}};
 ctx.previewNoiseSegments=segments=>({segments,estimatedTokens:segments*250,text:'Example log '.repeat(segments)});
 Object.assign(ctx,createNoiseControls(ctx));
 ctx.renderActiveContent=()=>{for(const d of shadow.querySelectorAll('[data-disclosure]'))d.open?state.disclosures.add(d.dataset.disclosure):state.disclosures.delete(d.dataset.disclosure);shadow.querySelector('.content').innerHTML=ctx.renderNoiseControls();};
@@ -24,10 +24,13 @@ const integrated = process.argv.includes('--integrated');
 if (!integrated) source=source.slice(0,scriptStart)+'const injected='+JSON.stringify(bundle)+';\n'+source.slice(mockStart);
 if (integrated) {
  source=source.replace('if (modernLength) {', `{
+ const head=preset.prompts.find(p=>p.id==='ecc2c6ea-0d97-4640-8aa4-2ff1544e688f');
+ assert(head&&head.enabled,'Gemini head fixture missing');
+ head.content='{{destined_prompt_noise}}\\n'+head.content;
  const protocol=preset.prompts.find(p=>p.id==='dafd56fc-9b51-4936-98b5-bc16f7c37db9');
- assert(protocol,'Output protocol fixture missing');protocol.enabled=true;
- protocol.content='<|命定_正文开始|>\\n{{destined_prompt_noise}}\\n'+protocol.content;
-}\nif (modernLength) {`);
+ assert(protocol&&protocol.enabled&&!protocol.content.includes('{{destined_prompt_noise}}'),'Output protocol must stay free of the noise macro');
+}
+if (modernLength) {`);
  source=source.replace('window.ui = { summary,','window.ui = { noise, summary,');
  const integrationMock=`
  window.vars.noise_padding={enabled:false,mode:'fixed',tokens:6000,seed:'93b72a5dc184e60f'};
@@ -90,19 +93,19 @@ const runIsolated=async(cdp,evaluate)=>{
   const shot=await cdp('Page.captureScreenshot',{format:'png'});fs.writeFileSync('.ui-review/noise-'+width+'.png',Buffer.from(shot.data,'base64'));
  }
  await evaluate('ui.value.supported=false;ui.render()');
- assert(await evaluate(`${q('[data-action=noise-enabled]')}.disabled&&${q('[data-action=noise-segments]')}.disabled&&!${q('[data-cache-toggle]')}.disabled`));
+assert(await evaluate(`${q('[data-action=noise-enabled]')}.disabled&&${q('[data-action=noise-segments]')}.disabled&&!${q('.noise-cache-row')}&&!${q('[data-noise-controls] [data-key]')}&&${q('[data-noise-controls] .card-title h4')}.textContent==='输入噪声'`));
  console.log('分段噪声UI：连续input保留节点/焦点并更新预览、change保存、整数范围、失败恢复、模式预览、协议禁用及三宽度布局通过（模拟宿主）');
 };
 const runIntegrated=async(cdp,evaluate)=>{
  await evaluate('ui.state.activeTab="daily";ui.render();ui.settle()');
- assert(await evaluate(`ui.shadow.querySelector('.content').children[1].matches('[data-noise-controls]')&&ui.shadow.querySelectorAll('[data-key="prompt:'+ui.IDS.resetCache+'"]').length===1`));
+ assert(await evaluate(`ui.shadow.querySelector('.content').children[1].matches('[data-noise-controls]')&&!ui.shadow.querySelector('[data-noise-controls] [data-key]')&&!ui.shadow.querySelector('[data-noise-controls] [data-action=entry-edit]')&&ui.shadow.querySelectorAll('[data-key="prompt:'+ui.IDS.resetCache+'"]').length===0`));
  assert(await evaluate(`ui.noise.readNoiseControl().segments===24&&ui.noise.readNoiseControl().estimatedTokens===6000`));
  assert(await evaluate(`nativeMacros.has('destined_prompt_noise')&&nativeMacros.get('destined_prompt_noise')()===''`));
  assert(await evaluate(`['GENERATION_AFTER_COMMANDS','GENERATION_ENDED','GENERATION_STOPPED','CHAT_COMPLETION_SETTINGS_READY'].every(name=>handlers.get(name)?.length)`));
  await evaluate(`ui.shadow.querySelector('.noise-preview').open=true;ui.shadow.querySelector('[data-action="noise-enabled"]').click();ui.settle()`);
  assert(await evaluate(`vars.noise_padding.enabled&&vars.noise_padding.segments===24&&!('tokens' in vars.noise_padding)&&!ui.noise.readNoiseControl().busy&&ui.shadow.querySelector('.noise-preview').open`));
  const fixed=await evaluate('ui.noise.readNoiseControl().text');
- assert(await evaluate(`nativeNoiseBeforeBudget('{{destined_prompt_noise}}')===ui.noise.readNoiseControl().text`));
+ assert(await evaluate(`(()=>{const head=ui.state.preset.prompts.find(p=>p.id==='ecc2c6ea-0d97-4640-8aa4-2ff1544e688f');const protocol=ui.state.preset.prompts.find(p=>p.id==='dafd56fc-9b51-4936-98b5-bc16f7c37db9');const noise=ui.noise.readNoiseControl().text;const expanded=nativeNoiseBeforeBudget(head.content);return head.content.startsWith('{{destined_prompt_noise}}'+String.fromCharCode(10))&&!protocol.content.includes('{{destined_prompt_noise}}')&&!expanded.includes('{{destined_prompt_noise}}')&&expanded.startsWith(noise+String.fromCharCode(10))&&expanded.endsWith(head.content.slice('{{destined_prompt_noise}}'.length+1))&&head.role===protocol.role;})()`));
  await evaluate(`(async()=>{for(const fn of handlers.get('GENERATION_AFTER_COMMANDS'))await fn('normal',{},false);for(const fn of handlers.get('GENERATION_ENDED'))await fn();})()`);
  assert.equal(await evaluate('ui.noise.readNoiseControl().text'),fixed);
  // Exercise the native range thumb with real mouse events across several frames.
@@ -148,13 +151,10 @@ const runIntegrated=async(cdp,evaluate)=>{
  assert.notEqual(await evaluate('ui.noise.readNoiseControl().text'),randomRound);
  assert.equal(await evaluate('noiseTokenRequests'),0);
  assert.equal(await evaluate('noiseExtraRequests'),0);
- const enabled=await evaluate('ui.state.preset.prompts.find(p=>p.id===ui.IDS.resetCache).enabled');
- await evaluate(`ui.shadow.querySelector('[data-key="prompt:'+ui.IDS.resetCache+'"]').click();ui.settle()`);
- assert.equal(await evaluate('stored.prompts.find(p=>p.id===ui.IDS.resetCache).enabled'),!enabled);
- await evaluate('ui.state.editorUnlocked=true;ui.render();ui.shadow.querySelector("[data-noise-controls] [data-action=entry-edit]").click()');
- assert(await evaluate('ui.state.promptEditor.id===ui.IDS.resetCache'));
- await evaluate('ui.closePromptEditor(true);ui.state.activeTab="tools";ui.render()');
- assert(await evaluate(`!ui.shadow.querySelector('[data-key="prompt:'+ui.IDS.resetCache+'"]')`));
+ await evaluate(`ui.state.editorUnlocked=true;ui.render()`);
+ assert(await evaluate(`!ui.shadow.querySelector('[data-noise-controls] .noise-cache-row')&&!ui.shadow.querySelector('[data-noise-controls] [data-key]')&&!ui.shadow.querySelector('[data-noise-controls] [data-action=entry-edit]')`));
+ assert(await evaluate(`['daily','tools'].every(tab=>{ui.state.activeTab=tab;ui.render();return ui.shadow.querySelectorAll('[data-key="prompt:'+ui.IDS.resetCache+'"]').length===0;})`));
+ assert(await evaluate(`(()=>{ui.state.activeTab='advanced';ui.state.entryFilter='all';ui.render();return !!ui.shadow.querySelector('[data-action=prompt-open][data-id="'+ui.IDS.resetCache+'"]');})()`),'retired cache entry must stay reachable in the native entry list');
  for(const [width,height] of [[1280,960],[390,844],[320,640]]){
   await cdp('Emulation.setDeviceMetricsOverride',{width,height,screenWidth:width,screenHeight:height,deviceScaleFactor:1,mobile:width<720});
   await evaluate('ui.state.activeTab="daily";ui.render()');

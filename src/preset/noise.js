@@ -1,11 +1,10 @@
 import { normalizeNoiseSettings, createNoiseSeed, buildNoiseText, NOISE_MIN_SEGMENTS, NOISE_MAX_SEGMENTS } from './noise-text.js';
-import { FLAVOR } from '../flavor.js';
+import { isNoiseHead, NATIVE_NOISE_MACRO_NAME } from './noise-placement.js';
 
-const OUTPUT_PROTOCOL_ID = 'dafd56fc-9b51-4936-98b5-bc16f7c37db9';
 const BODY_START = '<|命定_正文开始|>';
 const BODY_END = '<|命定_正文结束|>';
-const NATIVE_MACRO_NAME = FLAVOR.id === 'prime' ? 'destined_prompt_noise' : 'general_prompt_noise';
-const NOISE_SLOT = new RegExp(`(<\\|命定_正文开始\\|>[\\t ]*\\r?\\n)\\{\\{${NATIVE_MACRO_NAME}\\}\\}`, 'gu');
+const NATIVE_MACRO_NAME = NATIVE_NOISE_MACRO_NAME;
+const HEAD_SLOT = new RegExp(`^(\\s*)\\{\\{${NATIVE_MACRO_NAME}\\}\\}([\\t ]*\\r?\\n)`, 'u');
 const FAILED_NOISE = '<noise_padding_unavailable/>';
 
 export function createNoise(ctx) {
@@ -14,9 +13,13 @@ export function createNoise(ctx) {
   const settings = () => normalizeNoiseSettings(ctx.state.config.noise_padding);
   const key = value => JSON.stringify(value);
   const currentContext = () => ctx.workspaceContextKey();
-  const slotPresent = text => new RegExp(NOISE_SLOT.source, 'u').test(String(text ?? ''));
-  const supported = () => ctx.presetIsMine(ctx.state.preset) && ctx.state.preset?.prompts?.some(prompt =>
-    prompt.id === OUTPUT_PROTOCOL_ID && prompt.enabled && slotPresent(prompt.content));
+  const headSlotPresent = text => HEAD_SLOT.test(String(text ?? ''));
+  const supported = () => {
+    if (!ctx.presetIsMine(ctx.state.preset)) return false;
+    const heads = (ctx.state.preset?.prompts ?? []).filter(prompt => prompt.enabled
+      && isNoiseHead(prompt, ctx.MODEL_ADAPTERS));
+    return heads.length === 1 && headSlotPresent(heads[0].content);
+  };
   const render = () => { if (!disposed && !ctx.destroyed) ctx.renderActiveContent?.(true); };
 
   function prepareNoise(reroll = false) {
@@ -50,7 +53,7 @@ export function createNoise(ctx) {
 
   function changeSettings(next) {
     if (ctx.state.workspaceBusy) throw new Error('上一项设置尚未保存，请稍候。');
-    if (!supported()) throw new Error('当前输出协议缺少噪声占位宏，请使用配套预设。');
+    if (!supported()) throw new Error('请启用一个带有噪声占位宏的配套模型头部。');
     if (registrationError && next.enabled) throw new Error(registrationError);
     const origin = currentContext();
     const guard = () => !disposed && !ctx.destroyed && currentContext() === origin && supported();
@@ -124,12 +127,12 @@ export function createNoise(ctx) {
       : (Array.isArray(message?.content) ? message.content : []).filter(part => part?.type === 'text').map(part => part.text));
     const prime = texts.some(text => text?.includes(BODY_START)) && texts.some(text => text?.includes(BODY_END));
     const unavailable = texts.some(text => text?.includes(FAILED_NOISE));
-    if (!prime && !unavailable) return;
+    if (!prime && !unavailable && !texts.some(headSlotPresent)) return;
     let failure = unavailable ? new Error(error || '噪声展开失败，已阻止请求发送。') : null;
     for (const message of messages) {
       const update = text => {
-        if (!slotPresent(text)) return text;
-        if (!settings().enabled) return text.replace(new RegExp(NOISE_SLOT.source, 'gu'), '$1');
+        if (!headSlotPresent(text)) return text;
+        if (!settings().enabled) return text.replace(HEAD_SLOT, '$1$2');
         failure = new Error(registrationError || '噪声宏未在上下文计数前展开，已阻止请求发送。');
         return text;
       };

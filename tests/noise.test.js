@@ -4,7 +4,11 @@ import { createNoise } from '../src/preset/noise.js';
 import { DEFAULT_NOISE_SETTINGS, NOISE_MACRO, buildNoiseText } from '../src/preset/noise-text.js';
 
 const START = '<|命定_正文开始|>', END = '<|命定_正文结束|>';
-const SLOT = `${START}\n${NOISE_MACRO}\nOutput protocol\n${END}`;
+const SLOT = `${START}\nOutput protocol\n${END}`;
+const PROTOCOL_ID = 'dafd56fc-9b51-4936-98b5-bc16f7c37db9';
+const GEMINI_HEAD_ID = 'ecc2c6ea-0d97-4640-8aa4-2ff1544e688f';
+const CLAUDE_HEAD_ID = '043ce90e-42b6-4f00-be11-a704c63684f8';
+const HEAD = `${NOISE_MACRO}\n<role_adapter core="recorder_core">`;
 
 function setup(settings, hostOverrides = {}) {
   let workspace = 'first', callback, stopped = 0;
@@ -17,7 +21,7 @@ function setup(settings, hostOverrides = {}) {
   };
   const ctx = {
     state: { config: settings === undefined ? {} : { noise_padding: { ...DEFAULT_NOISE_SETTINGS, ...settings } },
-      preset: { prompts: [{ id: 'dafd56fc-9b51-4936-98b5-bc16f7c37db9', enabled: true, content: SLOT }] } },
+      preset: { prompts: [{ id: GEMINI_HEAD_ID, enabled: true, content: HEAD }, { id: PROTOCOL_ID, enabled: true, content: SLOT }] } },
     macroStops: [], workspaceContextKey: () => workspace, presetIsMine: () => true,
     getContext: () => host, renderActiveContent() {}, showErrorToast: error => notices.push(error),
     async enqueueScriptConfigSave(label, debounceKey, guard, prepare) {
@@ -39,7 +43,7 @@ test('native macro synchronously expands and unregisters through the host', () =
   assert.deepEqual(state.registrations, ['destined_prompt_noise']);
   assert.equal(typeof state.noise.prepareNoise(), 'string');
   assert.equal(typeof state.invokeMacro(), 'string');
-  assert(!state.expand(SLOT).includes(NOISE_MACRO));
+  assert(!state.expand(HEAD).includes(NOISE_MACRO));
   state.ctx.macroStops[0].unregister();
   assert.deepEqual(state.unregistrations, ['destined_prompt_noise']);
 });
@@ -84,23 +88,112 @@ test('legacy token configuration remains usable before the next segment save', a
   assert(!Object.hasOwn(state.ctx.state.config.noise_padding, 'tokens'));
 });
 
-test('support requires the slot immediately after the output protocol body boundary', () => {
+test('support requires the macro to open exactly one enabled model head', () => {
   const state = setup({ enabled: true });
-  for (const text of [NOISE_MACRO, `${START}${NOISE_MACRO}`, `${START}\nOther line\n${NOISE_MACRO}`, `${START}\n ${NOISE_MACRO}`]) {
-    state.ctx.state.preset.prompts[0].content = text;
-    assert.equal(state.noise.readNoiseControl().supported, false);
+  const head = state.ctx.state.preset.prompts[0];
+  assert.equal(state.noise.readNoiseControl().supported, true);
+  for (const text of [NOISE_MACRO, `${START}\n${NOISE_MACRO}`, `Prefix ${NOISE_MACRO}\nText`, `${NOISE_MACRO} same line`, ` \n${NOISE_MACRO}`]) {
+    head.content = text;
+    assert.equal(state.noise.readNoiseControl().supported, false, JSON.stringify(text));
   }
-  state.ctx.state.preset.prompts[0].content = `${START}\t \r\n${NOISE_MACRO}`;
+  head.content = `${NOISE_MACRO}\t \r\n<role_adapter core="recorder_core">`;
+  assert.equal(state.noise.readNoiseControl().supported, true);
+  head.content = `\n\n${HEAD}`;
   assert.equal(state.noise.readNoiseControl().supported, true);
 });
 
-test('disabled settings remove only the slot and ordinary requests remain serializable', () => {
+test('an output-protocol slot alone never enables noise', () => {
+  const state = setup({ enabled: true });
+  const [head, protocol] = state.ctx.state.preset.prompts;
+  head.content = '<role_adapter core="recorder_core">';
+  protocol.content = `${START}\n${NOISE_MACRO}\nOutput protocol\n${END}`;
+  assert.equal(state.noise.readNoiseControl().supported, false);
+  assert.equal(state.noise.prepareNoise(), '');
+});
+
+test('two enabled model heads disable noise until one is switched off', () => {
+  const state = setup({ enabled: true });
+  const prompts = state.ctx.state.preset.prompts;
+  prompts.push({ id: CLAUDE_HEAD_ID, enabled: true, content: HEAD });
+  assert.equal(state.noise.readNoiseControl().supported, false);
+  prompts[prompts.length - 1].enabled = false;
+  assert.equal(state.noise.readNoiseControl().supported, true);
+  prompts[0].enabled = false;
+  prompts[prompts.length - 1].enabled = true;
+  assert.equal(state.noise.readNoiseControl().supported, true);
+  prompts[prompts.length - 1].content = '<role_adapter core="recorder_core">';
+  assert.equal(state.noise.readNoiseControl().supported, false);
+});
+
+test('builtin registry ids, custom adapters and split head metadata identify heads', () => {
+  const state = setup({ enabled: true });
+  const customHead = '9c8d7e6f-0000-4000-8000-000000000001';
+  state.ctx.MODEL_ADAPTERS = { Custom: { ids: [customHead, 'tail-a', 'tail-b'], tails: [] } };
+  state.ctx.state.preset.prompts = [
+    { id: 'tail-a', enabled: true, content: HEAD },
+    { id: customHead, enabled: true, content: HEAD },
+  ];
+  assert.equal(state.noise.readNoiseControl().supported, true);
+  state.ctx.MODEL_ADAPTERS = {};
+  state.ctx.state.preset.prompts = [
+    { id: 'model:11111111-1111-4111-8111-111111111111', enabled: true, content: '<role_adapter core="recorder_core">' },
+    { id: 'thinking-entry', enabled: true, content: HEAD, extra: { destined_model: { part: 'thinking' } } },
+  ];
+  assert.equal(state.noise.readNoiseControl().supported, false);
+  state.ctx.state.preset.prompts[1].extra.destined_model.part = 'head';
+  assert.equal(state.noise.readNoiseControl().supported, true);
+  // A non-head entry with head text is not a head; only the metadata entry counts.
+  state.ctx.state.preset.prompts[0].content = HEAD;
+  assert.equal(state.noise.readNoiseControl().supported, true);
+  state.ctx.state.preset.prompts.push({ id: 'second-head', enabled: true, content: HEAD, extra: { destined_model: { part: 'head' } } });
+  assert.equal(state.noise.readNoiseControl().supported, false);
+});
+
+test('disabled settings strip only an unexpanded head slot and keep literal body macros', () => {
   const state = setup();
-  assert.equal(state.expand(SLOT), SLOT.replace(NOISE_MACRO, ''));
-  const data = { messages: [{ role: 'system', content: SLOT }] };
+  assert(!state.expand(HEAD).includes(NOISE_MACRO));
+  const body = `${START}\n${NOISE_MACRO}\n${END}`;
+  const data = { messages: [{ role: 'system', content: state.expand(HEAD) }, { role: 'user', content: body }] };
   state.noise.inspectNoiseOutgoing(data.messages); state.noise.validateNoiseRequest(data);
-  assert.equal(data.messages[0].content, SLOT.replace(NOISE_MACRO, ''));
+  assert.equal(data.messages[0].content, state.expand(HEAD));
+  assert.equal(data.messages[1].content, body);
   assert.doesNotThrow(() => JSON.stringify(data));
+});
+
+test('disabled settings keep the head newline when stripping the slot', () => {
+  const state = setup();
+  const data = { messages: [{ role: 'system', content: `  \t${NOISE_MACRO}  \r\n<role_adapter core="recorder_core">` }] };
+  state.noise.inspectNoiseOutgoing(data.messages); state.noise.validateNoiseRequest(data);
+  assert.equal(data.messages[0].content, '  \t  \r\n<role_adapter core="recorder_core">');
+  assert.doesNotThrow(() => JSON.stringify(data));
+});
+
+test('enabled requests pass literal macro examples in the user body untouched', () => {
+  const state = setup({ enabled: true });
+  state.noise.beforeNoiseGeneration('normal');
+  const padding = state.noise.prepareNoise(), macro = NOISE_MACRO;
+  const body = `${START}\n示例正文：在头部写 ${macro} 会被展开。\n\n\`\`\`text\n${macro}\n<role_adapter core="recorder_core">\n\`\`\`\n\n引用结束\n${END}`;
+  const data = { messages: [
+    { role: 'system', content: state.expand(HEAD) },
+    { role: 'user', content: [{ type: 'text', text: body }, { type: 'image_url', image_url: { url: 'data:image/png;base64,FIXTURE' } }] },
+  ] };
+  state.noise.inspectNoiseOutgoing(data.messages); state.noise.validateNoiseRequest(data);
+  assert.doesNotThrow(() => JSON.stringify(data));
+  assert.equal(data.messages[1].content[0].text, body);
+  assert.equal(data.messages[1].content[0].text.split(macro).length - 1, 2);
+  assert.equal(data.messages[1].content[1].type, 'image_url');
+  assert.equal(data.messages[0].content.split(padding).length - 1, 1);
+  assert.equal(data.messages[0].content.startsWith(padding), true);
+});
+
+test('a fenced macro example right after the body boundary is not treated as a head slot', () => {
+  const state = setup({ enabled: true });
+  state.noise.beforeNoiseGeneration('normal');
+  const body = `${START}\n\`\`\`\n${NOISE_MACRO}\n\`\`\`\n${END}`;
+  const data = { messages: [{ role: 'system', content: state.expand(HEAD) }, { role: 'user', content: body }] };
+  state.noise.inspectNoiseOutgoing(data.messages); state.noise.validateNoiseRequest(data);
+  assert.doesNotThrow(() => JSON.stringify(data));
+  assert.equal(data.messages[1].content, body);
 });
 
 test('fixed logs remain stable through repeated generations and perform zero network calls', t => {
@@ -220,14 +313,14 @@ test('failed random seed generation stops and blocks the marked outgoing request
   state.noise.beforeNoiseGeneration('normal');
   assert.equal(state.stopped(), 1);
   assert.equal(state.invokeMacro(), '<noise_padding_unavailable/>');
-  const data = { messages: [{ role: 'system', content: state.expand(SLOT) }] };
+  const data = { messages: [{ role: 'system', content: state.expand(HEAD) }] };
   state.noise.inspectNoiseOutgoing(data.messages); state.noise.validateNoiseRequest(data);
   assert.throws(() => JSON.stringify(data), /secure randomness unavailable/);
 });
 
-test('repeated outgoing hooks preserve one log block and the original message role', () => {
+test('repeated outgoing hooks preserve one log block and the original head role', () => {
   const state = setup({ enabled: true }); state.noise.beforeNoiseGeneration('normal');
-  const data = { messages: [{ role: 'assistant', content: state.expand(SLOT) }] }, before = structuredClone(data);
+  const data = { messages: [{ role: 'assistant', content: state.expand(HEAD) }] }, before = structuredClone(data);
   for (let count = 0; count < 2; count++) {
     state.noise.inspectNoiseOutgoing(data.messages); state.noise.validateNoiseRequest(data);
     assert.doesNotThrow(() => JSON.stringify(data));
@@ -235,9 +328,9 @@ test('repeated outgoing hooks preserve one log block and the original message ro
   assert.deepEqual(data, before); assert.equal(data.messages[0].content.match(/\[Noise block 01\]/g).length, 1);
 });
 
-test('unexpanded slots are blocked before serialization; previews and ordinary summaries are unaffected', () => {
+test('unexpanded head slots are blocked before serialization; previews and ordinary summaries are unaffected', () => {
   const state = setup({ enabled: true });
-  const data = { messages: [{ role: 'system', content: [{ type: 'text', text: SLOT }] }] };
+  const data = { messages: [{ role: 'system', content: [{ type: 'text', text: HEAD }] }] };
   state.noise.inspectNoiseOutgoing(data.messages, true); state.noise.validateNoiseRequest(data);
   assert.doesNotThrow(() => JSON.stringify(data));
   state.noise.inspectNoiseOutgoing(data.messages); state.noise.validateNoiseRequest(data);
@@ -247,4 +340,20 @@ test('unexpanded slots are blocked before serialization; previews and ordinary s
     state.noise.inspectNoiseOutgoing(ordinary.messages); state.noise.validateNoiseRequest(ordinary);
     assert.doesNotThrow(() => JSON.stringify(ordinary));
   }
+});
+
+test('a head slot surviving message processing blocks the request even without body boundaries', () => {
+  const state = setup({ enabled: true });
+  const data = { messages: [{ role: 'system', content: `${NOISE_MACRO}\n<role_adapter core="recorder_core">` }] };
+  assert(!JSON.stringify(data).includes(START));
+  state.noise.inspectNoiseOutgoing(data.messages); state.noise.validateNoiseRequest(data);
+  assert.throws(() => JSON.stringify(data), /宏未在上下文计数前展开/);
+});
+
+test('a disabled slot inside an already processed head is removed without blocking', () => {
+  const state = setup();
+  const data = { messages: [{ role: 'system', content: `${NOISE_MACRO}\n<role_adapter core="recorder_core">` }] };
+  state.noise.inspectNoiseOutgoing(data.messages); state.noise.validateNoiseRequest(data);
+  assert.equal(data.messages[0].content, '\n<role_adapter core="recorder_core">');
+  assert.doesNotThrow(() => JSON.stringify(data));
 });
