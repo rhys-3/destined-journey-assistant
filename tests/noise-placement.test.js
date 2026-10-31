@@ -9,7 +9,8 @@ import { createConfigurationSchema } from '../src/preset/configuration-schema.js
 const outputId = 'dafd56fc-9b51-4936-98b5-bc16f7c37db9';
 const initializerId = '03adb1e6-e613-48ad-844e-035444017ec4';
 const noiseSettings = { enabled: true, segments: 29, mode: 'random', seed: '0123456789abcdef' };
-const headContent = '{{#if {{getvar::本轮场外讨论}}}}\n[{{getvar::缓存}}CLEAR] Discussion rules\n{{else}}\n[{{getvar::缓存}}CLEAR] Story rules\n{{/if}}';
+const cachePrefix = '[{{getvar::缓存}}CLEAR :: RESET ROLE & TASK, DISCARD AI IDENTITY, LOAD VOID RULE]';
+const headContent = `{{#if {{getvar::本轮场外讨论}}}}\n${cachePrefix} Discussion rules\n{{else}}\n${cachePrefix} Story rules\n{{/if}}`;
 const prompt = (id, content, extra = {}) => ({ id, name: id, content, enabled: true, role: 'system', position: { type: 'relative' }, extra });
 function legacyPreset() {
   return { settings: {}, extensions: {}, prompts: [
@@ -19,7 +20,7 @@ function legacyPreset() {
       .map((id, index) => prompt(id, index === 0 ? headContent : 'Keep exact model text.'))),
     prompt('custom-head', headContent, { destined_model: { id: 'model:custom', part: 'head' } }),
     prompt(outputId, `<|命定_正文开始|>\n${NATIVE_NOISE_MACRO}\nOutput rules.`),
-    prompt('unrelated', 'Unrelated content with {{getvar::缓存}}.'),
+    prompt('unrelated', 'Unrelated content with {{getvar::unrelated}}.'),
   ], prompts_unused: [], config: { noise_padding: structuredClone(noiseSettings) } };
 }
 
@@ -66,6 +67,20 @@ test('unrecognized placement is left untouched instead of relocating custom macr
   }
 });
 
+test('custom cache conditions and consumers preserve the entire legacy preset', () => {
+  for (const id of [definitions.BUILTIN_MODEL_ADAPTERS.Gemini.ids[0], 'unrelated']) {
+    const preset = legacyPreset();
+    const custom = preset.prompts.find(item => item.id === id);
+    custom.content = `{{if {{getvar::缓存}}}}${custom.content}{{else}}Custom fallback{{/if}}`;
+    const before = structuredClone(preset);
+    assert.equal(needsNoisePlacementMigration(preset), false);
+    migrateNoisePlacement(preset);
+    assert.deepEqual(preset, before);
+    assert(preset.prompts.find(item => item.id === initializerId).content.includes('{{setvar::缓存::}}'));
+    assert(preset.prompts.some(item => item.id === definitions.IDS.resetCache));
+  }
+});
+
 test('legacy named snapshots migrate on import while keeping the saved noise selection', () => {
   const ctx = { ...definitions, state: { config: {} },
     sanitizeEntryPoints: () => ({}), sanitizeBinding: () => null,
@@ -73,7 +88,9 @@ test('legacy named snapshots migrate on import while keeping the saved noise sel
     variablePresetMode: () => 'main', PROTECTED_IDS: [] };
   ctx.sanitizeManagedValues = createStore(ctx).sanitizeManagedValues;
   const schema = createConfigurationSchema(ctx);
-  const legacy = schema.capturePresetConfiguration(legacyPreset(), { noise_padding: noiseSettings });
+  const input = legacyPreset();
+  input.prompts = input.prompts.filter(item => item.id !== 'custom-head');
+  const legacy = schema.capturePresetConfiguration(input, { noise_padding: noiseSettings });
   const validated = schema.validatePresetSnapshot(legacy);
   assert.equal(needsNoisePlacementMigration(validated), false);
   assert.deepEqual(validated.config.noise_padding, noiseSettings);
