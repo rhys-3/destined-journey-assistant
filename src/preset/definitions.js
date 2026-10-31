@@ -43,7 +43,7 @@ export const DEFAULT_MANAGED_VALUES = Object.freeze({
   narration_person: 'third',
   body_language: '简体中文',
   thinking_language: '简体中文',
-  // Prime-only: the body pool exists where the flavor carries its short macros.
+  // The body pool exists where the flavor carries its short macros.
   ...(FLAVOR.managed.macros.includes('femaleBodyPool')
     ? { body_pool: Object.freeze(Object.fromEntries(Object.entries(defaultBodyPool()).map(([key, weights]) => [key, Object.freeze(weights)]))) }
     : {}),

@@ -1,4 +1,4 @@
-// Weighted body-type pool for the Prime 体型随机 entry. Weights are relative
+// Weighted body-type pool for the 体型随机 entry. Weights are relative
 // integers; the pool is drawn locally each time its short macro expands.
 
 export const BODY_POOL_MAX_WEIGHT = 10;

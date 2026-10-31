@@ -75,9 +75,10 @@ export const FLAVORS = {
     // floor, no <|战斗回合|> pacing and no model-entry thinking language. Those
     // migrations and controls are left out instead of failing, and the shared
     // fields keep the static defaults from DEFAULT_MANAGED_VALUES. The 'hanzi'
-    // control renders the length card, which only reads <|字数要求|>.
+    // control renders the length card, which only reads <|字数要求|>. The body
+    // pool is shared with Prime: both presets carry the same 体型随机 entry.
     managed: {
-      macros: ['lengthRequirement', 'dialogueRatio', 'dialogueRounds', 'narrationPerson', 'narrationRequirement', 'bodyLanguage', 'globalPreference', 'userAdditional'],
+      macros: ['lengthRequirement', 'dialogueRatio', 'dialogueRounds', 'narrationPerson', 'narrationRequirement', 'bodyLanguage', 'globalPreference', 'userAdditional', 'femaleBodyPool', 'maleBodyPool'],
       controls: { dialogue: ['dialogueRatio', 'dialogueRounds'], length: ['hanzi'], languages: ['body'] },
     },
     output: 'dist/destined-journey-assistant-general.js',

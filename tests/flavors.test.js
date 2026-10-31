@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { build } from 'esbuild';
 import { FLAVOR, FLAVORS } from '../src/flavor.js';
+import { defaultBodyPool } from '../src/preset/body-pool.js';
 
 const define = flavor => ({
   __ASSISTANT_FLAVOR__: JSON.stringify(flavor),
@@ -130,6 +131,8 @@ test('general flavor keeps its managed fields without Prime-only entries', async
   assert(!Object.hasOwn(generalManaged.legacy, 'combat_rounds'));
   for (const key of ['hanzi', 'combatRounds', 'thinkingLanguage'])
     assert(!generalManaged.macroKeys.includes(key), key);
+  for (const key of ['femaleBodyPool', 'maleBodyPool'])
+    assert(generalManaged.macroKeys.includes(key), key);
   assert.deepEqual(generalManaged.controls.length, ['hanzi']);
   assert.deepEqual(generalManaged.controls.languages, ['body']);
   assert.deepEqual(generalManaged.controls.dialogue, ['dialogueRatio', 'dialogueRounds']);
@@ -144,6 +147,7 @@ test('general flavor keeps its managed fields without Prime-only entries', async
     narration_person: 'third',
     body_language: '简体中文',
     thinking_language: '简体中文',
+    body_pool: defaultBodyPool(),
   });
 
   const primeManaged = await report('tests/fixtures/managed-harness.js', prime, '__managedReport');
