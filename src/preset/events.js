@@ -1,6 +1,7 @@
 import * as summary from '../summary/service.js';
 import { SEARCH_FIELDS, searchFields, searchPlaceholder } from './search.js';
 import { updateNoiseSegmentDraft } from './noise-controls.js';
+import { updateBodyPoolDraft } from './body-pool-controls.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createEvents(ctx) {
@@ -65,6 +66,7 @@ export function createEvents(ctx) {
       return ctx.openPromptEditor(editor.id);
     }
     if (ctx.state.promptEditor) return;
+    if (action === 'body-pool-reset') return ctx.resetBodyPool().catch(ctx.showErrorToast);
     if (action === 'noise-mode' || action === 'noise-regenerate') {
       const task = action === 'noise-mode' ? ctx.setNoiseSetting('mode', target.dataset.value) : ctx.regenerateNoise();
       return task.catch(ctx.showErrorToast);
@@ -200,6 +202,7 @@ export function createEvents(ctx) {
       catch (error) { ctx.showErrorToast(error); }
       return;
     }
+    if (action === 'body-pool-weight') return ctx.setBodyPoolOption(target.dataset.group, target.dataset.option, Number(target.value)).catch(ctx.showErrorToast);
     if (action === 'setting-enabled') return ctx.handleSettingAction(action, target);
     if (action === 'placement-field') return ctx.setPlacementField(target.dataset.field,target.value);
     if (action === 'model-draft') { ctx.state.modelDraft[target.dataset.field] = target.value; return; }
@@ -252,6 +255,7 @@ export function createEvents(ctx) {
     if (action === 'ui-transparency') return ctx.applyTransparency(Number(target.value));
     if (ctx.state.workspaceBusy) return;
     if (action === 'noise-segments' || action === 'noise-segment-number') return updateNoiseSegmentDraft(target, ctx);
+    if (action === 'body-pool-weight') return updateBodyPoolDraft(target);
     if (action === 'setting-text') return ctx.handleSettingInput(target, event.isComposing || ctx.isSettingComposing());
     if (action === 'configuration-name') { ctx.state.configurationName = target.value; return; }
     if (action === 'model-draft') { ctx.state.modelDraft[target.dataset.field] = target.value; return; }

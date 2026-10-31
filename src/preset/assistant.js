@@ -55,6 +55,7 @@ import { createModels } from './models.js';
 import { createManaged } from './managed.js';
 import { createNoise } from './noise.js';
 import { createNoiseControls } from './noise-controls.js';
+import { createBodyPoolControls } from './body-pool-controls.js';
 import { createSettingLists } from './setting-lists.js';
 import { createStylesEditor } from './styles-editor.js';
 import { createConnections } from './connections.js';
@@ -417,6 +418,7 @@ export async function startPresetAssistant() {
   } = createManaged(ctx);
   const noise = createNoise(ctx);
   Object.assign(ctx, noise, createNoiseControls(ctx));
+  Object.assign(ctx, createBodyPoolControls(ctx));
   Object.assign(ctx, createSettingLists(ctx));
   const { openStyleEditor, saveStyleEditor, deleteUserStyle, setStreaming, ensurePromptMetadata, inferPromptMeta } = createStylesEditor(ctx);
   const {

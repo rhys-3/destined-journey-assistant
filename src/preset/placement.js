@@ -293,6 +293,7 @@ export function createPlacement(ctx) {
     if(prompt.id===ctx.IDS.narration)content='<div class="segmented">'+[['first','第一人称'],['second','第二人称'],['third','第三人称']].map(([v,l])=>ctx.choiceButton('person',v,l,ctx.state.config.managed_values.narration_person===v,!ctx.hasManagedMacro(ctx.IDS.narration,ctx.MANAGED_MACROS.narrationPerson)||!ctx.hasManagedMacro(ctx.IDS.narration,ctx.MANAGED_MACROS.narrationRequirement))).join('')+'</div>';
     else if(prompt.id===ctx.IDS.globalPreference)content=ctx.renderSettingList('global_settings');
     else if(prompt.id===ctx.IDS.userAdditional)content=ctx.renderSettingList('user_additional_settings');
+    else if(prompt.id===ctx.IDS.bodyPool&&prompt.enabled)content=ctx.renderBodyPoolControls();
     return '<article class="placed-prompt '+(content?'placed-wide':'')+'" data-placement-id="'+ctx.escapeHtml(prompt.id)+'"><div class="placed-head"><div class="placed-label"><strong>'+ctx.escapeHtml(title)+'</strong>'+(description?'<small>'+ctx.escapeHtml(description)+'</small>':'')+'</div><div class="placed-actions">'+control+edit+'</div></div>'+content+'</article>';
   }
 

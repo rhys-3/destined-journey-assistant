@@ -68,6 +68,8 @@ jobs:
         if: needs.plan.outputs.ui == 'true' && runner.os == 'Linux'
       - run: node tests/ui/test-noise.cjs --integrated
         if: needs.plan.outputs.ui == 'true' && runner.os == 'Linux'
+      - run: node tests/ui/test-body-pool.cjs
+        if: needs.plan.outputs.ui == 'true' && runner.os == 'Linux'
       - run: node tests/ui/test-assistant.cjs
         if: needs.plan.outputs.assistant == 'true' && runner.os == 'Linux'
       - run: node tests/ui/test-themes.cjs

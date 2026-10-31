@@ -34,7 +34,7 @@ export const FLAVORS = {
     // Managed short macros and settings controls this preset carries. Macros
     // outside this list are never injected into the preset.
     managed: {
-      macros: ['hanzi', 'lengthRequirement', 'dialogueRatio', 'dialogueRounds', 'combatRounds', 'narrationPerson', 'narrationRequirement', 'bodyLanguage', 'thinkingLanguage', 'globalPreference', 'userAdditional'],
+      macros: ['hanzi', 'lengthRequirement', 'dialogueRatio', 'dialogueRounds', 'combatRounds', 'narrationPerson', 'narrationRequirement', 'bodyLanguage', 'thinkingLanguage', 'globalPreference', 'userAdditional', 'femaleBodyPool', 'maleBodyPool'],
       controls: { dialogue: ['dialogueRatio', 'dialogueRounds'], length: ['hanzi', 'combatRounds'], languages: ['body', 'thinking'] },
     },
     output: 'dist/destined-journey-assistant.js',

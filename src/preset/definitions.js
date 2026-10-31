@@ -1,5 +1,6 @@
 // Preset identifiers, managed fields and interface defaults.
 import { FLAVOR } from '../flavor.js';
+import { defaultBodyPool } from './body-pool.js';
 
 export const SCRIPT_NAME = FLAVOR.scriptName;
 
@@ -42,6 +43,10 @@ export const DEFAULT_MANAGED_VALUES = Object.freeze({
   narration_person: 'third',
   body_language: '简体中文',
   thinking_language: '简体中文',
+  // Prime-only: the body pool exists where the flavor carries its short macros.
+  ...(FLAVOR.managed.macros.includes('femaleBodyPool')
+    ? { body_pool: Object.freeze(Object.fromEntries(Object.entries(defaultBodyPool()).map(([key, weights]) => [key, Object.freeze(weights)]))) }
+    : {}),
 });
 
 export const MANAGED_MACROS = Object.freeze({
@@ -56,9 +61,11 @@ export const MANAGED_MACROS = Object.freeze({
   thinkingLanguage: '<|思维链语言|>',
   globalPreference: '<|全局设定|>',
   userAdditional: '<|用户附加设定|>',
+  femaleBodyPool: '<|女性体型池|>',
+  maleBodyPool: '<|男性体型池|>',
 });
 
-export const MANAGED_MACRO_PATTERN = /<\|(字数|字数要求|对白比例|对白轮次|战斗回合|人称|人称要求|正文语言|思维链语言|全局设定|全局偏好|用户附加设定)\|>/gu;
+export const MANAGED_MACRO_PATTERN = /<\|(字数|字数要求|对白比例|对白轮次|战斗回合|人称|人称要求|正文语言|思维链语言|全局设定|全局偏好|用户附加设定|女性体型池|男性体型池)\|>/gu;
 
 // Managed entries this flavor manages. Unsupported macros are never injected
 // and their controls stay out of the settings pages.
@@ -117,6 +124,7 @@ export const IDS = Object.freeze({
   eventChain: '4851aa12-04ef-4f56-a549-1b68e6761fbf',
   recap: '6c746d0d-fd50-40c9-8488-88de250e9ea8',
   selfCheck: '0f021cf0-c39f-400b-bd93-982caff67f62',
+  bodyPool: '6da2d345-4920-452a-bee1-6e1b5af91001',
   actionOptions: 'e8ead062-215f-419a-bfe1-95620672533b',
   antiEmpty: 'fda70f73-997d-480f-83da-1e6e76e8071a',
   outputSummary: 'fae61edb-c404-4640-8371-71fa654f81e6',
@@ -298,6 +306,7 @@ export const CURATED_TOGGLES = Object.freeze({
   narrative: [
     IDS.multiView,
     '15a38201-7025-4b2c-b0df-d9eba7147bd2',
+    IDS.bodyPool,
     '99c5f183-cfee-4fbd-a1ce-1c63be52d807',
     'ffd89cfe-057b-4a45-97a9-0b97c30d9718',
     'e5e96cc0-b3b0-4061-b3c8-b7d7ba087b0e',

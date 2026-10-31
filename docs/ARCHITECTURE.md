@@ -9,6 +9,7 @@
 | src/preset/definitions.js | 预设条目 UUID、受管字段和界面默认值 |
 | src/preset/store.js | 预设读写队列、同步、失败回滚 |
 | src/preset/models.js、connections.js、managed.js | 模型选择、连接、受管宏和字段 |
+| src/preset/body-pool.js、body-pool-controls.js | 体型池权重、加权抽取与比例控件 |
 | src/preset/tool-output.js | Gemini 工具输出的请求补充与回复还原 |
 | src/preset/setting-items.js、setting-lists.js | 自定义设定列表、兼容迁移、文本展开与内联编辑 |
 | src/preset/worldbook.js | 变量世界书与预设模式联动 |

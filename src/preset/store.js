@@ -2,6 +2,7 @@ import { writePresetStore } from '../platform/store.js';
 import { normalizeCustomSettingValues } from './setting-items.js';
 import { DISCUSSION_SETTINGS_KEY } from '../discussion/preferences.js';
 import { normalizeNoiseSettings } from './noise-text.js';
+import { normalizeBodyPool } from './body-pool.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createStore(ctx) {
@@ -56,6 +57,7 @@ export function createStore(ctx) {
       narration_person: person,
       body_language: sanitizeLanguageSetting(source.body_language, ctx.DEFAULT_MANAGED_VALUES.body_language),
       thinking_language: sanitizeLanguageSetting(source.thinking_language, ctx.DEFAULT_MANAGED_VALUES.thinking_language),
+      ...(ctx.DEFAULT_MANAGED_VALUES.body_pool ? { body_pool: normalizeBodyPool(source.body_pool) } : {}),
       ...normalizeCustomSettingValues(source, preset),
     };
   }

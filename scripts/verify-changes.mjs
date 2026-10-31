@@ -38,6 +38,7 @@ export function run(plan) {
     if (name === 'ui') command(['tests/ui/test-ui.cjs', '--modern-length']);
     if (name === 'ui') command(['tests/ui/test-general.cjs']);
     if (name === 'ui') command(['tests/ui/test-noise.cjs', '--integrated']);
+    if (name === 'ui') command(['tests/ui/test-body-pool.cjs']);
     if (name === 'assistant') command(['tests/ui/test-discussion-records.cjs']);
   }
 }

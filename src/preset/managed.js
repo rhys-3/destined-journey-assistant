@@ -2,6 +2,7 @@ import { legacySettingItems, serializeSettingItems, readSettingTemplate, migrate
 import { expandIdentityMacros } from '../platform/identity-macros.js';
 import { createUuid as createPromptId } from '../platform/uuid.js';
 import { migrateNoisePlacement, needsNoisePlacementMigration } from './noise-placement.js';
+import { drawBodyPool } from './body-pool.js';
 
 // These structural markers are consumed by the preset's message processor.
 // They must survive both assistant macro passes until that processor runs.
@@ -54,6 +55,9 @@ export function createManaged(ctx) {
       全局设定: expandIdentityMacros(serializeSettingItems(values.global_settings, 'global_settings')),
       全局偏好: expandIdentityMacros(serializeSettingItems(values.global_settings, 'global_settings')),
       用户附加设定: expandIdentityMacros(serializeSettingItems(values.user_additional_settings, 'user_additional_settings')),
+      // Drawn only when the macro expands, so every request gets a fresh pool.
+      get 女性体型池() { return drawBodyPool(values.body_pool, 'female'); },
+      get 男性体型池() { return drawBodyPool(values.body_pool, 'male'); },
     };
   }
 
@@ -467,7 +471,7 @@ export function createManaged(ctx) {
     ctx.queuePresetMutation(ctx.normalizeName(current.name), preset => {
       ctx.requirePrompt(preset, id).enabled = enabled;
     }).catch(ctx.showErrorToast);
-    if (id === '928d98d6-2128-4f9d-8406-440fa2d70f87') ctx.renderActiveContent(true);
+    if (id === '928d98d6-2128-4f9d-8406-440fa2d70f87' || id === ctx.IDS.bodyPool) ctx.renderActiveContent(true);
   }
 
   function isUserCreatedGroupPrompt(prompt, groupId = '') {

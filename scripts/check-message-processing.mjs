@@ -409,6 +409,11 @@ for (const [content, expected] of [
 // Exercise the real noise callback before Prime consumes its boundaries. The
 // Native substitution is simulated; the prebuilt corpus is checked offline.
 const noiseCases = [];
+// The body pool is drawn on every expansion. One option per group keeps the
+// noise and baseline requests comparable while still expanding the macros.
+const fixedBodyPool = Object.fromEntries(Object.entries(definitions.DEFAULT_MANAGED_VALUES.body_pool)
+  .map(([group, weights]) => [group, Object.fromEntries(Object.keys(weights).map((name, index) => [name, index === 0 ? 1 : 0]))]));
+const fixedBodyPoolLines = ['女性: [骨感·平坦, 骨感·平坦, 骨感·平坦]', '男性: [瘦削, 瘦削, 瘦削]'];
 {
   for (const adapter of adapters) for (const mode of adapter.modes) for (const [segments, noiseMode] of [[10, 'fixed'], [48, 'random']]) {
     let registration;
@@ -417,7 +422,7 @@ const noiseCases = [];
     const ctx = { ...definitions, macroStops: [], presetIsMine: () => true, workspaceContextKey: () => 'noise-contract',
       getContext: () => ({ registerMacro: (name, callback) => { registration = { name, callback }; }, unregisterMacro() {} }),
       state: { preset: { prompts: expanded.entries.map(prompt => ({ ...prompt, id: prompt.identifier, enabled: true })) },
-        config: { managed_values: definitions.DEFAULT_MANAGED_VALUES, noise_padding: { enabled: true, segments, mode: noiseMode } } } };
+        config: { managed_values: { ...definitions.DEFAULT_MANAGED_VALUES, body_pool: fixedBodyPool }, noise_padding: { enabled: true, segments, mode: noiseMode } } } };
     ctx.sanitizeManagedValues = createStore(ctx).sanitizeManagedValues;
     const managed = createManaged(ctx);
     const noise = createNoise(ctx);
@@ -447,6 +452,10 @@ const noiseCases = [];
     assert(result.indexOf(head) < result.indexOf(protocol), 'noise moved into the body');
     assert.equal(requestText(result).split(padding.text).length - 1, 1, 'noise was inserted more than once');
     assert(!requestText(result).includes('{{destined_prompt_noise}}'));
+    if (expanded.entries.some(item => item.content.includes('<|女性体型池|>'))) {
+      assert(fixedBodyPoolLines.every(line => requestText(result).includes(line)), 'body pool macros must expand in the final request');
+      assert(!/<\|(?:女性|男性)体型池\|>/u.test(requestText(result)), 'body pool macros leaked');
+    }
     const baseline = structuredClone(original);
     const off = createNoise({ state: { config: {} } });
     off.inspectNoiseOutgoing(baseline);
