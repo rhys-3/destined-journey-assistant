@@ -63,7 +63,7 @@ test('flavors keep identity and storage separate', () => {
   for (const field of [...IDENTITY, 'output'])
     assert.notEqual(prime[field], general[field], field);
   assert.deepEqual([...prime.legacyButtonNames], ['命定预设设置', '命定设置']);
-  assert.deepEqual([...general.legacyButtonNames], []);
+  assert.deepEqual([...general.legacyButtonNames], ['通用预设助手']);
   assert.deepEqual([...general.legacySummaryScriptIds], []);
   assert.deepEqual([...general.legacySummaryScriptNames], []);
 });
@@ -103,9 +103,9 @@ test('both bundles carry every feature and stay self contained', async () => {
 test('injected flavor reaches identities and persisted keys', async () => {
   const generalReport = await harness(general);
   assert.equal(generalReport.id, 'general');
-  assert.equal(generalReport.buttonName, '通用预设助手');
+  assert.equal(generalReport.buttonName, '命定·织梦预设助手');
   assert.equal(generalReport.singletonKey, '__generalRoleplayAssistant');
-  assert.deepEqual(generalReport.legacyButtonNames, []);
+  assert.deepEqual(generalReport.legacyButtonNames, ['通用预设助手']);
   assert.equal(generalReport.elementIdPrefix, 'general-settings');
   assert.equal(generalReport.summaryWorldbookPrefix, '通用总结世界书');
   for (const [kind, key] of Object.entries(generalReport.keys))

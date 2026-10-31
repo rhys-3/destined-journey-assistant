@@ -1,3 +1,5 @@
+import { FLAVOR } from '../flavor.js';
+
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createWorldbook(ctx) {
   function worldEntryKey(name) {
@@ -19,6 +21,10 @@ export function createWorldbook(ctx) {
   }
 
   function captureWorldContext() {
+    if (FLAVOR.id === 'general') {
+      const context = ctx.getContext();
+      return { key: JSON.stringify([getLoadedPresetName(), context?.characterId, context?.groupId, context?.chatId, []]), names: [], errors: [] };
+    }
     const names = new Set();
     const errors = [];
     const add = name => { if (typeof name === 'string' && name.trim()) names.add(name); };
@@ -127,7 +133,7 @@ export function createWorldbook(ctx) {
   function saveVariablePreset(mode, context, epoch) {
     const guard = () => worldContextIsCurrent(context, epoch);
     const task = ctx.saveChain.then(() => {
-      if (!guard()) throw new Error('聊天、预设或世界书绑定已变化，本次切换已停止');
+      if (!guard()) throw new Error(FLAVOR.id === 'general' ? '聊天或预设已变化，本次切换已停止' : '聊天、预设或世界书绑定已变化，本次切换已停止');
       return ctx.commitPresetMutation('变量模式', preset => {
         for (const entry of ctx.VARIABLE_MODES) ctx.requirePrompt(preset, entry.id).enabled = entry.key === mode;
       }, guard);
@@ -137,6 +143,7 @@ export function createWorldbook(ctx) {
   }
 
   function scheduleWorldbookScan() {
+    if (FLAVOR.id === 'general') return;
     if (ctx.destroyed) return;
     if (ctx.worldLink.busy) {
       try {
@@ -151,6 +158,7 @@ export function createWorldbook(ctx) {
   }
 
   function scanWorldbookMode({ follow = true } = {}) {
+    if (FLAVOR.id === 'general') return Promise.resolve();
     if (ctx.destroyed || ctx.state.workspaceBusy || ctx.worldLink.busy || ctx.worldWrites.size) return Promise.resolve();
     if (ctx.worldScan) { ctx.worldLink.dirty = true; return ctx.worldScan; }
     const epoch = ctx.worldEpoch;
@@ -214,10 +222,14 @@ export function createWorldbook(ctx) {
     try {
       context = captureWorldContext();
       ctx.worldOperationContext = context.key;
-      showWorldLink('checking', '正在保存预设模式并同步世界书…');
+      showWorldLink('checking', FLAVOR.id === 'general' ? '正在保存预设变量模式…' : '正在保存预设模式并同步世界书…');
       // Finish the preset transaction first; unavailable worldbooks never block other preset saves.
       await saveVariablePreset(mode, context, epoch);
       if (!worldContextIsCurrent(context, epoch)) return;
+      if (FLAVOR.id === 'general') {
+        showWorldLink('ready', '预设变量模式已保存。世界书条目和变量框架设置请自行调整。');
+        return;
+      }
       // 无变量 only changes the preset selection; worldbook entries stay untouched.
       if (mode === 'none') {
         showWorldLink('ready', '已切换为无变量：世界书条目保持原样，预设不再更新世界状态变量。需要联动时重新选择一种变量模式。');
@@ -268,7 +280,11 @@ export function createWorldbook(ctx) {
         : incomplete ? '预设模式已保存；世界书存在未完成项，见下方说明。已找到的可更新条目已处理。'
         : '预设与世界书条目已同步。请同时确认下方 MVU 更新方式。', { books: verified, issues });
     } catch (error) {
-      if (!ctx.destroyed && (!context || worldContextIsCurrent(context, epoch))) showWorldLink('warning', `切换未完成：${error.message ?? error}`);
+      if (!ctx.destroyed && (!context || worldContextIsCurrent(context, epoch))) {
+        const message = `切换未完成：${error.message ?? error}`;
+        showWorldLink('warning', message);
+        if (FLAVOR.id === 'general') ctx.setSaveStatus('error', message);
+      }
     } finally {
       ctx.worldLink.busy = false;
       renderVariableSlot();
@@ -281,6 +297,15 @@ export function createWorldbook(ctx) {
     const unavailable = !ctx.VARIABLE_MODES.every(entry => ctx.getPrompt(ctx.state.preset, entry.id));
     const disabled = ctx.worldLink.busy || ctx.worldWrites.size > 0 || unavailable;
     const selected = ctx.VARIABLE_MODES.find(entry => entry.key === mode);
+    if (FLAVOR.id === 'general') {
+      return `<article class="card variable-card" data-anchor="variables">
+        <div class="card-title"><div><span class="step-label">开始前 · 变量更新</span><h4>由谁来更新世界状态？</h4><p>这里只切换预设中的变量模式，不会同步世界书条目。</p></div><span class="badge">${selected ? ctx.escapeHtml(selected.label) : '待选择'}</span></div>
+        <div class="variable-options" data-mode-count="${ctx.VARIABLE_MODES.length}">
+          ${ctx.VARIABLE_MODES.map(entry => `<button type="button" data-action="variable-mode" data-value="${entry.key}" aria-pressed="${mode === entry.key}" class="${mode === entry.key ? 'selected' : ''}" ${disabled ? 'disabled' : ''}><strong>${ctx.escapeHtml(entry.label)}</strong><small>${ctx.escapeHtml(entry.hint)}</small><span aria-hidden="true">${mode === entry.key ? '✓' : '○'}</span></button>`).join('')}
+        </div>
+        <p class="mvu-reminder">世界书中的变量条目与 MVU 等变量框架的更新方式，请按角色要求自行设置。<small>${mode === 'none' ? '无变量只关闭预设的变量更新输出，不会停用世界书条目或其他变量脚本。' : mode ? `使用 MVU 时，通常将变量更新方式设为「${mode === 'main' ? '随 AI 输出' : '额外模型解析'}」；请以角色提供的说明为准。` : '请选择一种预设变量模式。'}</small></p>
+      </article>`;
+    }
     const reminder = mode === 'none'
       ? '已选择不通过预设更新变量：助手不会改动世界书条目，也不会代改 MVU 框架设置。'
       : mode ? `请在 <strong>MVU 变量框架</strong> 中，将 <strong>变量更新方式</strong> 设为 <strong>${mode === 'main' ? '随 AI 输出' : '额外模型解析'}</strong>。`

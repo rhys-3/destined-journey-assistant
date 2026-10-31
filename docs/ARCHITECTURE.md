@@ -12,7 +12,7 @@
 | src/preset/body-pool.js、body-pool-controls.js | 体型池权重、加权抽取与比例控件 |
 | src/preset/tool-output.js | Gemini 工具输出的请求补充与回复还原 |
 | src/preset/setting-items.js、setting-lists.js | 自定义设定列表、兼容迁移、文本展开与内联编辑 |
-| src/preset/worldbook.js | 变量世界书与预设模式联动 |
+| src/preset/worldbook.js | 变量模式选择；Prime 联动世界书，命定·织梦只修改预设 |
 | src/preset/styles-editor.js、prompt-editor.js、placement.js | 文风、条目编辑、排序与分区位置 |
 | src/preset/descriptions.js | 条目及专用卡片简介、旧说明回退与编辑字段 |
 | src/preset/configuration-schema.js、configurations.js、custom-models.js | 配置白名单、导入导出、恢复与自定义模型 |
@@ -36,9 +36,9 @@
 | src/summary/presetDefaults.js | 旧版默认提示词，仅用于迁移识别 |
 | loader.js | 固定版本加载与重试 |
 
-只有一份 ES 模块运行时源码，构建按版本生成命定版（`dist/destined-journey-assistant.js`）与通用角色扮演版（`dist/destined-journey-assistant-general.js`）两个自包含 bundle：无模块导入、无 CDN 引用，可直接作为酒馆助手脚本内容；旧总结 dist 是冻结兼容资产。两个 bundle 的代码路径、界面与功能一致，区别只在 `src/flavor.js` 的标识和命名空间：脚本按钮与面板标题、全局单例键、界面元素前缀、总结脚本变量与聊天变量前缀、总结世界书名称前缀、讨论模式聊天变量。命定版沿用已发布标识，通用版使用 `general_summary_`、`general_discussion_mode` 与 `通用总结世界书_<后缀>`，因此两个助手可以同时安装而不会互相读取或覆盖设置、绑定、档案与显隐记录。构建期只注入所选版本，产物不包含另一方的标识。
+只有一份 ES 模块运行时源码，构建按版本生成命定版（`dist/destined-journey-assistant.js`）与通用角色扮演版（`dist/destined-journey-assistant-general.js`）两个自包含 bundle：无模块导入、无 CDN 引用，可直接作为酒馆助手脚本内容；旧总结 dist 是冻结兼容资产。两个 bundle 共用源码，通过 `src/flavor.js` 注入标识和命名空间，并按 flavor 区分变量模式是否联动世界书：脚本按钮与面板标题、全局单例键、界面元素前缀、总结脚本变量与聊天变量前缀、总结世界书名称前缀、讨论模式聊天变量。命定版沿用已发布标识，命定·织梦的显示名称更新后仍使用 `general_summary_`、`general_discussion_mode` 与 `通用总结世界书_<后缀>`，因此两个助手可以同时安装而不会互相读取或覆盖设置、绑定、档案与显隐记录。构建期只注入所选版本，产物不包含另一方的标识。
 
-预设归属由 `src/preset/definitions.js` 的 `presetBelongsToFlavor` 判定：`FLAVOR.ownPresetPromptIds` 为空时不做限制（命定版保持原行为），否则当前预设必须带有全部标记条目。通用版以三个变量模式条目为标记，因此切换到命定预设后不会写入、迁移或联动它，界面顶部显示“当前预设不是通用预设”，受管字段与条目开关的写入被拒绝。变量处理模式同样按版本展开：命定版是“主 API / 额外 API”，通用版是“主接口变量 / 额外接口变量 / 无变量”；无变量只切换预设条目，不读写世界书，也不会被世界书状态自动翻转。
+预设归属由 `src/preset/definitions.js` 的 `presetBelongsToFlavor` 判定：`FLAVOR.ownPresetPromptIds` 为空时不做限制（Prime 保持原行为），否则当前预设必须带有全部标记条目。命定·织梦以三个变量模式条目为标记，因此切换到 Prime 后不会写入、迁移或联动它，受管字段与条目开关的写入被拒绝。变量处理模式同样按 flavor 展开：Prime 是“主 API / 额外 API”，命定·织梦是“主接口变量 / 额外接口变量 / 无变量”；命定·织梦的三种选择全部只切换预设条目，不扫描、跟随或写入变量世界书，命名配置应用不再创建世界书同步任务。变量模式的上下文保护只跟踪预设与聊天，不读取世界书绑定。总结模块仍独立管理总结世界书。
 
 命定 1.9 的消息处理器由两个预设共用，因此 `destined_discussion`、`<discussion_record>`、`__destinedDiscussionV1`、`__destinedPrimeMessageProcessor` 与 `本轮场外讨论` 保持共享；这些名字描述的是预设与消息协议，不是助手私有数据。助手私有的讨论模式聊天变量按版本命名，`destined_discussion_mode` 仅属命定版。
 

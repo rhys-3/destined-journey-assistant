@@ -28,7 +28,7 @@
 在预设的酒馆助手脚本列表中，将 **命定预设助手**（旧版名为“【命定之诗】预设设置”） 的内容替换为 [loader.js](loader.js)，保留脚本 UUID 和已有变量。标准 UUID 为 `3a01f9c2-f6e8-4754-ad75-347741051662`。加载器通过固定版本地址载入助手：
 
 ```text
-https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.16.0/dist/destined-journey-assistant.js
+https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.17.0/dist/destined-journey-assistant.js
 ```
 
 加载失败时会显示版本、原因和重试按钮。重试使用同一个版本，不会切换到开发分支。
@@ -41,11 +41,11 @@ https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.16.0/dist/desti
 
 ## 通用角色扮演版
 
-同一份源码可构建独立的通用角色扮演版助手，输出为 `dist/destined-journey-assistant-general.js`：自包含、不依赖 CDN、无模块导入，内容可直接作为酒馆助手脚本保存。该产物只用于本地构建，不进入发布通道。
+同一份源码构建「命定·织梦」预设助手，输出为 `dist/destined-journey-assistant-general.js`：自包含、无模块导入，内容可直接作为酒馆助手脚本保存，也可由预设加载器通过固定版本 CDN 地址载入。两个产物共用助手版本号；命定·织梦预设另有独立版本号。
 
-通用版与命定版功能一致（设置、模型与连接、条目编辑、总结、讨论），但界面名称、脚本按钮、面板标题、全局单例键与持久化命名空间都分开：按钮为“通用预设助手”，总结键使用 `general_summary_` 前缀，讨论模式聊天变量为 `general_discussion_mode`，总结世界书为 `通用总结世界书_<后缀>`。两个助手可以同时安装，互不读取或覆盖对方的数据。
+命定·织梦提供设置、模型与连接、条目编辑、总结和讨论，界面名称、脚本按钮、面板标题、全局单例键与持久化命名空间与 Prime 分开：按钮为“命定·织梦预设助手”，总结键保留 `general_summary_` 前缀，讨论模式聊天变量保留 `general_discussion_mode`，总结世界书仍为 `通用总结世界书_<后缀>`。旧“通用预设助手”按钮自动替换；已有数据继续使用。两个助手可以同时安装，互不读取或覆盖对方的数据。
 
-通用版只在自带变量模式条目的预设上生效：切到命定预设后不会迁移、改写或联动该预设，面板会提示“当前预设不是通用预设”。变量处理模式提供“主接口变量 / 额外接口变量 / 无变量”三种选择，选择“无变量”只改预设条目，不修改世界书。通用版不迁移旧独立总结脚本，也不停用命定版的脚本。
+命定·织梦只在自带三种变量模式条目的预设上生效：切到 Prime 后不会迁移、改写或联动该预设。变量处理模式提供“主接口变量 / 额外接口变量 / 无变量”三种选择，全部只修改预设条目，不读取、跟随或同步世界书；命名配置应用同样如此。世界书中的变量条目与 MVU 等框架的更新方式需按角色说明自行设置，“无变量”不会停用世界书条目或其他变量脚本。聊天总结仍可读写自己绑定的总结世界书。命定·织梦不迁移旧独立总结脚本，也不停用 Prime 的脚本。
 
 预设侧的共享协议名不随助手版本变化：`destined_discussion`、`<discussion_record>`、`__destinedDiscussionV1` 与 `__destinedPrimeMessageProcessor` 仍与命定 1.9 的消息处理器通用。
 

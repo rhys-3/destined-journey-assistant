@@ -17,7 +17,7 @@ export function createConfigurations(ctx) {
     ctx.assertData(!ctx.state.promptEditor && !ctx.state.styleEditor, '请先保存或关闭条目编辑器，再操作配置。');
     ctx.assertData(!ctx.hasSettingDraftErrors(), '请先修正或重新保存设定列表中的未保存内容。');
     ctx.assertData(![...(ctx.shadow?.querySelectorAll('[data-action="field-number"]') ?? [])].some(input => !/^-?\d+$/u.test(input.value.trim())), '请先修正当前页面尚未保存的无效数值。');
-    ctx.assertData(!ctx.worldLink.busy && !ctx.worldWrites.size, '世界书同步尚未完成，请稍候。');
+    ctx.assertData(!ctx.worldLink.busy && !ctx.worldWrites.size, FLAVOR.id === 'general' ? '变量模式正在保存，请稍候。' : '世界书同步尚未完成，请稍候。');
     const name = getLoadedPresetName();
     const contextKey = ctx.workspaceContextKey();
     const current = () => !ctx.destroyed && getLoadedPresetName() === name && ctx.workspaceContextKey() === contextKey;
@@ -238,7 +238,10 @@ export function createConfigurations(ctx) {
         const previousSummary = summary.capture();
         const next = { ...ctx.clone(ctx.state.config), ...(snapshot ? ctx.clone(snapshot.config) : {}) };
         next.configuration_library.activeId = id === '__recovery__' ? null : id;
-        if(snapshot) { worldMode = ctx.variablePresetMode(snapshot); next.configuration_library.pendingWorld = { key: ctx.workspaceContextKey(), mode: worldMode }; }
+        if(snapshot) {
+          if (FLAVOR.id === 'general') next.configuration_library.pendingWorld = null;
+          else { worldMode = ctx.variablePresetMode(snapshot); next.configuration_library.pendingWorld = { key: ctx.workspaceContextKey(), mode: worldMode }; }
+        }
         try {
           if(complete.summary) await summary.apply(complete.summary);
           ctx.assertData(current(), '上下文已变化，配置已停止应用');

@@ -68,11 +68,11 @@ test('tag publication includes the committed bundle and never moves an existing 
   // Both flavor bundles must be present and versioned before a tag is created.
   git('add', '.'); git('commit', '-m', 'prime bundle only');
   assert.throws(publish, /destined-journey-assistant-general\.js/u);
-  await writeFile(generalPath, '"通用预设助手 v2.9.0";');
+  await writeFile(generalPath, '"命定·织梦预设助手 v2.9.0";');
   git('add', '.'); git('commit', '-m', 'stale general bundle');
   assert.throws(publish, /destined-journey-assistant-general\.js/u);
   assert.equal(git('tag', '--list', 'v3.0.0'), '');
-  await writeFile(generalPath, '"通用预设助手 v3.0.0";\nconsole.log("verified general");');
+  await writeFile(generalPath, '"命定·织梦预设助手 v3.0.0";\nconsole.log("verified general");');
   git('add', '.'); git('commit', '-m', 'verified bundle');
   const original = git('rev-parse', 'HEAD');
   publish();

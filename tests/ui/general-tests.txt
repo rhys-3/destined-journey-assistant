@@ -1,67 +1,100 @@
 (async () => {
+  // 通用版专属检查：变量模式只修改预设，不读取、不修改、不跟随绑定世界书。
+  // 显示名一律取自 ui.FLAVOR，不在断言里硬编码用户可见名称。
   const results = [];
   const check = (name, ok) => { if (!ok) throw new Error(name); results.push(name); };
+  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const q = selector => ui.shadow.querySelector(selector);
   const click = selector => { const node = q(selector); if (!node) throw new Error('Missing ' + selector); node.click(); };
-  const noneId = '0257f4b5-bfa7-4729-8d79-96e9abf760bc';
-  const mainId = '85c7f45b-e3b4-430c-bbab-822498d93de2';
+  const idOf = key => ui.VARIABLE_MODES.find(mode => mode.key === key).id;
+  const modeIds = ui.VARIABLE_MODES.map(mode => mode.id);
+  const mainId = idOf('main');
+  const extraId = idOf('extra');
+  const noneId = idOf('none');
   const enabledOf = id => data.prompts.find(prompt => prompt.id === id)?.enabled === true;
+  const modeFlags = () => modeIds.map(enabledOf).join(',');
+  // 变量世界书 API 一次都不应被调用；summary 模块自有世界书不在此禁令内。
+  const quietCalls = '{"bindings":0,"reads":0,"writes":0}';
+  const bookCalls = () => JSON.stringify(window.worldbookCalls);
   await ui.settle();
 
   check('通用版启动无错误', window.errors.length === 0 && !!ui.state.preset && !!q('.panel'));
-  // Own script identity and own global singleton, with no trace of prime's.
-  check('通用版使用独立全局单例', !!window.__generalRoleplayAssistant && window.__destinedJourneyAssistant === undefined);
-  check('通用版脚本标识独立', ui.FLAVOR.id === 'general' && ui.BUTTON_NAME === '通用预设助手' && ui.SCRIPT_NAME === '通用预设助手' && ui.FLAVOR.singletonKey === '__generalRoleplayAssistant');
-  check('通用版面板标题独立', q('.panel-head')?.textContent.includes('通用角色扮演'));
-  // Own storage namespace; prime's keys must be absent from the module.
-  check('通用版设置键使用独立命名空间', uiStorageKeys.SETTINGS_VAR_KEY === 'general_summary_settings' && uiStorageKeys.MIGRATION_VAR_KEY === 'general_summary_migration' && uiStorageKeys.CHAT_WB_VAR_KEY === 'general_summary_worldbook');
-  check('通用版不携带命定总结键', !Object.values(uiStorageKeys).some(value => typeof value === 'string' && value.startsWith('summary_assistant_')));
-  check('通用版总结世界书前缀独立', uiSummaryConfig.WORLDBOOK_NAME_PREFIX === '通用总结世界书');
-  // The discussion flag is assistant-owned chat state; the protocol names the
-  // shared message processor needs stay exactly Prime's.
-  check('讨论聊天变量使用通用键', uiDiscussion.DISCUSSION_CHAT_KEY === 'general_discussion_mode');
+  check('通用版使用独立全局单例', !!window[ui.FLAVOR.singletonKey] && ui.FLAVOR.singletonKey === '__generalRoleplayAssistant' && window.__destinedJourneyAssistant === undefined);
+  check('脚本标识来自本版本配置', ui.FLAVOR.id === 'general' && ui.BUTTON_NAME === ui.FLAVOR.buttonName && ui.SCRIPT_NAME === ui.FLAVOR.scriptName);
+  const panelTitle = q('.panel-title-row h2');
+  check('面板标题来自本版本配置', !!panelTitle && panelTitle.innerHTML === ui.FLAVOR.panelTitleHtml);
+  check('设置键使用独立命名空间', uiStorageKeys.SETTINGS_VAR_KEY === ui.FLAVOR.summaryVariablePrefix + '_settings' && uiStorageKeys.MIGRATION_VAR_KEY === ui.FLAVOR.summaryVariablePrefix + '_migration' && uiStorageKeys.CHAT_WB_VAR_KEY === ui.FLAVOR.summaryVariablePrefix + '_worldbook');
+  check('不携带命定总结键', !Object.values(uiStorageKeys).some(value => typeof value === 'string' && value.startsWith('summary_assistant_')));
+  check('总结世界书前缀独立', uiSummaryConfig.WORLDBOOK_NAME_PREFIX === ui.FLAVOR.summaryWorldbookPrefix && ui.FLAVOR.summaryWorldbookPrefix !== '命定之诗总结世界书');
+  check('讨论聊天变量使用本版本键', uiDiscussion.DISCUSSION_CHAT_KEY === ui.FLAVOR.discussionChatKey);
   check('讨论协议名与命定一致', uiDiscussion.DISCUSSION_KEY === 'destined_discussion' && uiDiscussion.DISCUSSION_BRIDGE === '__destinedDiscussionV1' && uiDiscussion.DISCUSSION_VERSION === 1 && uiDiscussion.DISCUSSION_OPEN === '<discussion_record>');
 
-  // Variable modes: three choices, general labels, prime labels never shown.
   ui.state.activeTab = 'daily'; ui.render();
   const modeButtons = () => [...q('.variable-options').querySelectorAll('button')];
-  check('变量面板提供三种模式', modeButtons().length === 3 && modeButtons().map(button => button.dataset.value).join(',') === 'main,extra,none');
-  check('变量模式使用通用命名', modeButtons().map(button => button.dataset.value + '=' + button.querySelector('strong').textContent).join('|') === 'main=主接口变量|extra=额外接口变量|none=无变量');
-  check('变量模式容器带数量标记', q('.variable-options').dataset.modeCount === '3');
-  check('默认选中主接口变量', ui.variablePresetMode() === 'main' && enabledOf(mainId) && !enabledOf(noneId) && q('[data-action="variable-mode"][data-value="main"]').classList.contains('selected'));
+  check('变量面板提供三种模式', modeButtons().length === 3 && modeButtons().map(button => button.dataset.value).join(',') === ui.VARIABLE_MODES.map(mode => mode.key).join(','));
+  check('变量模式标签来自本版本配置', modeButtons().map(button => button.querySelector('strong').textContent).join('|') === ui.VARIABLE_MODES.map(mode => mode.label).join('|'));
+  check('变量模式容器带数量标记', q('.variable-options').dataset.modeCount === String(ui.VARIABLE_MODES.length));
+  check('默认选中主接口变量', ui.variablePresetMode() === 'main' && enabledOf(mainId) && !enabledOf(extraId) && !enabledOf(noneId) && q('[data-action="variable-mode"][data-value="main"]').classList.contains('selected'));
+  const panelNote = q('.variable-card .card-title p');
+  check('面板说明只切换预设', !!panelNote && panelNote.textContent.includes('只切换预设') && panelNote.textContent.includes('世界书'));
+  check('提醒世界书与变量框架自行设置', q('.mvu-reminder').textContent.includes('自行设置'));
+  check('面板不再提供世界书检查入口', !q('[data-action="refresh-worldbook"]') && !q('.variable-card .world-link-status') && !q('.world-link-details'));
+  check('启动不读取世界书', bookCalls() === quietCalls);
+  check('世界书上下文不含绑定书', ui.captureWorldContext().names.length === 0 && bookCalls() === quietCalls);
+  check('渲染字数要求而不渲染战斗回合', !!q('[data-action="length-mode"]') && !q('[data-action="field-number"][data-field="combatRounds"]') && !!q('[data-action="field-number"][data-field="dialogueRatio"]'));
 
-  window.ctx = { characterId: '角色A', chatId: '聊天A', groupId: '' };
-  SillyTavern.getContext = () => ctx;
-  window.bound = ['通用测试世界书'];
-  window.books = { 通用测试世界书: [
-    { uid: 1, name: 'output_format_(随AI输出开，主API)', enabled: false, content: '正文一' },
-    { uid: 2, name: '[mvu_update]output_format_(使用额外模型更新变量开)', enabled: false, content: '正文二' },
-    { uid: 3, name: '[mvu_update]用户最新输入(使用额外模型更新变量开)', enabled: false, content: '正文三' },
-  ] };
-  window.readCount = 0; window.writeCount = 0;
-  window.getCharWorldbookNames = () => ({ primary: bound[0] ?? null, additional: bound.slice(1) });
-  window.getGlobalWorldbookNames = () => [];
-  window.getChatWorldbookName = () => null;
-  window.getWorldbook = async name => { readCount++; return structuredClone(books[name]); };
-  window.updateWorldbookWith = async (name, updater) => { writeCount++; books[name] = await updater(structuredClone(books[name])); ui.scheduleWorldbookScan(); return structuredClone(books[name]); };
-  const entryFlags = () => JSON.stringify(books['通用测试世界书'].slice(0, 3).map(entry => entry.enabled));
-
-  await ui.selectVariableMode('extra'); await ui.settle();
-  check('额外接口变量联动三条目', ui.variablePresetMode() === 'extra' && entryFlags() === '[false,true,true]');
-  check('额外接口变量显示 MVU 提醒', q('.mvu-reminder').textContent.includes('额外模型解析'));
-  books['通用测试世界书'][0].enabled = true; books['通用测试世界书'][1].enabled = false;
-  await ui.scanWorldbookMode();
-  check('世界书主 API 自动匹配通用预设', ui.variablePresetMode() === 'main' && enabledOf(mainId));
-  const writesBefore = writeCount; const booksBefore = JSON.stringify(books);
+  // 三种模式点击：只改预设条目。
+  click('[data-action="variable-mode"][data-value="main"]'); await ui.settle();
+  check('点击主接口变量只改预设', ui.variablePresetMode() === 'main' && modeFlags() === 'true,false,false' && bookCalls() === quietCalls);
+  check('主接口变量提示 MVU 自行设置', q('.mvu-reminder').textContent.includes('随 AI 输出'));
+  click('[data-action="variable-mode"][data-value="extra"]'); await ui.settle();
+  check('点击额外接口变量只改预设', ui.variablePresetMode() === 'extra' && modeFlags() === 'false,true,false' && bookCalls() === quietCalls);
+  check('额外接口变量提示 MVU 自行设置', q('.mvu-reminder').textContent.includes('额外模型解析'));
   click('[data-action="variable-mode"][data-value="none"]'); await ui.settle();
-  check('无变量只改预设不改世界书', ui.variablePresetMode() === 'none' && enabledOf(noneId) && !enabledOf(mainId) && !enabledOf('9103b46e-5810-4ed9-b06e-4365070fca35') && writeCount === writesBefore && JSON.stringify(books) === booksBefore);
-  check('无变量显示静态说明', q('.mvu-reminder').textContent.includes('不会改动世界书条目'));
-  await ui.scanWorldbookMode();
-  check('世界书不会自动翻转无变量', ui.variablePresetMode() === 'none' && ui.worldLink.phase === 'warning' && ui.worldLink.message.includes('未自动切换'));
-  await ui.selectVariableMode('main'); await ui.settle();
-  check('可重新选择主接口变量', ui.variablePresetMode() === 'main' && entryFlags() === '[true,false,false]');
+  check('点击无变量只改预设', ui.variablePresetMode() === 'none' && modeFlags() === 'false,false,true' && bookCalls() === quietCalls);
+  check('无变量说明不会停用世界书条目', q('.mvu-reminder').textContent.includes('不会停用世界书条目'));
+  check('切换后提示世界书自行调整', ui.worldLink.phase === 'ready' && ui.worldLink.message.includes('自行'));
 
-  // Model adapters.
+  // 手动、定时与事件都不跟随世界书。
+  const linkBefore = JSON.stringify(ui.worldLink);
+  await ui.scanWorldbookMode(); await ui.settle();
+  check('手动扫描不读取世界书也不改模式', bookCalls() === quietCalls && ui.variablePresetMode() === 'none' && JSON.stringify(ui.worldLink) === linkBefore);
+  for (let i = 0; i < 20; i++) ui.scheduleWorldbookScan();
+  await pause(700);
+  check('定时扫描不读取世界书', bookCalls() === quietCalls && ui.variablePresetMode() === 'none');
+  for (const name of ['WORLDINFO_UPDATED', 'WORLDINFO_SETTINGS_UPDATED', 'CHAT_CHANGED', 'CHARACTER_EDITED', 'CHARACTER_PAGE_LOADED', 'PRESET_CHANGED', 'OAI_PRESET_CHANGED_AFTER']) {
+    for (const handler of handlers.get(name) ?? []) handler('变量测试世界书', {});
+  }
+  await pause(700);
+  check('世界书与上下文事件不跟随', bookCalls() === quietCalls && ui.variablePresetMode() === 'none');
+  ui.state.activeTab = 'daily'; ui.render();
+  check('事件之后仍不显示世界书检查入口', !q('[data-action="refresh-worldbook"]'));
+
+  // 配置应用不联动世界书。
+  await ui.selectVariableMode('main'); await ui.settle();
+  const configId = await ui.saveNamedConfiguration('通用配置 A');
+  await ui.selectVariableMode('extra'); await ui.settle();
+  const linkBeforeApply = JSON.stringify(ui.worldLink);
+  await ui.applyConfiguration(configId); await ui.settle();
+  check('应用配置恢复变量模式', ui.variablePresetMode() === 'main' && modeFlags() === 'true,false,false');
+  check('应用配置不留下待同步状态', ui.configLibrary().pendingWorld === null && ui.state.saveState === 'saved' && bookCalls() === quietCalls);
+  check('应用配置不改变世界书提示', JSON.stringify(ui.worldLink) === linkBeforeApply);
+
+  // 保存失败保护：模式保持原样，世界书不被写入。
+  window.failWrite = 'in_use';
+  await ui.selectVariableMode('none').catch(() => {});
+  await ui.settle();
+  check('保存失败保留原变量模式', ui.variablePresetMode() === 'main' && modeFlags() === 'true,false,false');
+  check('保存失败明确提示且不写世界书', ui.state.saveState === 'error' && ui.worldLink.phase === 'warning' && ui.worldLink.message.includes('切换未完成') && bookCalls() === quietCalls);
+  const statusFooter = q('.status');
+  check('保存失败页脚显示错误', !!statusFooter && statusFooter.classList.contains('status-error') && statusFooter.textContent.includes('切换未完成'));
+  check('保存失败提示留在页脚而非变量卡', !q('.variable-card .inline-warning') && !q('.variable-card .world-link-status'));
+  window.failWrite = null;
+  await ui.selectVariableMode('extra'); await ui.settle();
+  check('保存失败后可继续切换', ui.variablePresetMode() === 'extra' && bookCalls() === quietCalls);
+  await ui.selectVariableMode('main'); await ui.settle();
+
+  // 模型适配。
   click('[data-tab="tools"]'); await ui.settle();
   check('模型页显示三个适配卡片', ui.shadow.querySelectorAll('[data-action="model"]').length === 3);
   for (const model of Object.keys(ui.MODEL_ADAPTERS)) {
@@ -70,7 +103,7 @@
     check(model + ' 可被识别', ui.detectModelAdapter() === model);
   }
 
-  // Connection profiles.
+  // 连接配置。
   ui.state.config.connection_link.enabled = true;
   ui.state.profiles = [{ id: 'profile-1', name: '通用连接 A', model: 'gpt-4o', api: '', mode: '' }];
   ui.renderActiveContent();
@@ -82,26 +115,27 @@
   binding.value = 'profile-1'; binding.dispatchEvent(new Event('change', { bubbles: true })); await ui.settle();
   check('多个模型可绑定同一连接', ui.state.config.connection_link.bindings.Claude?.id === 'profile-1');
   ui.state.profiles = []; ui.renderActiveContent();
-  check('连接配置消失仍可关闭联动', !q('[data-key="connection-link"]').disabled && q('[data-action="refresh-profiles"]'));
+  check('连接配置消失仍可关闭联动', !q('[data-key="connection-link"]').disabled && !!q('[data-action="refresh-profiles"]'));
 
-  // Foreign preset guard: prime's preset must never be edited.
+  // 外部预设保护：命定版预设永远不被本助手写入。
   const removed = [];
   for (const preset of [data, stored]) {
     const index = preset.prompts.findIndex(prompt => prompt.id === noneId);
     removed.push([preset, index, preset.prompts[index]]);
     preset.prompts.splice(index, 1);
   }
-  ui.reconcilePreset('外部预设测试'); ui.renderActiveContent(true);
+  ui.reconcilePreset('外部预设测试'); ui.state.activeTab = 'daily'; ui.renderActiveContent(true);
   check('外部预设显示不修改提示', !!q('[data-foreign-preset]') && q('[data-foreign-preset]').textContent.includes('不会修改'));
   const foreignBefore = JSON.stringify(data);
   await ui.selectVariableMode('main'); await ui.settle();
-  check('外部预设不会被写入', JSON.stringify(data) === foreignBefore && ui.worldLink.message.includes('不会修改'));
+  check('外部预设不会被写入', JSON.stringify(data) === foreignBefore && ui.worldLink.message.includes('不会修改') && bookCalls() === quietCalls);
   const eventChainBefore = data.prompts.find(prompt => prompt.id === ui.IDS.eventChain).enabled;
   ui.togglePrompt(ui.IDS.eventChain, !eventChainBefore); await ui.settle();
   check('外部预设拒绝条目开关写入', data.prompts.find(prompt => prompt.id === ui.IDS.eventChain).enabled === eventChainBefore && JSON.stringify(data) === foreignBefore);
   for (const [preset, index, prompt] of removed) preset.prompts.splice(index, 0, prompt);
   ui.reconcilePreset('恢复自用预设'); ui.renderActiveContent(true);
   check('恢复后重新识别为自己的预设', !q('[data-foreign-preset]') && ui.variablePresetMode() === 'main');
+  check('恢复自用预设后变量卡无残留警告', !!q('.variable-card') && !q('.variable-card .inline-warning') && !q('.variable-card .world-link-status') && !q('.variable-card .world-link-details'));
   ui.state.activeTab = 'daily'; ui.render();
   return results;
 })()

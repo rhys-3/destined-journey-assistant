@@ -135,7 +135,7 @@ export function createPlacement(ctx) {
     if (ctx.PROTECTED_IDS.has(prompt.id)) return '基础结构依赖：必须保留并启用，可编辑正文；动态占位符正文由酒馆填入。';
     if (Object.values(ctx.BUILTIN_MODEL_ADAPTERS).some(a => [...a.ids, ...a.tails].includes(prompt.id))) return '内置模型适配依赖：通过模型控件切换，不能单独删除。';
     if (ctx.MODEL_IDS?.has(prompt.id)) return '自定义模型依赖：请在模型与工具中删除整套模型。';
-    if (ctx.GROUPS['variable-mode'].options.some(([id]) => id === prompt.id)) return '世界书变量联动依赖：通过变量模式控件切换。';
+    if (ctx.GROUPS['variable-mode'].options.some(([id]) => id === prompt.id)) return '变量模式依赖：通过变量模式控件切换。';
     if ([ctx.IDS.dialogue, ctx.IDS.outputLength, ctx.IDS.narration, ctx.IDS.globalPreference, ctx.IDS.userAdditional].includes(prompt.id)) return '数值或文本控件依赖：请保留条目与受管短宏；可以调整显示位置或不显示。';
     if (['main','nsfw','jailbreak','enhanceDefinitions'].includes(prompt.id)) return '酒馆内置条目：可编辑，不能在这里删除。';
     return '';
