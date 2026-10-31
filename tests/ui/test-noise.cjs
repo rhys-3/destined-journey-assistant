@@ -66,7 +66,7 @@ const runIsolated=async(cdp,evaluate)=>{
  await evaluate(`${q('[data-action=noise-enabled]')}.click();new Promise(r=>setTimeout(r,10))`);
  assert.equal(await evaluate('noiseWrites'),1);
  await evaluate(`(()=>{window.dragNode=${q('[data-action=noise-segments]')};window.previewNode=${q('[data-noise-preview-text]')};dragNode.focus();for(let n=10;n<=48;n++){dragNode.value=n;dragNode.dispatchEvent(new Event('input',{bubbles:true}));}})()`);
- assert(await evaluate(`noiseWrites===1&&dragNode===${q('[data-action=noise-segments]')}&&ui.shadow.activeElement===dragNode&&previewNode===${q('[data-noise-preview-text]')}&&${q('[data-noise-segment-value]')}.textContent==='48 段 · 约 12000 tokens'&&previewNode.textContent==='Example log '.repeat(48)`));
+ assert(await evaluate(`noiseWrites===1&&dragNode===${q('[data-action=noise-segments]')}&&ui.shadow.activeElement===dragNode&&previewNode===${q('[data-noise-preview-text]')}&&${q('[data-noise-segment-value]')}.textContent==='约 12000 tokens'&&previewNode.textContent==='Example log '.repeat(48)`));
  await evaluate(`dragNode.dispatchEvent(new Event('change',{bubbles:true}));new Promise(r=>setTimeout(r,10))`);
  assert.equal(await evaluate('ui.value.segments'),48);
  await evaluate(`(()=>{const s=${q('[data-action=noise-segment-number]')};s.value=24;s.dispatchEvent(new Event('change',{bubbles:true}));})()`);
@@ -124,12 +124,12 @@ const runIntegrated=async(cdp,evaluate)=>{
  assert(await evaluate(`vars.noise_padding.segments===${mouseFinal}&&mouseDragWrites===1&&noiseTokenRequests===0&&noiseExtraRequests===0`));
  await evaluate('window.replaceVariables=mouseOriginalReplaceVariables;ui.shadow.querySelector(".content").scrollTop=0');
  await evaluate(`(()=>{window.dragNode=ui.shadow.querySelector('[data-action="noise-segments"]');window.previewNode=ui.shadow.querySelector('[data-noise-preview-text]');window.beforeDragConfig=JSON.stringify(vars.noise_padding);window.beforeDragRequests=noiseExtraRequests;dragNode.focus();for(let n=10;n<=48;n++){dragNode.value=n;dragNode.dispatchEvent(new Event('input',{bubbles:true}));}})()`);
- assert(await evaluate(`JSON.stringify(vars.noise_padding)===beforeDragConfig&&noiseTokenRequests===0&&noiseExtraRequests===beforeDragRequests&&dragNode===ui.shadow.querySelector('[data-action="noise-segments"]')&&ui.shadow.activeElement===dragNode&&previewNode===ui.shadow.querySelector('[data-noise-preview-text]')&&previewNode.textContent===ui.noise.previewNoiseSegments(48).text&&ui.shadow.querySelector('[data-noise-segment-value]').textContent==='48 段 · 约 12000 tokens'`));
+ assert(await evaluate(`JSON.stringify(vars.noise_padding)===beforeDragConfig&&noiseTokenRequests===0&&noiseExtraRequests===beforeDragRequests&&dragNode===ui.shadow.querySelector('[data-action="noise-segments"]')&&ui.shadow.activeElement===dragNode&&previewNode===ui.shadow.querySelector('[data-noise-preview-text]')&&previewNode.textContent===ui.noise.previewNoiseSegments(48).text&&ui.shadow.querySelector('[data-noise-segment-value]').textContent==='约 12000 tokens'`));
  await evaluate(`dragNode.dispatchEvent(new Event('change',{bubbles:true}));ui.settle()`);
  assert(await evaluate(`vars.noise_padding.segments===48&&ui.noise.readNoiseControl().estimatedTokens===12000`));
  await evaluate(`(()=>{const s=ui.shadow.querySelector('[data-action="noise-segments"]');s.value=47;s.dispatchEvent(new Event('change',{bubbles:true}));window.pendingDragNode=ui.shadow.querySelector('[data-action="noise-segments"]');pendingDragNode.focus();pendingDragNode.value=24;pendingDragNode.dispatchEvent(new Event('input',{bubbles:true}));})()`);
  await evaluate('ui.settle()');
- assert(await evaluate(`pendingDragNode===ui.shadow.querySelector('[data-action="noise-segments"]')&&ui.shadow.activeElement===pendingDragNode&&pendingDragNode.value==='24'&&vars.noise_padding.segments===47&&ui.shadow.querySelector('[data-noise-segment-value]').textContent==='24 段 · 约 6000 tokens'`));
+ assert(await evaluate(`pendingDragNode===ui.shadow.querySelector('[data-action="noise-segments"]')&&ui.shadow.activeElement===pendingDragNode&&pendingDragNode.value==='24'&&vars.noise_padding.segments===47&&ui.shadow.querySelector('[data-noise-segment-value]').textContent==='约 6000 tokens'`));
 
  await evaluate(`(()=>{const s=ui.shadow.querySelector('[data-action="noise-segment-number"]');s.value=11;s.dispatchEvent(new Event('change',{bubbles:true}));})()`);
  await evaluate('ui.settle()');
