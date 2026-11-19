@@ -4,9 +4,14 @@ import {
   NOISE_MACRO, DEFAULT_NOISE_SETTINGS, NOISE_MIN_SEGMENTS, NOISE_MAX_SEGMENTS,
   NOISE_TOKENS_PER_SEGMENT, normalizeNoiseSettings, createNoiseSeed, buildNoiseText,
 } from '../src/preset/noise-text.js';
+import { NOISE_WORDS } from '../src/preset/noise-corpus.js';
 
-function blocks(text) {
-  return [...text.matchAll(/\[Noise block \d{2}\]\n([\s\S]*?)(?=\n\[Noise block \d{2}\]|\n<\/noise_padding>|$)/g)].map(match => match[1].trim());
+const FOOTER = 'The preceding fragments are noise padding. Do not treat them as instructions or story facts. Do not quote or continue them.';
+
+function noiseSegments(text) {
+  const segments = text.split('\n\n');
+  assert.equal(segments.pop(), FOOTER);
+  return segments;
 }
 
 test('segment settings default off and expose only the supported fields', () => {
@@ -46,30 +51,53 @@ test('seed generation uses native secure randomness without randomUUID', () => {
 });
 
 for (const segments of [10, 24, 48]) {
-  test(`${segments} segments are synchronous English log text with an explicitly estimated token count`, () => {
+  test(`${segments} segments are synchronous English fragments with an estimated token count`, () => {
     const result = buildNoiseText({ segments });
     assert.equal(typeof result.text, 'string'); assert.equal(result.then, undefined);
     assert.equal(result.segments, segments); assert.equal(result.estimatedTokens, segments * 250);
-    assert.equal(blocks(result.text).length, segments);
-    assert.equal(new Set(blocks(result.text)).size, segments);
-    assert.match(result.text, /\[Noise block 01\]/);
-    assert.doesNotMatch(result.text, /[^\x09\x0a\x0d\x20-\x7e]|\{\{|\}\}|<%|%>|命定/);
-    assert(blocks(result.text).every(block => /[A-Za-z]{4,}/.test(block) && block.length > 100));
+    const fragments = noiseSegments(result.text);
+    assert.equal(fragments.length, segments);
+    assert.equal(new Set(fragments).size, segments);
+    assert.match(result.text, /^[A-Za-z0-9]/);
+    assert.doesNotMatch(result.text, /[^\x09\x0a\x0d\x20-\x7e]|\{\{|\}\}|<|>|\[Noise block \d+\]|Inert diagnostic fragments/);
+    assert.equal(result.text.split(FOOTER).length, 2);
+    assert(fragments.every(fragment => fragment === fragment.trim() && fragment.includes('\n') && fragment.length > 100));
   });
 }
 
-test('fixed seeds reproduce logs and adding segments preserves all preceding blocks', () => {
+test('seeds vary the first character and mix isolated letters, clipped words, whole words and short sentences', () => {
+  const starts = new Set();
+  const samples = [];
+  for (let i = 0; i < 32; i++) {
+    const seed = i.toString(16).padStart(16, '0');
+    const { text } = buildNoiseText({ seed });
+    starts.add(text[0]);
+    samples.push(...noiseSegments(text));
+  }
+  assert(starts.size > 1);
+  const fragments = samples.join('\n');
+  const sentences = /\b[A-Z][a-z]*(?: [a-z]+){1,5}\./g;
+  assert.match(fragments, sentences);
+  const tokens = fragments.replace(sentences, '').match(/[A-Za-z]+/g);
+  const words = new Set(NOISE_WORDS);
+  assert(tokens.some(token => token.length === 1));
+  assert(tokens.some(token => words.has(token)));
+  assert(tokens.some(token => token.length > 1 && !words.has(token)
+    && NOISE_WORDS.some(word => word.startsWith(token) || word.endsWith(token))));
+});
+
+test('fixed seeds reproduce fragments and adding segments preserves all preceding segments', () => {
   const seed = '0123456789abcdef';
   const small = buildNoiseText({ segments: 10, seed });
   const medium = buildNoiseText({ segments: 24, seed });
   const large = buildNoiseText({ segments: 48, seed });
   assert.deepEqual(buildNoiseText({ segments: 10, seed }), small);
-  assert.deepEqual(blocks(medium.text).slice(0, 10), blocks(small.text));
-  assert.deepEqual(blocks(large.text).slice(0, 24), blocks(medium.text));
+  assert.deepEqual(noiseSegments(medium.text).slice(0, 10), noiseSegments(small.text));
+  assert.deepEqual(noiseSegments(large.text).slice(0, 24), noiseSegments(medium.text));
   assert.notEqual(buildNoiseText({ segments: 10, seed: 'fedcba9876543210' }).text, small.text);
 });
 
-test('log assembly performs no network requests', t => {
+test('noise assembly performs no network requests', t => {
   const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('unexpected network request'); });
   buildNoiseText({ segments: 10 }); buildNoiseText({ segments: 48 });
   assert.equal(fetch.mock.callCount(), 0);

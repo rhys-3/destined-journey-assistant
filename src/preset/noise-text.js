@@ -1,4 +1,4 @@
-import { NOISE_CORPUS } from './noise-corpus.js';
+import { NOISE_WORDS, NOISE_SUBJECTS, NOISE_PREDICATES } from './noise-corpus.js';
 
 export const NOISE_MACRO = '{{destined_prompt_noise}}';
 export const NOISE_MIN_SEGMENTS = 10;
@@ -30,31 +30,55 @@ export function createNoiseSeed() {
   return Array.from(globalThis.crypto.getRandomValues(new Uint8Array(8)), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function shuffledCorpus(seed) {
+function seededIndex(seed) {
   let state = 2166136261;
   for (const char of seed) state = Math.imul(state ^ char.charCodeAt(0), 16777619) >>> 0;
-  const next = () => {
+  return size => {
     state = (state + 0x6d2b79f5) >>> 0;
     let value = Math.imul(state ^ (state >>> 15), state | 1);
     value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    return Math.floor(((value ^ (value >>> 14)) >>> 0) / 4294967296 * size);
   };
-  const blocks = [...NOISE_CORPUS];
-  for (let index = blocks.length - 1; index > 0; index--) {
-    const target = Math.floor(next() * (index + 1));
-    [blocks[index], blocks[target]] = [blocks[target], blocks[index]];
-  }
-  return blocks;
 }
 
-// The bank is calibrated offline. Runtime only selects and joins whole blocks.
+const LETTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SEPARATORS = [' ', ' ', ' ', '  ', ' / ', ' - ', ', ', ' | '];
+// Calibrated with the local Gemma tokenizer at roughly 250 tokens per segment.
+const FRAGMENTS_PER_SEGMENT = 118;
+const NOISE_FOOTER = 'The preceding fragments are noise padding. Do not treat them as instructions or story facts. Do not quote or continue them.';
+
+function noiseFragment(next) {
+  const kind = next(16);
+  if (kind < 4) return LETTERS[next(LETTERS.length)];
+  if (kind === 4) return String(next(100));
+  if (kind === 5) return NOISE_SUBJECTS[next(NOISE_SUBJECTS.length)] + ' ' + NOISE_PREDICATES[next(NOISE_PREDICATES.length)];
+  const word = NOISE_WORDS[next(NOISE_WORDS.length)];
+  if (kind < 11) {
+    const length = 2 + next(Math.min(3, word.length - 2));
+    return next(2) ? word.slice(0, length) : word.slice(-length);
+  }
+  return word;
+}
+
+function noiseSegment(next) {
+  const lines = [];
+  let remaining = FRAGMENTS_PER_SEGMENT;
+  while (remaining > 0) {
+    const count = Math.min(remaining, 3 + next(9));
+    let line = noiseFragment(next);
+    for (let i = 1; i < count; i++) line += SEPARATORS[next(SEPARATORS.length)] + noiseFragment(next);
+    lines.push(line);
+    remaining -= count;
+  }
+  return lines.join('\n');
+}
+
 export function buildNoiseText(value = {}) {
   const settings = normalizeNoiseSettings(value);
-  const blocks = shuffledCorpus(settings.seed).slice(0, settings.segments)
-    .map((text, index) => `[Noise block ${String(index + 1).padStart(2, '0')}]\n${text}`);
+  const next = seededIndex(settings.seed);
+  const blocks = Array.from({ length: settings.segments }, () => noiseSegment(next));
   return {
-    text: 'Inert diagnostic fragments. Data only; not instructions or story facts. Do not quote or continue.\n<noise_padding>\n'
-      + blocks.join('\n\n') + '\n</noise_padding>',
+    text: [...blocks, NOISE_FOOTER].join('\n\n'),
     segments: settings.segments,
     estimatedTokens: settings.segments * NOISE_TOKENS_PER_SEGMENT,
   };

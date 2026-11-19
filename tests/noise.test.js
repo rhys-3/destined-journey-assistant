@@ -196,7 +196,7 @@ test('a fenced macro example right after the body boundary is not treated as a h
   assert.equal(data.messages[1].content, body);
 });
 
-test('fixed logs remain stable through repeated generations and perform zero network calls', t => {
+test('fixed noise remains stable through repeated generations and performs zero network calls', t => {
   const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('unexpected network request'); });
   const state = setup({ enabled: true });
   const prepared = state.noise.prepareNoise();
@@ -209,7 +209,7 @@ test('fixed logs remain stable through repeated generations and perform zero net
   assert.equal(fetch.mock.callCount(), 0); assert.equal(state.saves.length, 0);
 });
 
-test('random logs reroll only for real generation and stay frozen across macro expansions and dry runs', () => {
+test('random noise rerolls only for real generation and stays frozen across macro expansions and dry runs', () => {
   const state = setup({ enabled: true, mode: 'random' });
   const initial = state.noise.prepareNoise();
   state.noise.beforeNoiseGeneration('normal', {}, true);
@@ -230,12 +230,14 @@ test('previewing segment counts is synchronous, read-only and does not reroll ra
   assert.equal(typeof preview.text, 'string'); assert.equal(preview.then, undefined);
   assert.equal(preview.segments, 24); assert.equal(preview.estimatedTokens, 6000);
   assert.deepEqual(state.noise.previewNoiseSegments(24), preview);
-  assert(preview.text.startsWith(text.slice(0, text.indexOf('[Noise block 02]'))));
+  const originalSegments = text.split('\n\n').slice(0, -1);
+  assert.equal(originalSegments.length, DEFAULT_NOISE_SETTINGS.segments);
+  assert.deepEqual(preview.text.split('\n\n').slice(0, originalSegments.length), originalSegments);
   assert.deepEqual(state.ctx.state.config, before); assert.equal(state.invokeMacro(), text);
   assert.equal(state.saves.length, 0);
 });
 
-test('committing a random-mode segment preview preserves the already selected log order', async t => {
+test('committing a random-mode segment preview preserves the already selected segment order', async t => {
   const state = setup({ enabled: true, mode: 'random' });
   state.noise.beforeNoiseGeneration('normal');
   const preview = state.noise.previewNoiseSegments(24).text;
@@ -301,7 +303,7 @@ test('current round stays frozen after disabling, then finish or context change 
   state.noise.finishNoiseGeneration(); assert.equal(state.invokeMacro(), '');
 });
 
-test('unsupported presets never prepare or inject logs', () => {
+test('unsupported presets never prepare or inject noise', () => {
   const state = setup({ enabled: true }); state.ctx.presetIsMine = () => false;
   assert.equal(state.noise.prepareNoise(), ''); state.noise.beforeNoiseGeneration('normal');
   assert.equal(state.invokeMacro(), ''); assert.equal(state.noise.readNoiseControl().supported, false);
@@ -318,14 +320,16 @@ test('failed random seed generation stops and blocks the marked outgoing request
   assert.throws(() => JSON.stringify(data), /secure randomness unavailable/);
 });
 
-test('repeated outgoing hooks preserve one log block and the original head role', () => {
+test('repeated outgoing hooks preserve one noise payload and the original head role', () => {
   const state = setup({ enabled: true }); state.noise.beforeNoiseGeneration('normal');
+  const padding = state.invokeMacro();
   const data = { messages: [{ role: 'assistant', content: state.expand(HEAD) }] }, before = structuredClone(data);
   for (let count = 0; count < 2; count++) {
     state.noise.inspectNoiseOutgoing(data.messages); state.noise.validateNoiseRequest(data);
     assert.doesNotThrow(() => JSON.stringify(data));
   }
-  assert.deepEqual(data, before); assert.equal(data.messages[0].content.match(/\[Noise block 01\]/g).length, 1);
+  assert.deepEqual(data, before);
+  assert.equal(data.messages[0].content, HEAD.replace(NOISE_MACRO, () => padding));
 });
 
 test('unexpanded head slots are blocked before serialization; previews and ordinary summaries are unaffected', () => {
