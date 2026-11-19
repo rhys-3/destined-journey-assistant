@@ -378,7 +378,7 @@ function rebuild(response, body, { Response, Headers }) {
 // the rest. The round after the audit uses the tail's own continuation block;
 // a body that was cut short is resumed with the built-in instruction.
 export const MAX_ROUNDS = 3;
-export const CONTINUE_INSTRUCTION = `Skip native reasoning. The document delivered so far is the assistant message above. Continue it now with one ${TOOL_OUTPUT_NAME} call whose ${TOOL_OUTPUT_PARAM} begins exactly where that text stops and runs through ${DOCUMENT_END}. Do not repeat earlier text. Write nothing outside the function call.`;
+export const CONTINUE_INSTRUCTION = `Native reasoning is the single word "Ready". The document delivered so far is the assistant message above. Continue it now with one ${TOOL_OUTPUT_NAME} call whose ${TOOL_OUTPUT_PARAM} begins exactly where that text stops and runs through ${DOCUMENT_END}. Do not repeat earlier text. Write nothing outside the function call.`;
 
 export function continuationInstruction(delivered, tailContinuation) {
   return tailContinuation && !BODY_START.test(delivered) ? tailContinuation : CONTINUE_INSTRUCTION;

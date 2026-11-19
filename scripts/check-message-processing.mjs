@@ -448,7 +448,9 @@ const fixedBodyPoolLines = ['女性: [骨感·平坦, 骨感·平坦, 骨感·�
     const sourceHead = expanded.entries.find(item => item.content.includes('{{destined_prompt_noise}}'));
     assert.equal(head.role, sourceHead.role, 'noise must share the native model head role');
     assert(bodyText(head.content).trimStart().startsWith(padding.text), 'noise must lead the model head in the same message');
-    assert(bodyText(head.content).indexOf(padding.text) < bodyText(head.content).indexOf('[CLEAR :: RESET ROLE'));
+    const headAnchor = sourceHead.content.replace('{{destined_prompt_noise}}', '').split(/\r?\n/u).map(line => line.trim()).find(line => line && !/^<\|.*\|>$/u.test(line));
+    assert(headAnchor && bodyText(head.content).includes(headAnchor), 'the model head text must stay in the noise message');
+    assert(bodyText(head.content).indexOf(padding.text) < bodyText(head.content).indexOf(headAnchor), 'noise must precede the model head text');
     assert(result.indexOf(head) < result.indexOf(protocol), 'noise moved into the body');
     assert.equal(requestText(result).split(padding.text).length - 1, 1, 'noise was inserted more than once');
     assert(!requestText(result).includes('{{destined_prompt_noise}}'));
