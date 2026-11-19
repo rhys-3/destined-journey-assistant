@@ -1,6 +1,5 @@
 (async () => {
   // 通用版专属检查：变量模式只修改预设，不读取、不修改、不跟随绑定世界书。
-  // 显示名一律取自 ui.FLAVOR，不在断言里硬编码用户可见名称。
   const results = [];
   const check = (name, ok) => { if (!ok) throw new Error(name); results.push(name); };
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -20,9 +19,20 @@
 
   check('通用版启动无错误', window.errors.length === 0 && !!ui.state.preset && !!q('.panel'));
   check('通用版使用独立全局单例', !!window[ui.FLAVOR.singletonKey] && ui.FLAVOR.singletonKey === '__generalRoleplayAssistant' && window.__destinedJourneyAssistant === undefined);
-  check('脚本标识来自本版本配置', ui.FLAVOR.id === 'general' && ui.BUTTON_NAME === ui.FLAVOR.buttonName && ui.SCRIPT_NAME === ui.FLAVOR.scriptName);
+  const assistantName = '命定·织梦 Reverie 预设助手';
+  check('脚本名和按钮名显示新版名称', ui.FLAVOR.id === 'general' && ui.BUTTON_NAME === assistantName && ui.SCRIPT_NAME === assistantName);
   const panelTitle = q('.panel-title-row h2');
-  check('面板标题来自本版本配置', !!panelTitle && panelTitle.innerHTML === ui.FLAVOR.panelTitleHtml);
+  check('面板标题和悬浮球显示新版名称', panelTitle?.textContent === assistantName && q('.orb')?.title === assistantName);
+  check('两个旧输入框按钮合并为一个新版按钮', scriptButtons.length === 3 && scriptButtons.filter(({name, visible}) => name === assistantName && visible).length === 1 && !scriptButtons.some(({name}) => ['通用预设助手', '命定·织梦预设助手'].includes(name)));
+  check('迁移保留命定版和其他脚本按钮', scriptButtons.some(({name, visible}) => name === '命定预设助手' && visible) && scriptButtons.some(({name, visible}) => name === '其他脚本按钮' && !visible));
+  const inputEntry = [...document.querySelectorAll('#scriptButtons button')].find(button => button.textContent === assistantName);
+  ui.closePanel(); inputEntry?.click();
+  check('新版输入框按钮可打开面板', ui.state.open);
+  const wandContainer = document.getElementById('general-settings-wand-' + getScriptId());
+  const wandEntry = wandContainer?.querySelector('[role="button"]');
+  check('魔术棒入口显示新版名称并沿用脚本 UUID', wandContainer?.getAttribute('script_id') === getScriptId() && wandEntry?.textContent === assistantName && wandEntry.getAttribute('aria-label') === assistantName);
+  ui.closePanel(); wandEntry.click();
+  check('新版魔术棒入口可打开面板', ui.state.open);
   check('设置键使用独立命名空间', uiStorageKeys.SETTINGS_VAR_KEY === ui.FLAVOR.summaryVariablePrefix + '_settings' && uiStorageKeys.MIGRATION_VAR_KEY === ui.FLAVOR.summaryVariablePrefix + '_migration' && uiStorageKeys.CHAT_WB_VAR_KEY === ui.FLAVOR.summaryVariablePrefix + '_worldbook');
   check('不携带命定总结键', !Object.values(uiStorageKeys).some(value => typeof value === 'string' && value.startsWith('summary_assistant_')));
   check('总结世界书前缀独立', uiSummaryConfig.WORLDBOOK_NAME_PREFIX === ui.FLAVOR.summaryWorldbookPrefix && ui.FLAVOR.summaryWorldbookPrefix !== '命定之诗总结世界书');

@@ -62,8 +62,15 @@ test('source imports resolve to the prime flavor by default', () => {
 test('flavors keep identity and storage separate', () => {
   for (const field of [...IDENTITY, 'output'])
     assert.notEqual(prime[field], general[field], field);
+  assert.equal(prime.scriptName, '命定预设助手');
+  assert.equal(prime.buttonName, '命定预设助手');
+  assert.equal(prime.panelTitleHtml, '命定·黄昏 Prime <span>预设助手</span>');
   assert.deepEqual([...prime.legacyButtonNames], ['命定预设设置', '命定设置']);
-  assert.deepEqual([...general.legacyButtonNames], ['通用预设助手']);
+  assert.equal(general.scriptName, '命定·织梦 Reverie 预设助手');
+  assert.equal(general.panelTitleHtml, '命定·织梦 Reverie <span>预设助手</span>');
+  assert.equal(general.presetLabel, '命定·织梦 Reverie 预设');
+  assert.equal(general.exportLabel, '命定·织梦 Reverie');
+  assert.deepEqual([...general.legacyButtonNames], ['通用预设助手', '命定·织梦预设助手']);
   assert.deepEqual([...general.legacySummaryScriptIds], []);
   assert.deepEqual([...general.legacySummaryScriptNames], []);
 });
@@ -85,6 +92,10 @@ test('both bundles carry every feature and stay self contained', async () => {
     assert(carries(outputs.general, general[field]), `general bundle lost ${field}`);
     assert(!carries(outputs.general, prime[field]), `general bundle kept prime ${field}`);
   }
+  for (const name of general.legacyButtonNames) {
+    assert(carries(outputs.general, name), `general bundle lost legacy button ${name}`);
+    assert(!carries(outputs.prime, name), `prime bundle kept general legacy button ${name}`);
+  }
   // The general flavor's third variable-mode entry never leaks into prime.
   assert.equal(carries(outputs.general, NO_VARIABLE_ID), true, 'general bundle lost the no-variable entry');
   assert.equal(carries(outputs.prime, NO_VARIABLE_ID), false, 'prime bundle kept the no-variable entry');
@@ -103,9 +114,9 @@ test('both bundles carry every feature and stay self contained', async () => {
 test('injected flavor reaches identities and persisted keys', async () => {
   const generalReport = await harness(general);
   assert.equal(generalReport.id, 'general');
-  assert.equal(generalReport.buttonName, '命定·织梦预设助手');
+  assert.equal(generalReport.buttonName, '命定·织梦 Reverie 预设助手');
   assert.equal(generalReport.singletonKey, '__generalRoleplayAssistant');
-  assert.deepEqual(generalReport.legacyButtonNames, ['通用预设助手']);
+  assert.deepEqual(generalReport.legacyButtonNames, ['通用预设助手', '命定·织梦预设助手']);
   assert.equal(generalReport.elementIdPrefix, 'general-settings');
   assert.equal(generalReport.summaryWorldbookPrefix, '通用总结世界书');
   for (const [kind, key] of Object.entries(generalReport.keys))

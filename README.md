@@ -28,7 +28,7 @@
 在预设的酒馆助手脚本列表中，将 **命定预设助手**（旧版名为“【命定之诗】预设设置”） 的内容替换为 [loader.js](loader.js)，保留脚本 UUID 和已有变量。标准 UUID 为 `3a01f9c2-f6e8-4754-ad75-347741051662`。加载器通过固定版本地址载入助手：
 
 ```text
-https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.18.0/dist/destined-journey-assistant.js
+https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.18.1/dist/destined-journey-assistant.js
 ```
 
 加载器先从 `cdn.jsdelivr.net` 下载脚本，下载失败或 10 秒超时会改从 `testingcf.jsdelivr.net` 下载同一版本。脚本下载完成后启动一次。两个域名都未取得脚本时，错误提示会列出各自的错误；脚本启动报错时显示原始错误。点击「重新加载命定预设助手」可重新尝试。
@@ -41,11 +41,11 @@ https://cdn.jsdelivr.net/gh/rhys-3/destined-journey-assistant@v3.18.0/dist/desti
 
 ## 通用角色扮演版
 
-同一份源码构建「命定·织梦」预设助手，输出为 `dist/destined-journey-assistant-general.js`：自包含、无模块导入，内容可直接作为酒馆助手脚本保存，也可由预设加载器通过固定版本 CDN 地址载入。两个产物共用助手版本号；命定·织梦预设另有独立版本号。
+同一份源码构建「命定·织梦 Reverie」预设助手，输出为 `dist/destined-journey-assistant-general.js`：自包含、无模块导入，内容可直接作为酒馆助手脚本保存，也可由预设加载器通过固定版本 CDN 地址载入。两个产物共用助手版本号；命定·织梦 Reverie 预设另有独立版本号。
 
-命定·织梦提供设置、模型与连接、条目编辑、总结和讨论，界面名称、脚本按钮、面板标题、全局单例键与持久化命名空间与 Prime 分开：按钮为“命定·织梦预设助手”，总结键保留 `general_summary_` 前缀，讨论模式聊天变量保留 `general_discussion_mode`，总结世界书仍为 `通用总结世界书_<后缀>`。旧“通用预设助手”按钮自动替换；已有数据继续使用。两个助手可以同时安装，互不读取或覆盖对方的数据。
+命定·织梦 Reverie 提供设置、模型与连接、条目编辑、总结和讨论，界面名称、脚本按钮、面板标题、全局单例键与持久化命名空间与 Prime 分开：按钮为“命定·织梦 Reverie 预设助手”，总结键保留 `general_summary_` 前缀，讨论模式聊天变量保留 `general_discussion_mode`，总结世界书仍为 `通用总结世界书_<后缀>`。旧的“命定·织梦预设助手”和“通用预设助手”按钮会自动替换；已有数据继续使用。两个助手可以同时安装，互不读取或覆盖对方的数据。
 
-命定·织梦只在自带三种变量模式条目的预设上生效：切到 Prime 后不会迁移、改写或联动该预设。变量处理模式提供“主接口变量 / 额外接口变量 / 无变量”三种选择，全部只修改预设条目，不读取、跟随或同步世界书；命名配置应用同样如此。世界书中的变量条目与 MVU 等框架的更新方式需按角色说明自行设置，“无变量”不会停用世界书条目或其他变量脚本。聊天总结仍可读写自己绑定的总结世界书。命定·织梦不迁移旧独立总结脚本，也不停用 Prime 的脚本。
+命定·织梦 Reverie 只在自带三种变量模式条目的预设上生效：切到 Prime 后不会迁移、改写或联动该预设。变量处理模式提供“主接口变量 / 额外接口变量 / 无变量”三种选择，全部只修改预设条目，不读取、跟随或同步世界书；命名配置应用同样如此。世界书中的变量条目与 MVU 等框架的更新方式需按角色说明自行设置，“无变量”不会停用世界书条目或其他变量脚本。聊天总结仍可读写自己绑定的总结世界书。命定·织梦 Reverie 不迁移旧独立总结脚本，也不停用 Prime 的脚本。
 
 预设侧的共享协议名不随助手版本变化：`destined_discussion`、`<discussion_record>`、`__destinedDiscussionV1` 与 `__destinedPrimeMessageProcessor` 仍与命定 1.9 的消息处理器通用。
 
