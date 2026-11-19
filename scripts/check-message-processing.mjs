@@ -101,6 +101,11 @@ const material = new Map([
   ['dialogueExamples', 'EXAMPLE_FIXTURE'],
 ]);
 const multimodal = { type: 'image_url', image_url: { url: 'data:image/png;base64,TEST_FIXTURE', detail: 'low' } };
+const latestInputs = {
+  discussion: '<discussion_record>\n采用第二个方案，后续按这个动机写。\n</discussion_record>',
+  story: '继续剧情，沿用已确认的动机。',
+};
+const depthZeroUserInjection = 'DEPTH_ZERO_USER_FIXTURE';
 const legacyHistorySentinel = 'LEGACY_DISCUSSION_HISTORY_MUST_NOT_BE_INJECTED';
 const defaultHistorySentinel = 'DEFAULT_DISCUSSION_HISTORY_MUST_NOT_BE_INJECTED';
 
@@ -120,11 +125,10 @@ function assembleNativeFixture(expanded, mode) {
     message('system', entries.get('深度二').content),
     message('system', 'CURRENT_STATE_FIXTURE'),
     message('user', [
-      { type: 'text', text: mode === 'discussion'
-        ? '<discussion_record>\n采用第二个方案，后续按这个动机写。\n</discussion_record>'
-        : '继续剧情，沿用已确认的动机。' },
+      { type: 'text', text: latestInputs[mode] },
       structuredClone(multimodal),
     ]),
+    message('user', depthZeroUserInjection),
   ];
   return expanded.entries.flatMap(entry => {
     const source = byName.get(entry.name) ?? entry;
@@ -265,6 +269,8 @@ for (const adapter of noiseOnly ? [] : adapters) for (const mode of adapter.mode
       assert(toolRequest?.active, adapter.name + ' did not reach the transport as a tool-output request');
       assert.deepEqual(toolRequest.body.tools.map(tool => tool.function.name), [TOOL_OUTPUT_NAME]);
       assert.equal(toolRequest.body.tool_choice, 'auto');
+      assert.deepEqual(toolRequest.body.messages.filter(item => item.role === 'user'), main.prompt.filter(item => item.role === 'user'), 'tool transport changed user messages');
+      assert(!toolRequest.body.tools[0].function.description.includes(latestInputs[mode]), 'tool description included participant input');
       // Only the two-call tail carries the continuation that asks for the body.
       if (adapter.tool === 'split') assert(toolRequest.continuation.includes('<recorder_body>') && toolRequest.continuation.includes(TOOL_OUTPUT_NAME), adapter.name + ' lost its continuation prompt');
       else assert.equal(toolRequest.continuation, '', adapter.name + ' unexpectedly asked for a second request');
@@ -286,15 +292,17 @@ for (const adapter of noiseOnly ? [] : adapters) for (const mode of adapter.mode
       assert(text.includes(value), 'lost injected material: ' + value);
     }
     assert.equal(main.prompt.filter(item => item.role === 'user').length, 1, 'common body envelope changed');
-    if (adapter.tool) {
-      assert(text.includes('Participant:<Participant_input ref="tool">'), 'tool input placeholder missing');
-      const latestInput = mode === 'discussion' ? '采用第二个方案，后续按这个动机写。' : '继续剧情，沿用已确认的动机。';
-      assert(toolRequest.body.tools[0].function.description.includes(latestInput), 'latest input did not reach the tool description');
-    } else assert(text.includes('Participant:<Participant_input>'), 'latest input wrapper missing');
     assert(text.includes('Recorder: <discussion_record>'), 'discussion record prefix missing');
     const content = main.prompt.find(item => item.role === 'user').content;
     assert(Array.isArray(content), 'multimodal body was flattened');
-    assert.deepEqual(content.find(part => part.type === 'image_url'), multimodal);
+    const imageIndex = content.findIndex(part => part.type === 'image_url');
+    assert.deepEqual(content[imageIndex], multimodal);
+    const inputStart = content[imageIndex - 1].text;
+    const inputEnd = content[imageIndex + 1].text;
+    const injectionLine = '\n\nParticipant: ' + depthZeroUserInjection;
+    const latestInput = latestInputs[mode];
+    assert(inputStart.endsWith(`Participant:\n<Participant_input>\n${latestInput}`), 'latest input wrapper or its leading newline missing');
+    assert(inputEnd.startsWith('\n</Participant_input>' + injectionLine), 'latest input must close after the image and before the depth-zero user injection');
     const head = main.prompt[0].content;
     const tail = main.prompt.at(-1);
     if (mode === 'discussion') {
@@ -484,10 +492,10 @@ const report = {
   verified: [
     'actual split prompt order and bodies; Gemini prefill, no-prefill, one-call and two-call tool-output tails plus four copied custom adapters and native Claude/DeepSeek/Glm in story and discussion; three length modes with style/variable settings and both assistant event orders',
     'every provider keeps its own native discussion head, thinking container (recorder_audit_format or think_format), tail and visible body schema; the five-step fields and the scope notice stay shared and ordered before the audit',
-    'conditional branches share the original body and depth envelope, multimodal parts and native head/tail roles',
+    'conditional branches share the original body and depth envelope, multimodal parts and native head/tail roles; the latest input wrapper starts on its own line, contains the image, and closes before a trailing depth-zero user injection',
     'discussion retains narrative style/body/variable protocols inside reference boundaries and selects its own audit/output contract',
     'native Gemini prefill survives; non-prefill Gemini, Claude, DeepSeek and Glm tails match their expanded split entries after normal whitespace cleanup; only the additional connection prefill is cleared',
-    'tool-output tails keep the assistant marker through managed expansion and message processing; the fetch transport then removes it and adds exactly one tool; only the two-call tail yields a continuation prompt, while every other tail reaches it unmarked',
+    'tool-output tails keep the assistant marker through managed expansion and message processing; the fetch transport removes it and adds exactly one tool while preserving user messages; only the two-call tail yields a continuation prompt, while every other tail reaches it unmarked',
     'independent interleaved raw summaries remain untouched; request identity retains the frozen mode',
     'invalid or legacy-only routing markers block request serialization; registered processor listeners are removable',
     'the native head/thinking/tail ids selected for each model are admitted by the assistant discussionAdapterSupport gate through the real registry entry or the split destined_model metadata',

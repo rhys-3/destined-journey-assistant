@@ -17,7 +17,7 @@ export function createBodyPoolControls(ctx) {
       const shares = bodyPoolShares(value[group.key]);
       const options = group.options.map(([name]) => {
         const weight = value[group.key][name];
-        return `<label class="body-pool-option"><span>${esc(name)}</span><input type="range" min="0" max="${BODY_POOL_MAX_WEIGHT}" step="1" value="${weight}" data-action="body-pool-weight" data-group="${group.key}" data-option="${esc(name)}" aria-label="${esc(group.label)}：${esc(name)}" aria-valuetext="权重 ${weight}，约 ${shares[name]}%" ${disabled}><output data-body-pool-share>${shares[name]}%</output></label>`;
+        return `<div class="body-pool-option"><span>${esc(name)}</span><input type="range" min="0" max="${BODY_POOL_MAX_WEIGHT}" step="1" value="${weight}" data-action="body-pool-weight" data-group="${group.key}" data-option="${esc(name)}" aria-label="${esc(group.label)}：${esc(name)}" aria-valuetext="权重 ${weight}，约 ${shares[name]}%" ${disabled}><output data-body-pool-share>${shares[name]}%</output></div>`;
       }).join('');
       return `<fieldset class="body-pool-group" data-body-pool-group="${group.key}"><legend>${esc(group.label)}</legend><div class="body-pool-options">${options}</div></fieldset>`;
     }).join('');
