@@ -4,6 +4,7 @@ import { getWorldbookEntriesSafe, getSummaryContentsBefore, isEntryDisabled } fr
 import { sourceOf, sourcesMatch, fingerprint, readArchive, parseRange, consecutiveSummaries, recordValid, currentSources } from './provenance.js';
 import { makeSummaryEntryName } from './utils.js';
 import { isDiscussionMessage } from '../discussion/protocol.js';
+import { NO_AI_BODY_MESSAGE } from './errorHandler.js';
 
 export async function buildSummaryPromptParams(startFloor, endFloor, settings = getSettings()) {
   if (!Number.isInteger(startFloor) || !Number.isInteger(endFloor) || startFloor < 0 || endFloor < startFloor) throw new Error('请输入从 0 开始、起点不大于终点的整数楼层范围');
@@ -11,7 +12,7 @@ export async function buildSummaryPromptParams(startFloor, endFloor, settings = 
   const raw = await getRawMessages(startFloor, endFloor);
   const story = raw.filter(message => !isDiscussionMessage(message));
   const processed = processMessagesByTags(story, settings.includeTags, settings.excludeTags, settings.excludeHtmlComments);
-  if (!processed.length || !processed.some(message => message.role === 'assistant')) throw new Error('本次范围没有可归档的 AI 正文，请检查提取标签');
+  if (!processed.some(message => message.role === 'assistant')) throw new Error(NO_AI_BODY_MESSAGE);
   const included = new Set(processed.map(message => message.id));
   // An untagged opening has no story material, but is retired with the first
   // successful batch. Its fingerprint still invalidates that batch if edited.

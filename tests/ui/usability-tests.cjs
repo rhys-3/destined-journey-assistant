@@ -115,6 +115,61 @@ module.exports=async(cdp,evaluate,{click,fill,choose,check,pause,confirm,cancel}
   await check('旧任务没有实际楼层数时只显示编号范围，不按讨论缺口虚报','(()=>{const title=ui.shadow.querySelector("[data-task-title]").textContent,buttons=[...ui.shadow.querySelectorAll("[data-task-batch]")].map(item=>item.textContent);return buttons.length===2&&buttons[0].includes("第 1 批 · #0—#19")&&buttons[1].includes("第 2 批 · #20—#39")&&!buttons.some(text=>text.includes(" 楼 · #"))&&title.includes("#0—#39")&&!title.includes(" 楼 · #")&&ui.shadow.querySelector("[data-task-retention]").hidden;})()');
   await evaluate('uiTaskState.clearTask();ui.summary.refresh();');await pause(60);
 
+  await size(320);
+  await evaluate(`(async()=>{
+    messages=Array.from({length:9},(_,id)=>({message_id:id,role:'assistant',message:'<oldprose>旧标签原文'+id+'</oldprose>',is_hidden:false}));
+    books['旧正文验证书']=[];
+    chatVars={summary_assistant_worldbook:'旧正文验证书',summary_assistant_visibility_auto:false};
+    window.materialRequests=[];
+    window.generateRaw=async request=>{materialRequests.push(JSON.stringify(request));return '<summary_result>'+dialogSummaryBody+'</summary_result>';};
+    await ui.summary.apply({...usabilityBefore.settings,enabled:false,includeTags:['gametxt'],excludeTags:[],keepFloorCount:1,batchFloorCount:4,parallelBatches:false});
+    ui.render();
+  })()`);
+  await click('#sa-start-summary');await pause(150);
+  await check('无可读正文时顶部指出失败批次，未请求模型', `(()=>{const q=s=>ui.shadow.querySelector(s),title=q('.sa-notice-title').textContent;return title.includes('第 1 批未读到 AI 正文')&&title.includes('4 楼 · #0—#3')&&materialRequests.length===0&&q('[data-notice-skip]').checkVisibility()&&q('[data-notice-extraction]').checkVisibility()&&q('[data-notice-material]').textContent.includes('保留原消息');})()`);
+  await evaluate('ui.closePanel()');await pause(100);
+  await click('[data-notice-view]');
+  await check('320px：顶部查看关闭遮挡，定位任务并展开错误详情', `(()=>{const q=s=>ui.shadow.querySelector(s),title=q('[data-task-title]'),rect=title.getBoundingClientRect(),panel=q('.content').getBoundingClientRect();return q('.sa-notice-layer').hidden&&q('.sa-tab-pane.active').dataset.pane==='status'&&q('[data-task-tech-section]').open&&rect.top>=panel.top&&rect.bottom<=panel.bottom&&ui.shadow.activeElement===title&&q('[data-task-details]').hidden;})()`);
+  await click('[data-task-extraction]');
+  await check('任务页直接进入生成设置的读取正文', `ui.shadow.querySelector('.sa-tab-pane.active').dataset.pane==='settings'&&ui.shadow.querySelector('.sa-settings-pane.active').dataset.subPane==='tags'&&ui.shadow.activeElement===ui.shadow.querySelector('#sa-include-tags')`);
+  await evaluate(`window.materialWrite=window.replaceVariables;window.failedTagWrites=0;window.replaceVariables=(values,options)=>{if(values.summary_assistant_settings?.includeTags.includes('oldprose')){failedTagWrites++;throw Error('测试标签保存失败');}return materialWrite(values,options);};`);
+  await fill('#sa-include-tags','oldprose');await key('Enter',13);await pause(900);
+  await click('.sa-tab-item[data-tab="status"]');await click('[data-task-retry]');
+  await check('标签保存失败后重试仍尝试落盘，原任务保留且未发请求', `failedTagWrites===2&&ui.summary.capture().includeTags.join()==='gametxt'&&materialRequests.length===0&&uiTaskState.getTask().errorKind==='material'&&ui.state.summaryFeedback.message.includes('测试标签保存失败')`);
+  await evaluate('window.replaceVariables=materialWrite;');
+  await click('[data-task-extraction]');await click('[data-tag-remove="gametxt"]');
+  await click('.sa-tab-item[data-tab="status"]');
+  await check('按下重试前提取标签仍在保存防抖内', `ui.summary.capture().includeTags.join()==='gametxt'`);
+  await click('[data-task-retry]');await pause(180);
+  await check('继续未完成批次先落盘新标签，两批请求均读到旧正文', `ui.summary.capture().includeTags.join()==='oldprose'&&vars.summary_assistant_settings.includeTags.join()==='oldprose'&&materialRequests.length===2&&materialRequests.every(request=>request.includes('旧标签原文'))&&books['旧正文验证书'].filter(entry=>/^总结/.test(entry.name)).length===2`);
+
+  await size(1280);
+  await evaluate(`(()=>{
+    books['旧正文验证书']=[];
+    chatVars={summary_assistant_worldbook:'旧正文验证书',summary_assistant_visibility_auto:false};
+    const spec=(startFloor,endFloor)=>({kind:'normal',startFloor,endFloor,floorCount:endFloor-startFloor+1,entryName:'总结'+startFloor+'-'+endFloor+'楼',regenerate:false});
+    const specs=[spec(0,3),spec(4,7),spec(8,8)];
+    const task=uiTaskState.beginTask({kind:'batch',startFloor:0,endFloor:8,floorCount:9,batches:specs});
+    const legacy={phase:'pending',errorKind:'request',message:'请求未完成，请检查连接后重试',details:'本次范围没有可归档的 AI 正文，请检查提取标签'};
+    uiTaskState.finishTask(task,{...legacy,selectedBatch:1,batches:[{spec:specs[0],phase:'queued'},{spec:specs[1],...legacy},{spec:specs[2],phase:'pending',errorKind:'request',message:'连接认证失败',details:'401'}]});
+    uiTaskState.restoreTaskState();
+    ui.render();
+  })()`);
+  await check('恢复旧失败任务后标题和顶部提示均按第 2 批实际范围显示', `['.sa-notice-title','[data-task-title]'].every(selector=>/第 2 批未读到 AI 正文 · 4 楼 · #4—#7/.test(ui.shadow.querySelector(selector).textContent))`);
+  await click('[data-task-batch="2"]');
+  await check('切换到连接失败的批次不再显示正文修复入口', `(()=>{const q=s=>ui.shadow.querySelector(s);return q('[data-notice-extraction]').disabled&&q('[data-notice-skip]').disabled&&q('[data-task-material]').hidden&&q('[data-task-title]').textContent.includes('连接认证失败');})()`);
+  await click('[data-task-batch="0"]');
+  await check('尚未开始的批次不能被当作正文失败或直接跳过', `(()=>{const q=s=>ui.shadow.querySelector(s);return q('[data-notice-skip]').disabled&&q('[data-task-skip]').disabled&&q('[data-task-title]').textContent.includes('尚未开始')&&q('[data-task-details]').hidden;})()`);
+  await click('[data-task-batch="1"]');
+  await evaluate(`ui.state.activeTab='daily';ui.render();`);
+  await click('[data-notice-extraction]');
+  await check('其他助手页面的顶部调整标签关闭通知并定位读取正文', `(()=>{const q=s=>ui.shadow.querySelector(s),input=q('#sa-include-tags'),rect=input.getBoundingClientRect(),panel=q('.content').getBoundingClientRect();return q('.sa-notice-layer').hidden&&q('.sa-tab-pane.active').dataset.pane==='settings'&&q('.sa-settings-pane.active').dataset.subPane==='tags'&&rect.top>=panel.top&&rect.bottom<=panel.bottom;})()`);
+  await click('.sa-tab-item[data-tab="status"]');await click('[data-task-skip]');
+  await check('跳过只排除选中楼层，保留原消息和其他待处理批次', `uiTaskState.getTask().batches.map(batch=>batch.phase).join()==='queued,skipped,pending'&&messages.every(message=>message.message.includes('旧标签原文')&&!message.is_hidden)&&JSON.stringify(chatVars.summary_assistant_archive['旧正文验证书'].excluded)===JSON.stringify([{start:4,end:7}])`);
+  await click('[data-task-retry]');await pause(180);
+  await check('跳过后继续未完成批次，只生成剩余的两段楼层', `books['旧正文验证书'].some(entry=>entry.name==='总结0-3楼')&&books['旧正文验证书'].some(entry=>entry.name==='总结8-8楼')&&!books['旧正文验证书'].some(entry=>entry.name==='总结4-7楼')`);
+  await evaluate(`(async()=>{uiTaskState.clearTask();messages=usabilityBefore.messages;chatVars=usabilityBefore.chatVars;books=usabilityBefore.books;globalBooks=usabilityBefore.globalBooks;window.generateRaw=usabilityBefore.generate;await ui.summary.apply(usabilityBefore.settings);ui.render();})()`);
+
   await size(320);await evaluate(`ui.state.activeTab='style';ui.state.editorUnlocked=true;ui.render();`);
   await click('[data-action="entry-new-here"][data-block="style-extra"]');await click('[data-action="prompt-close"]');
   await check('原生点击：新建默认条目不需要放弃修改确认','!ui.state.promptEditor&&!ui.shadow.querySelector("[data-action=prompt-discard]")');

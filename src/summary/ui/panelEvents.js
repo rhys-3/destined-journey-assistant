@@ -1044,31 +1044,32 @@ const bindPanelEvents = (overlay, initialSettings) => {
 
   // ---- 自动保存（防抖） ----
   let _autoSaveTimer = null;
+  let settingsDirty = false;
   let panelToken = captureContext();
   const settingsChanged = () => { autoSave(); scheduleRefreshBatchPreview(overlay); };
-  overlay._flush = async () => {
-    if (!_autoSaveTimer) return;
+  const savePanelSettings = async () => {
     clearTimeout(_autoSaveTimer); _autoSaveTimer = null;
     checkContext(panelToken);
     await updateSettings(collectSettingsFromPanel(overlay));
+    settingsDirty = false;
+  };
+  overlay._flush = async () => {
+    if (!settingsDirty) return;
+    await savePanelSettings();
     refreshVisibilityControls(overlay);
     feedback.success('总结设置已保存，下次任务生效');
   };
   // service.refresh drives the same preview so runtime changes (new messages,
   // finished tasks) update it without reopening the panel.
   overlay._refreshPlan = () => refreshBatchPreview(overlay);
-  overlay._dispose = () => { clearTimeout(_autoSaveTimer); _autoSaveTimer = null; disposeBatchPreview(overlay); };
+  overlay._dispose = () => { clearTimeout(_autoSaveTimer); _autoSaveTimer = null; settingsDirty = false; disposeBatchPreview(overlay); };
   const autoSave = () => {
-    if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+    settingsDirty = true;
+    clearTimeout(_autoSaveTimer);
     feedback.info('总结设置待保存…');
     _autoSaveTimer = setTimeout(async () => {
       try {
-        checkContext(panelToken);
-        _autoSaveTimer = null;
-        const newSettings = collectSettingsFromPanel(overlay);
-        await updateSettings(newSettings);
-        refreshVisibilityControls(overlay);
-        feedback.success("总结设置已保存，下次任务生效");
+        await overlay._flush();
       } catch (e) {
         getHost().status(`总结设置保存失败：${e.message}`, "error");
       }
@@ -1104,9 +1105,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
   overlay
     .querySelector("#sa-start-summary")
     .addEventListener("click", actionListener(async () => {
-      if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
-      const newSettings = collectSettingsFromPanel(overlay);
-      await updateSettings(newSettings);
+      await savePanelSettings();
       await startSummaryProcess();
       await refreshEntryList(overlay);
       await refreshMegaEntryList(overlay);
@@ -1117,9 +1116,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
   overlay
     .querySelector("#sa-start-custom-summary")
     .addEventListener("click", actionListener(async () => {
-      if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
-      const newSettings = collectSettingsFromPanel(overlay);
-      await updateSettings(newSettings);
+      await savePanelSettings();
       await startCustomRangeSummaryProcess();
       await refreshEntryList(overlay);
       await refreshMegaEntryList(overlay);
@@ -1215,11 +1212,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
           );
           if (confirm !== SillyTavern.POPUP_RESULT.AFFIRMATIVE) return;
 
-          // 保存设置并关闭面板
-          if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
-          const newSettings = collectSettingsFromPanel(overlay);
-          await updateSettings(newSettings);
-
+          await savePanelSettings();
 
           // 执行大总结
           await executeMegaSummary(selectedNames, entryName, {

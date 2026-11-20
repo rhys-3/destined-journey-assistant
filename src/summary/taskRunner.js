@@ -6,10 +6,13 @@ import { extractSummaryResult, validateResultBody } from './result.js';
 import { sourcesMatch, fingerprint } from './provenance.js';
 import { beginTask, checkTask, updateTask, finishTask, getTask, taskRunning, waitForRetry, taskBatchFields } from './taskState.js';
 import { getHost, cancelOwnRequests } from '../platform/lifecycle.js';
-import { safeErrorDetails, extractHttpStatus } from './errorHandler.js';
+import { safeErrorDetails, extractHttpStatus, NO_AI_BODY_MESSAGE } from './errorHandler.js';
 
 const finished=batch=>['complete','skipped','paused'].includes(batch.phase);
 function failure(error, stage, settings) {
+  if (stage === 'preparing' && error.message === NO_AI_BODY_MESSAGE) {
+    return { phase: 'pending', errorKind: 'material', message: NO_AI_BODY_MESSAGE, details: NO_AI_BODY_MESSAGE };
+  }
   const sourceChanged=/来源|世界书已改变|原始总结/.test(error.message),status=extractHttpStatus(error);
   const errorKind=sourceChanged?'source':stage==='saving'?'save':stage==='visibility'?'visibility':stage==='validating'?'format':'request';
   const requestMessage=status===401||status===403?'连接认证失败，请检查密钥和权限':status===429?'接口繁忙或额度受限':/timeout|timed out|超时|超过 5 分钟/i.test(error.message)?'连接超时':'请求未完成，请检查连接后重试';
@@ -83,14 +86,19 @@ export async function runSummaryTask(spec, {previous=null, mode, editedBody, aut
     for(let cursor=0;cursor<pending.length;cursor+=concurrency){
       if(automatic&&!getSettings().enabled){for(const index of pending.slice(cursor))batches[index].phase='paused';break;}
       const wave=pending.slice(cursor,cursor+concurrency);
+      let groupPhase = 'preparing';
       // Generate a bounded group together. All writes below remain in floor order.
       await Promise.all(wave.map(async index=>{
         const batch=batches[index],selectedMode=index===selected?mode:undefined;
+        const advance = (phase, patch) => {
+          if (phase === 'generating') groupPhase = phase;
+          return change(index, phase, patch, wave.length > 1 ? groupPhase : phase);
+        };
         try{
-          await generateBatch(task,batch,settings,(phase,patch)=>change(index,phase,patch,multiple?'generating':phase),selectedMode??retryMode(batch),index===selected?editedBody:undefined);
+          await generateBatch(task,batch,settings,advance,selectedMode??retryMode(batch),index===selected?editedBody:undefined);
         }catch(error){
           if(error.name==='AbortError')throw error;
-          const problem=failure(error,batch.phase,settings);change(index,'pending',problem,multiple?'generating':'pending');
+          advance('pending',failure(error,batch.phase,settings));
         }
       }));
       checkTask(task);

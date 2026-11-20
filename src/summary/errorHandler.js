@@ -1,4 +1,6 @@
 import { assertCurrent, captureContext, checkContext } from '../platform/lifecycle.js';
+
+export const NO_AI_BODY_MESSAGE = '本次范围没有可归档的 AI 正文，请检查提取标签';
 /**
  * errorHandler.js
  * 全局错误处理包装器

@@ -2,6 +2,7 @@ import { captureContext, checkContext, contextKey, onCancel, cancelOwnRequests, 
 import { readStore, patchSummaryStore } from '../platform/store.js';
 import { createUuid } from '../platform/uuid.js';
 import { RUNTIME_VAR_KEY } from '../platform/storage-keys.js';
+import { NO_AI_BODY_MESSAGE } from './errorHandler.js';
 
 const RUNTIME_KEY = RUNTIME_VAR_KEY;
 const listeners = new Set();
@@ -35,6 +36,15 @@ function persist(task) {
 }
 export function restoreTaskState() {
   current = copy(readStore()[RUNTIME_KEY]?.[contextKey()] ?? null);
+  if (current) {
+    // Older tasks stored an empty material range as a request error.
+    for (const item of [current, ...(current.batches ?? [])]) {
+      if (item.errorKind === 'request' && item.details === NO_AI_BODY_MESSAGE) {
+        item.errorKind = 'material';
+        item.message = NO_AI_BODY_MESSAGE;
+      }
+    }
+  }
   if (current?.running) { current.running = false; current.phase = 'stopped'; current.message = '上次任务已中断，可继续处理'; persist(current); }
   publish();
 }

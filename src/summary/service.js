@@ -56,7 +56,7 @@ export async function migrate() {
   }
 }
 export async function initialize(host) {
-  configureRuntime({...host,remount,busy: value => {host.busy?.(value);taskView?.refresh();if(!value){refresh();if(queued)schedule();}}});
+  configureRuntime({...host,remount,flush,busy: value => {host.busy?.(value);taskView?.refresh();if(!value){refresh();if(queued)schedule();}}});
   try { await migrate(); await loadSettings(); }
   catch(error) { throw new Error('总结配置未加载，原数据已保留：'+error.message, {cause:error}); }
   const subscribe=(event,handler)=>{if(event)stops.push(eventOn(event,handler));};

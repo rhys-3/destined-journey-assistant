@@ -1,6 +1,6 @@
 import { getTask, subscribeTask, phaseLabels, canStopTask, stopTask, dismissTask, clearTaskLog, selectTaskBatch } from '../taskState.js';
 import { retryTask, skipPendingTask } from '../summary.js';
-import { getHost, isBusy, runAction } from '../../platform/lifecycle.js';
+import { captureContext, checkContext, getHost, isBusy, runAction } from '../../platform/lifecycle.js';
 import { escapeHtml } from '../utils.js';
 
 export const TASK_STYLES = `
@@ -9,6 +9,7 @@ export const TASK_STYLES = `
 .sa-notice{pointer-events:auto;width:min(430px,100%);box-sizing:border-box;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px 46px 10px 14px;box-shadow:0 8px 28px var(--shadow);position:relative;line-height:1.6;overflow-wrap:anywhere}
 .sa-notice[hidden],.sa-notice-layer[hidden],[data-task-widget][hidden]{display:none}
 .sa-notice-title{font-weight:600}.sa-notice button,.sa-task-widget button{border:1px solid var(--line);background:var(--soft);color:var(--ink);border-radius:7px;padding:7px 10px;min-height:36px;font:inherit;cursor:pointer}.sa-notice button:focus-visible,.sa-task-widget button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.sa-material-guidance{margin:8px 0}.sa-material-guidance p{margin:4px 0}
 .sa-notice button:disabled,.sa-task-widget button:disabled{opacity:.55;cursor:default}.sa-notice-actions,.sa-task-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.sa-notice .sa-notice-close{position:absolute;right:5px;top:5px;border:0;background:transparent;min-width:36px}
 .sa-summary-badge{font-size:11px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:3px 7px;white-space:nowrap}.orb .sa-summary-badge{position:absolute;right:0;top:-12px;pointer-events:none}
 .sa-task-widget{border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;background:var(--soft);color:var(--ink)}.sa-task-heading{display:flex;gap:12px;justify-content:space-between;align-items:baseline;flex-wrap:wrap}.sa-task-heading [data-task-title]{font-weight:600}.sa-task-widget textarea{box-sizing:border-box;width:100%;min-height:180px;background:var(--input);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:12px;resize:vertical;line-height:1.7;margin-top:10px}.sa-task-result,.sa-task-details{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;line-height:1.8;font:inherit;background:var(--input);padding:14px;border-radius:8px}.sa-task-details{max-height:200px;font-size:12px}.sa-task-reason,.sa-next-task-note{font-size:12px;color:var(--muted);margin:6px 0}.sa-task-widget [hidden]{display:none!important}.sa-task-widget .sa-disclosure{margin-top:10px}
@@ -55,8 +56,63 @@ export function describeRetention(spec) {
   const extra = Number.isInteger(spec.keepFloorCount) && spec.retainedFloorCount > spec.keepFloorCount ? '（按完整 AI 回复多留）' : '';
   return `保留最近 ${spec.retainedFloorCount} 楼${range}${extra}`;
 }
-export const taskSummary = task => task ? `${task.running ? '◌ ' : task.phase === 'complete' ? '✓ ' : '⚠ '}${task.running ? phaseLabels[task.phase] : task.message || phaseLabels[task.phase]} · ${describeSpecFloors(task.spec, task.batches)}` : '';
+const materialGuidance = '<p>添加旧回复实际使用的正文标签。旧回复没有标签时，可清空提取标签读取全文。若正文被排除，请移除相应的排除标签，再重试。</p><p>跳过会保留原消息，之后的自动总结将跳过这段楼层。</p>';
+const selectedBatch = task => task.batches?.[task.selectedBatch ?? 0];
+function materialBatch(task) {
+  if (task.running || task.phase !== 'pending') return null;
+  const batch = selectedBatch(task) ?? task;
+  return batch.phase === 'pending' && batch.errorKind === 'material' ? batch : null;
+}
+function taskMessage(task) {
+  const batch = task.phase === 'pending' ? selectedBatch(task) : null;
+  if (batch?.phase === 'queued') return '此批尚未开始';
+  return (batch ? batch.message : task.message) || phaseLabels[task.phase];
+}
+export function taskSummary(task) {
+  if (!task) return '';
+  const material = materialBatch(task);
+  if (material) return `⚠ 第 ${(task.selectedBatch ?? 0) + 1} 批未读到 AI 正文 · ${describeSpecFloors(material.spec)}`;
+  const prefix = task.running ? '◌ ' : task.phase === 'complete' ? '✓ ' : '⚠ ';
+  return `${prefix}${task.running ? phaseLabels[task.phase] : taskMessage(task)} · ${describeSpecFloors(task.spec, task.batches)}`;
+}
 const retryLabel = task => task.batches?.length>1?'继续未完成批次':task.errorKind === 'visibility' ? '重试隐藏' : task.errorKind === 'save' ? '重试保存' : task.phase === 'stopped' ? '继续本次' : '重试生成';
+function retryFromView(mode) {
+  return runAction(async () => {
+    const token = captureContext();
+    await getHost().flush();
+    checkContext(token);
+    return retryTask(mode);
+  });
+}
+function openTaskLocation(tab) {
+  const host = getHost();
+  const task = getTask();
+  if (task && !(task.running ? task.dismissedProgress : task.dismissedFinal)) dismissTask();
+  host.openSummary();
+  queueMicrotask(() => {
+    const root = host.getRoot();
+    root.querySelector(`.sa-tab-item[data-tab="${tab}"]`)?.click();
+    const reveal = (target, block) => {
+      // The outer panel restores its previous scroll over two frames after switching pages.
+      const view = target.ownerDocument.defaultView;
+      view.requestAnimationFrame(() => view.requestAnimationFrame(() => target.scrollIntoView({ block })));
+    };
+    if (tab === 'settings') {
+      root.querySelector('[data-sub-nav="tags"]')?.click();
+      const input = root.querySelector('#sa-include-tags');
+      if (input) {
+        input.focus({ preventScroll: true });
+        reveal(input, 'center');
+      }
+      return;
+    }
+    const widget = root.querySelector('[data-task-widget]:not([hidden])');
+    if (!widget) return;
+    for (const details of widget.querySelectorAll('details:not([hidden])')) details.open = true;
+    widget.querySelector('[data-task-title]').focus({ preventScroll: true });
+    reveal(widget, 'start');
+  });
+}
 function renderTaskBatches(widget, task) {
   const target=widget.querySelector('[data-task-batches]'),batches=task.batches??[];
   target.hidden=batches.length<2;if(target.hidden)return;
@@ -72,10 +128,31 @@ export function refreshTaskWidget(panel) {
   if (!task) return;
   if (widget.dataset.taskId !== task.id) {
     widget.dataset.taskId = task.id;
-    widget.innerHTML = '<div class="sa-task-heading"><div data-task-title role="status" aria-live="polite"></div><span class="sa-task-reason" data-task-elapsed></span></div><ol class="sa-task-log" data-task-log aria-label="本次任务日志"></ol><p class="sa-task-reason" data-task-message></p><p class="sa-task-reason" data-task-retention hidden></p><div class="sa-task-actions" data-task-main-actions><button data-task-stop>停止本次任务</button><button data-task-retry></button></div><details class="sa-disclosure" data-task-details hidden><summary><span>处理待完成结果</span><span class="sa-disclosure-arrow" aria-hidden="true">⌄</span></summary><div class="sa-disclosure-content"><textarea data-task-body aria-label="待处理总结正文"></textarea><div class="sa-task-actions"><button data-task-copy>复制正文</button><button data-task-save>保存编辑后的正文</button><button data-task-regenerate>重新生成</button><button data-task-skip>跳过此批</button></div></div></details><details class="sa-disclosure" data-task-tech-section hidden><summary><span>错误详情与原始返回</span><span class="sa-disclosure-arrow" aria-hidden="true">⌄</span></summary><pre class="sa-task-details" data-task-tech></pre></details>';
+    widget.innerHTML = `
+      <div class="sa-task-heading"><div data-task-title role="status" aria-live="polite" tabindex="-1"></div><span class="sa-task-reason" data-task-elapsed></span></div>
+      <ol class="sa-task-log" data-task-log aria-label="本次任务日志"></ol>
+      <p class="sa-task-reason" data-task-message></p>
+      <div class="sa-material-guidance" data-task-material hidden>${materialGuidance}</div>
+      <p class="sa-task-reason" data-task-retention hidden></p>
+      <div class="sa-task-actions" data-task-main-actions>
+        <button data-task-stop>停止本次任务</button><button data-task-extraction hidden>调整提取标签</button>
+        <button data-task-retry></button><button data-task-skip>跳过此批</button>
+      </div>
+      <details class="sa-disclosure" data-task-details hidden>
+        <summary><span>处理待完成结果</span><span class="sa-disclosure-arrow" aria-hidden="true">⌄</span></summary>
+        <div class="sa-disclosure-content">
+          <textarea data-task-body aria-label="待处理总结正文"></textarea>
+          <div class="sa-task-actions"><button data-task-copy>复制正文</button><button data-task-save>保存编辑后的正文</button><button data-task-regenerate>重新生成</button></div>
+        </div>
+      </details>
+      <details class="sa-disclosure" data-task-tech-section hidden>
+        <summary><span>错误详情与原始返回</span><span class="sa-disclosure-arrow" aria-hidden="true">⌄</span></summary>
+        <pre class="sa-task-details" data-task-tech></pre>
+      </details>`;
     widget.querySelector('[data-task-stop]').onclick = stopTask;
-    widget.querySelector('[data-task-retry]').onclick = () => runAction(() => retryTask());
-    widget.querySelector('[data-task-regenerate]').onclick = () => runAction(() => retryTask('generate'));
+    widget.querySelector('[data-task-extraction]').onclick = () => openTaskLocation('settings');
+    widget.querySelector('[data-task-retry]').onclick = () => retryFromView();
+    widget.querySelector('[data-task-regenerate]').onclick = () => retryFromView('generate');
     widget.querySelector('[data-task-save]').onclick = () => runAction(() => retryTask('save', widget.querySelector('[data-task-body]').value));
     widget.querySelector('[data-task-skip]').onclick = () => runAction(skipPendingTask);
     widget.querySelector('[data-task-copy]').onclick = () => panel.ownerDocument.defaultView.navigator.clipboard.writeText(widget.querySelector('[data-task-body]').value).catch(() => getHost()?.status('复制失败，可在文本框内手动选择复制','error'));
@@ -94,6 +171,9 @@ export function refreshTaskWidget(panel) {
     clear.onclick=()=>{try{clearTaskLog();getHost()?.status('日志已清除','success');}catch(error){getHost()?.status(error.message,'error');}};
   }
   const pending = !task.running && task.phase !== 'complete';
+  const material = !!materialBatch(task);
+  const actionable = pending && selectedBatch(task)?.phase !== 'queued';
+  const editable = actionable && !material;
   widget.querySelector('[data-task-title]').textContent = taskSummary(task);
   renderTaskBatches(widget,task);
   const log = widget.querySelector('[data-task-log]');
@@ -101,34 +181,40 @@ export function refreshTaskWidget(panel) {
   if (log.innerHTML !== logHtml) log.innerHTML = logHtml;
   widget.querySelector('[data-task-clear-log]').disabled=task.phase!=='complete'&&!logHtml;
   const message = widget.querySelector('[data-task-message]');
-  message.hidden = task.phase === 'complete';
-  message.textContent = task.running ? '关闭面板可继续聊天；本次使用开始时的设置。' : task.message || '本次任务等待处理。';
+  message.hidden = task.phase === 'complete' || material;
+  message.textContent = task.running ? '关闭面板可继续聊天；本次使用开始时的设置。' : taskMessage(task);
+  widget.querySelector('[data-task-material]').hidden = !material;
   const retention = widget.querySelector('[data-task-retention]');
   if (retention) { const text = describeRetention(task.spec); retention.hidden = !text; retention.textContent = text; }
   const body = widget.querySelector('[data-task-body]');
-  body.readOnly = !pending;
-  body.hidden = !pending;
-  if (!pending) body.value = '';
+  body.readOnly = !editable;
+  body.hidden = !editable;
+  if (!editable) body.value = '';
   const bodyKey=task.id+':'+(task.selectedBatch??0)+':'+task.phase;
-  if(pending&&widget.dataset.bodyKey!==bodyKey)body.value=task.body??'';
+  const details = widget.querySelector('[data-task-details]');
+  if (editable && widget.dataset.bodyKey !== bodyKey) {
+    body.value = task.body ?? '';
+    details.open = true;
+  }
   widget.dataset.bodyKey=bodyKey;
-  widget.querySelector('[data-task-details]').hidden = !pending;
+  details.hidden = !editable;
   widget.querySelector('[data-task-main-actions]').hidden = task.phase === 'complete';
   widget.querySelector('[data-task-tech]').textContent = pending ? [task.details, task.raw].filter(Boolean).join('\n\n') : '';
   widget.querySelector('[data-task-tech-section]').hidden = !pending || !(task.details || task.raw);
-  if (pending && widget.dataset.phase !== task.phase) widget.querySelector('[data-task-details]').open = true;
-  widget.dataset.phase = task.phase;
   const stop = widget.querySelector('[data-task-stop]'); stop.hidden = !task.running; stop.disabled = !canStopTask(task);
   widget.querySelector('[data-task-retry]').hidden = !pending; widget.querySelector('[data-task-retry]').textContent = retryLabel(task);
-  for (const action of ['save','regenerate','skip']) widget.querySelector(`[data-task-${action}]`).hidden = !pending;
-  widget.querySelector('[data-task-copy]').hidden = !task.body && !pending;
+  const extraction = widget.querySelector('[data-task-extraction]');
+  extraction.hidden = extraction.disabled = !material;
+  const skip = widget.querySelector('[data-task-skip]');
+  skip.hidden = skip.disabled = !actionable;
+  for (const action of ['save','regenerate','copy']) widget.querySelector(`[data-task-${action}]`).hidden = !editable;
   widget.querySelector('[data-task-save]').disabled = !task.sources?.length || task.saved === true;
   widget.querySelector('[data-task-elapsed]').textContent = `已用 ${Math.max(0,Math.floor(((task.endedAt ?? Date.now())-task.startedAt)/1000))} 秒${task.running && !canStopTask(task) ? ' · 正在提交，暂不能停止' : ''}`;
 }
 export function createTaskView(host) {
   let layer, card, seenId, timer;
   const root = () => host.getRoot?.();
-  const view = () => { host.openSummary(); queueMicrotask(() => { root()?.querySelector('.sa-tab-item[data-tab="status"]')?.click(); const details = root()?.querySelector('[data-task-details]'); if (details) details.open = true; }); };
+  const view = () => openTaskLocation('status');
   function refresh() {
     const app = root(); if (!app) return;
     const task = getTask();
@@ -153,18 +239,36 @@ export function createTaskView(host) {
     layer.hidden = !visible; if (!visible) return;
     const toolbar = app.ownerDocument.querySelector('#top-bar,#top-settings-holder');
     layer.style.setProperty('--sa-toolbar-bottom', `${Math.max(0,toolbar?.getBoundingClientRect().bottom ?? 42)}px`);
-    if (seenId !== task.id || !card) {
-      seenId = task.id; layer.innerHTML = '<section class="sa-notice" aria-label="总结任务提示"><div class="sa-notice-title" role="status" aria-live="polite"></div><div data-notice-elapsed></div><div class="sa-notice-actions"><button data-notice-view>查看</button><button data-notice-stop>停止本次</button><button data-notice-retry></button></div><button class="sa-notice-close" aria-label="关闭提示，任务继续">×</button></section>';
+    if (seenId !== task.id || !card?.isConnected) {
+      seenId = task.id;
+      layer.innerHTML = `
+        <section class="sa-notice" aria-label="总结任务提示">
+          <div class="sa-notice-title" role="status" aria-live="polite"></div><div data-notice-elapsed></div>
+          <div class="sa-material-guidance" data-notice-material hidden>${materialGuidance}</div>
+          <div class="sa-notice-actions">
+            <button data-notice-view>查看</button><button data-notice-stop>停止本次</button>
+            <button data-notice-extraction hidden>调整提取标签</button><button data-notice-retry></button><button data-notice-skip hidden>跳过此批</button>
+          </div>
+          <button class="sa-notice-close" aria-label="关闭提示，任务继续">×</button>
+        </section>`;
       card = layer.firstElementChild;
       card.querySelector('.sa-notice-close').onclick = dismissTask;
       card.querySelector('[data-notice-view]').onclick = view;
       card.querySelector('[data-notice-stop]').onclick = stopTask;
-      card.querySelector('[data-notice-retry]').onclick = () => runAction(() => retryTask());
+      card.querySelector('[data-notice-retry]').onclick = () => retryFromView();
+      card.querySelector('[data-notice-extraction]').onclick = () => openTaskLocation('settings');
+      card.querySelector('[data-notice-skip]').onclick = () => runAction(skipPendingTask);
     }
     card.querySelector('.sa-notice-title').textContent = taskSummary(task);
     card.querySelector('[data-notice-elapsed]').textContent = task.running ? `已用 ${Math.floor((Date.now()-task.startedAt)/1000)} 秒` : '';
     const stop = card.querySelector('[data-notice-stop]'); stop.hidden = !task.running; stop.disabled = !canStopTask(task);
     const retry = card.querySelector('[data-notice-retry]'); retry.hidden = task.running || task.phase === 'complete'; retry.textContent = retryLabel(task);
+    const material = !!materialBatch(task);
+    card.querySelector('[data-notice-material]').hidden = !material;
+    for (const action of ['extraction', 'skip']) {
+      const button = card.querySelector(`[data-notice-${action}]`);
+      button.hidden = button.disabled = !material;
+    }
   }
   const off = subscribeTask(refresh); timer = setInterval(refresh, 1000);
   return { refresh, destroy() { clearInterval(timer); off(); layer?.remove(); root()?.querySelectorAll('.sa-summary-badge').forEach(badge => badge.remove()); } };

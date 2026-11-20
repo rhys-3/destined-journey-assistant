@@ -827,6 +827,90 @@ test('a failed parallel batch preserves successful siblings and retries only unf
   assert(messages.slice(0,60).every(message=>message.is_hidden));
 });
 
+test('a batch with no AI text under the default tags can retry after changing the tags',async()=>{
+  await saveSettings(FLOW_SETTINGS);
+  seedFloors(2);
+  messages[1].message='<narrative>原来的剧情</narrative>';
+  const requests=[];
+  globalThis.generateRaw=async config=>{requests.push(config);return '<summary_result>恢复后的总结</summary_result>';};
+
+  assert.equal(await executeSummary(0,1,'总结0-1楼'),false);
+  assert.equal(getTask().phase,'pending');
+  assert.equal(getTask().errorKind,'material');
+  assert.match(getTask().message,/AI 正文/);
+  assert.equal(requests.length,0);
+  assert.deepEqual(books.book,[]);
+  assert(messages.every(message=>!message.is_hidden));
+
+  restoreTaskState();
+  assert.equal(getTask().errorKind,'material');
+  await updateSettings({includeTags:['narrative']});
+  assert.equal(await retryTask(),true);
+  assert.equal(requests.length,1);
+  assert(requests[0].ordered_prompts.some(prompt=>prompt.content.includes('原来的剧情')));
+  assert.equal(books.book[0].content,'恢复后的总结');
+  assert.equal(getTask().phase,'complete');
+});
+
+test('skipping a batch with no AI text keeps the original floors and resumes later batches',async()=>{
+  await saveSettings({...FLOW_SETTINGS,enabled:true,triggerFloorCount:82,keepFloorCount:10,batchFloorCount:20});
+  seedFloors(82);
+  for(const message of messages.slice(24,48)) {
+    if(message.role==='assistant')message.message=`<narrative>未提取的剧情 ${message.message_id}</narrative>`;
+  }
+  const skippedMessages=structuredClone(messages.slice(24,48));
+  const requests=[];
+  globalThis.generateRaw=async config=>{requests.push(config);return `<summary_result>总结 ${requests.length}</summary_result>`;};
+
+  await autoTriggerSummary();
+  assert.equal(requests.length,1);
+  assert.deepEqual(getTask().batches.map(batch=>batch.phase),['complete','pending','queued']);
+  assert.equal(getTask().batches[1].errorKind,'material');
+  assert.match(getTask().message,/AI 正文/);
+  assert.deepEqual(books.book.map(entry=>entry.name),['总结0-23楼']);
+  assert.deepEqual(messages.slice(24,48),skippedMessages);
+  const firstEntry=structuredClone(books.book[0]);
+  const firstRecord=readArchive().records['总结0-23楼'];
+
+  assert.equal(await retryTask(),false);
+  assert.equal(getTask().errorKind,'material');
+  assert(!getTask().log.some(entry=>entry.phase==='generating'));
+  assert.equal(requests.length,1);
+
+  skipPendingTask();
+  assert.deepEqual(readArchive().excluded,[{start:24,end:47}]);
+  assert.deepEqual(getTask().batches.map(batch=>batch.phase),['complete','skipped','queued']);
+  assert.equal(await retryTask(),true);
+  assert.equal(requests.length,2);
+  assert.deepEqual(getTask().batches.map(batch=>batch.phase),['complete','skipped','complete']);
+  assert.deepEqual(books.book.map(entry=>entry.name),['总结0-23楼','总结48-71楼']);
+  assert.deepEqual(books.book[0],firstEntry);
+  assert.deepEqual(readArchive().records['总结0-23楼'],firstRecord);
+  assert.deepEqual(messages.slice(24,48),skippedMessages);
+  assert.deepEqual(await computeSummaryPlans(),[]);
+});
+
+test('recovery reclassifies a legacy missing AI text error and preserves a 503 request error',()=>{
+  const details='本次范围没有可归档的 AI 正文，请检查提取标签';
+  const requestError={phase:'pending',errorKind:'request',message:'请求未完成，请检查连接后重试'};
+  const batches=[details,'HTTP 503 Service Unavailable'].map((value,index)=>({
+    ...requestError,details:value,spec:{kind:'normal',startFloor:index*20,endFloor:index*20+19},
+  }));
+  const key=contextKey();
+  patchSummaryStore({summary_assistant_runtime:{[key]:{
+    ...requestError,id:'legacy-errors',key,running:false,selectedBatch:0,details,
+    spec:{kind:'batch',startFloor:0,endFloor:39,batches:batches.map(batch=>batch.spec)},batches,
+  }}});
+
+  restoreTaskState();
+  const recovered=getTask();
+  assert.equal(recovered.errorKind,'material');
+  assert.equal(recovered.message,details);
+  assert.equal(recovered.batches[0].errorKind,'material');
+  assert.equal(recovered.batches[0].message,details);
+  assert.deepEqual(recovered.batches[1],batches[1]);
+});
+
 test('stopping a parallel round cancels all its own requests and ignores late results',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:true,triggerFloorCount:50,keepFloorCount:10,parallelBatches:true,batchConcurrency:2});seedFloors(50);
   const pending=[],ids=[],stops=[];globalThis.stopGenerationById=id=>stops.push(id);
