@@ -63,12 +63,8 @@ export function createSettingLists(ctx) {
     const draft = { items: next, error, composing: false };
     drafts.set(key, draft);
     if (error) return Promise.reject(new Error(error));
-    ctx.state.config.managed_values[key] = ctx.clone(next);
-    const task = ctx.enqueueScriptConfigSave(definition.label, `setting-list:${key}`, () => !ctx.destroyed && currentKey() === origin && contextEpoch === epoch, () => {
-      // A preceding failed save may have rolled back the shared config. Restore
-      // this operation's valid data just before committing, using newer edits if present.
-      const latest = drafts.get(key);
-      ctx.state.config.managed_values[key] = ctx.clone(latest && !latest.error && !latest.composing ? latest.items : next);
+    const task = ctx.enqueueScriptConfigSave(definition.label, `setting-list:${key}`, () => !ctx.destroyed && currentKey() === origin && contextEpoch === epoch, config => {
+      config.managed_values[key] = ctx.clone(next);
     });
     if (!debounce) ctx.debounceTimers.get(`config:setting-list:${key}`)?.flush();
     return task.then(result => {

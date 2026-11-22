@@ -8,6 +8,16 @@ module.exports=async(cdp,evaluate)=>{
   check('总结作为第六导航体系中的独立页面',!!q('.summary-slot .sa-panel')&&q('.sa-tabs').textContent.includes('记录')&&q('.sa-tabs').textContent.includes('生成设置'));
   check('普通总结按钮改为立即总结并保留指定楼层入口',q('#sa-start-summary').textContent.trim()==='立即总结'&&q('#sa-start-custom-summary').textContent.trim()==='指定楼层总结');
   check('新装默认关闭总结',!q('#sa-enabled').checked&&!ui.summary.capture().enabled);
+  const readBooks = window.getWorldbookNames;
+  window.getWorldbookNames = async () => { throw Error('世界书列表暂不可用'); };
+  for (const handler of handlers.get('CHAT_CHANGED')) await handler();
+  ui.closePanel();ui.openPanel();await pause(50);
+  check('聊天切换读取世界书失败仍可打开配套预设的总结页',!!q('.summary-slot .sa-panel') && !!q('#sa-enabled'));
+  click('.sa-tab-item[data-tab="worldbook"]');await pause(30);
+  check('绑定失败仍保留世界书修复入口',!!q('#sa-refresh-worldbooks') && q('#sa-wb-select').textContent.includes('加载失败'));
+  window.getWorldbookNames = readBooks;
+  click('#sa-refresh-worldbooks');await pause(60);
+  check('从总结页重新读取成功后恢复世界书选择',q('#sa-wb-select').textContent.includes('请选择'));
   click('#sa-enabled');await pause(30);check('总结启用开关独立持久化',vars.summary_assistant_settings.enabled===true);
   click('[data-tab="settings"].sa-tab-item');
   click('[data-sub-nav="api"]');
@@ -37,7 +47,7 @@ module.exports=async(cdp,evaluate)=>{
   q('[data-block-edit="'+added.id+'"]').click();await pause(30);click('.dj-dialog-actions button:nth-child(2)');await pause(30);click('.dj-dialog-actions button');await pause(900);check('删除提示词自动保存',ui.summary.capture().promptBlocks.length===before);
   await ui.summary.flush();
   click('.tabs [data-tab="settings"]');
-  q('[data-action="configuration-scope"][data-kind="save"][data-key="preset"]').click();
+  q('[data-action="configuration-scope"][data-key="preset"]').click();
   q('[data-action="configuration-name"]').value='仅总结';q('[data-action="configuration-name"]').dispatchEvent(new Event('input',{bubbles:true}));
   click('[data-action="configuration-save-new"]');await ui.settle();
   const item=ui.configLibrary().items.find(i=>i.name==='仅总结');check('保存范围勾选生成仅总结配置',item?.snapshot.summary&&!item.snapshot.preset);
@@ -45,23 +55,16 @@ module.exports=async(cdp,evaluate)=>{
   check('仅总结配置切换恢复非流式且不改动预设',JSON.stringify(data)===original&&ui.summary.capture().triggerFloorCount===41&&ui.summary.capture().streamGeneration===false);
   check('恢复点只记录受影响的总结部分',!!ui.configLibrary().recovery.snapshot.summary&&!ui.configLibrary().recovery.snapshot.preset);
   await ui.applyConfiguration('__recovery__');check('仅总结恢复点还原总结参数',ui.summary.capture().triggerFloorCount===61&&ui.summary.capture().streamGeneration===true&&JSON.stringify(data)===original);
-  const nonStreamingExport=JSON.parse(ui.exportConfigurations(item.id,{preset:false,summary:true}));
-  check('配置导出保留显式关闭流式',nonStreamingExport.items[0].snapshot.summary.streamGeneration===false);
-  const legacySummary=nonStreamingExport.items[0];legacySummary.id='old-summary-config';legacySummary.name='旧总结配置';
-  delete legacySummary.snapshot.summary.streamGeneration;
-  await ui.importConfigurations(JSON.stringify(nonStreamingExport));
-  check('旧总结配置缺少流式字段时默认开启',ui.configLibrary().items.find(i=>i.id===legacySummary.id)?.snapshot.summary.streamGeneration===true);
+  check('命名配置保留显式关闭流式',item.snapshot.summary.streamGeneration===false);
+  const legacySummary=structuredClone(item.snapshot);delete legacySummary.flavor;delete legacySummary.summary.streamGeneration;
+  check('旧总结配置缺少流式字段时默认开启',ui.validateCombined(legacySummary).summary.streamGeneration===true);
   const both=await ui.saveNamedConfiguration('两类配置','',{preset:true,summary:true});
-  const exported=JSON.parse(ui.exportConfigurations(both,{preset:false,summary:true}));check('导出可再次筛选范围',exported.version===2&&exported.items[0].snapshot.summary&&!exported.items[0].snapshot.preset);
-  const legacy={format:'destined-configurations',version:1,items:[{id:'old-config',name:'旧版配置',snapshot:ui.captureConfiguration()}]};await ui.importConfigurations(JSON.stringify(legacy));
-  const old=ui.configLibrary().items.find(i=>i.id==='old-config');check('旧版配置导入为仅预设',old.snapshot.preset&&!old.snapshot.summary);
-  const savedLibrary=vars.configuration_library;
-  try {
-    vars.configuration_library={items:[{name:'缺编号配置',snapshot:ui.captureConfiguration()}]};
-    const recovered=JSON.parse(ui.exportRecoverableConfigurations()).items[0];check('缺编号配置在 HTTP 环境恢复导出 UUID',!!recovered?.snapshot.preset&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(recovered.id));
-  } finally { vars.configuration_library=savedLibrary; }
-  const exp=ui.exportConfigurations();check('配置导出不含密钥、世界书和记录',!exp.includes('customApiKey')&&!exp.includes('summary_assistant_worldbook')&&!exp.includes('summary_assistant_mega_summary_map'));
-  let failed=false;try{ui.exportConfigurations('',{preset:false,summary:false})}catch{failed=true}check('导出不允许空范围',failed);
+  const combined=ui.configLibrary().items.find(record=>record.id===both).snapshot;
+  check('本地配置可同时保存两类设置',combined.version===2&&combined.flavor==='prime'&&combined.summary&&combined.preset);
+  const old=ui.validateCombined(ui.captureConfiguration());check('旧版快照仍保留为仅预设',old.preset&&!old.summary);
+  check('在 HTTP 环境仍可生成命名配置 UUID',/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(both));
+  const serialized=JSON.stringify(combined);check('命名配置不含密钥、世界书和记录',!serialized.includes('customApiKey')&&!serialized.includes('summary_assistant_worldbook')&&!serialized.includes('summary_assistant_mega_summary_map'));
+  let failed=false;try{await ui.saveNamedConfiguration('空范围','',{preset:false,summary:false});}catch{failed=true;}check('保存不允许空范围',failed);
   // Exercise actual summary action, review and worldbook save through the UI.
   window.books={};window.chatVars={};window.globalBooks=[];window.messages=Array.from({length:30},(_,id)=>({message_id:id,role:'assistant',message:'<tp>488-1-1</tp><gametxt>发生事件'+id+'</gametxt>',is_hidden:false}));
   window.getVariables=o=>structuredClone(o?.type==='chat'?chatVars:vars);

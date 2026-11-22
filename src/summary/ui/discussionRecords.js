@@ -3,7 +3,7 @@ import { setManualFloorVisibilityByIds, restoreDiscussionVisibilityAutomation, r
 import { applySummarizedFloorsVisibility } from '../worldbook.js';
 import { sourceOf } from '../provenance.js';
 import { getSettings } from '../storage.js';
-import { isDiscussionMessage } from '../../discussion/protocol.js';
+import { isSummaryDiscussion } from '../messages.js';
 import { escapeHtml } from '../utils.js';
 
 export const DISCUSSION_PAGE_SIZE = 30;
@@ -18,7 +18,7 @@ const sourceFor = message => sourceOf(message);
 const preview = message => String(message ?? '').slice(0, 512).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 88);
 
 export function discussionRecordPage(snapshot, query = {}) {
-  const matches = message => isDiscussionMessage(message)
+  const matches = message => isSummaryDiscussion(message)
     && (!query.role || query.role === 'all' || message.role === query.role)
     && (!query.visibility || query.visibility === 'all' || !!message.is_hidden === (query.visibility === 'hidden'));
   const messages = snapshot.messages.filter(matches).reverse();
@@ -53,7 +53,7 @@ export function refreshDiscussionRecords(panel, { force = false } = {}) {
     target.innerHTML = '<p class="sa-empty">等待楼层快照…</p>';
     return;
   }
-  const count = snapshot.messages.filter(isDiscussionMessage).length;
+  const count = snapshot.messages.filter(isSummaryDiscussion).length;
   target.dataset.discussionCount = String(count);
   const tab = panel.querySelector('[data-tab="discussion"]');
   if (tab) tab.textContent = count ? `讨论记录（${count}）` : '讨论记录';
@@ -84,7 +84,7 @@ export function refreshDiscussionRecords(panel, { force = false } = {}) {
 function selectedRecords(panel, ids) {
   const byId = new Map((panel._visibilitySnapshot?.messages ?? []).map(message => [message.message_id, message]));
   const records = ids.map(id => byId.get(id)).filter(Boolean);
-  if (records.length !== ids.length || records.some(message => !isDiscussionMessage(message))) throw new Error('所选讨论记录已变化，请刷新后重试');
+  if (records.length !== ids.length || records.some(message => !isSummaryDiscussion(message))) throw new Error('所选讨论记录已变化，请刷新后重试');
   return records;
 }
 
@@ -105,7 +105,7 @@ async function viewDiscussionRecord(panel, id) {
   const token = captureContext();
   const cached = selectedRecords(panel, [id])[0];
   const current = getChatMessages(String(id), { role: 'all', hide_state: 'all', include_swipes: false }).find(message => message.message_id === id);
-  if (!current || !isDiscussionMessage(current) || sourceFor(current).fingerprint !== sourceFor(cached).fingerprint) throw new Error('讨论记录已变化，请刷新后查看');
+  if (!current || !isSummaryDiscussion(current) || sourceFor(current).fingerprint !== sourceFor(cached).fingerprint) throw new Error('讨论记录已变化，请刷新后查看');
   checkContext(token);
   await getHost()?.viewText(`第 ${current.message_id} 楼讨论原文`, `[第 ${current.message_id} 楼 · ${roleLabel(current.role)} · ${current.is_hidden ? '隐藏' : '显示'}]\n${current.message ?? ''}`);
   checkContext(token);
@@ -138,7 +138,7 @@ export function bindDiscussionRecords(panel, refresh) {
       return;
     }
     const all = panel._visibilitySnapshot?.messages ?? [];
-    if (!all.some(message => message.message_id === value && isDiscussionMessage(message))) {
+    if (!all.some(message => message.message_id === value && isSummaryDiscussion(message))) {
       getHost()?.status('该楼层不是讨论记录', 'info');
       return;
     }

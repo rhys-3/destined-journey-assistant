@@ -56,7 +56,7 @@ export function describeRetention(spec) {
   const extra = Number.isInteger(spec.keepFloorCount) && spec.retainedFloorCount > spec.keepFloorCount ? '（按完整 AI 回复多留）' : '';
   return `保留最近 ${spec.retainedFloorCount} 楼${range}${extra}`;
 }
-const materialGuidance = '<p>添加旧回复实际使用的正文标签。旧回复没有标签时，可清空提取标签读取全文。若正文被排除，请移除相应的排除标签，再重试。</p><p>跳过会保留原消息，之后的自动总结将跳过这段楼层。</p>';
+const materialGuidance = '<p>添加旧回复实际使用的正文标签。没有匹配标签时会自动读取整楼。若正文被排除，请移除相应的排除标签，再重试。</p><p>跳过会保留原消息，之后的自动总结将跳过这段楼层。</p>';
 const selectedBatch = task => task.batches?.[task.selectedBatch ?? 0];
 function materialBatch(task) {
   if (task.running || task.phase !== 'pending') return null;

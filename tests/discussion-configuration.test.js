@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import { createConfigurationSchema } from '../src/preset/configuration-schema.js';
 import { createConfigurations } from '../src/preset/configurations.js';
 import { createStore } from '../src/preset/store.js';
-import { DEFAULT_MANAGED_VALUES } from '../src/preset/definitions.js';
+import { DEFAULT_MANAGED_VALUES, VARIABLE_MODES } from '../src/preset/definitions.js';
 
-const preset = () => ({ settings: {}, prompts: [{ id: 'head', name: 'Head', enabled: true, role: 'system', content: 'CUSTOM', position: { type: 'relative' }, extra: { system_prompt: false } }], prompts_unused: [{ id: 'story', name: 'Story', enabled: false, role: 'system', content: 'S', position: { type: 'relative' } }], extensions: { destined_discussion: { version: 6 }, unrelated: 'RETAIN' } });
-function schema() { const sanitizeManagedValues = createStore({ DEFAULT_MANAGED_VALUES }).sanitizeManagedValues; return createConfigurationSchema({ state: { config: {} }, BUILTIN_MODEL_ADAPTERS: {}, PROTECTED_IDS: [], IDS: {}, sanitizeManagedValues, sanitizeEntryPoints: () => ({}), sanitizeBinding: () => null, validateAuthorLayout: value => structuredClone(value), getGeminiTail: () => null, variablePresetMode: () => 'main' }); }
+const preset = () => ({ settings: {}, prompts: [
+  { id: 'head', name: 'Head', enabled: true, role: 'system', content: 'CUSTOM', position: { type: 'relative' }, extra: { system_prompt: false } },
+  ...VARIABLE_MODES.map(({ id, key }) => ({ id, name: key, enabled: key === 'main', role: 'system' })),
+], prompts_unused: [{ id: 'story', name: 'Story', enabled: false, role: 'system', content: 'S', position: { type: 'relative' } }], extensions: { destined_discussion: { version: 6 }, unrelated: 'RETAIN' } });
+function schema() { const sanitizeManagedValues = createStore({ DEFAULT_MANAGED_VALUES }).sanitizeManagedValues; return createConfigurationSchema({ state: { config: {} }, BUILTIN_MODEL_ADAPTERS: {}, PROTECTED_IDS: [], IDS: {}, VARIABLE_MODES, sanitizeManagedValues, sanitizeEntryPoints: () => ({}), sanitizeBinding: () => null, validateAuthorLayout: value => structuredClone(value), getGeminiTail: () => null, variablePresetMode: () => 'main' }); }
 
-test('configuration export retains the v6 marker only and never includes chat mode', () => {
+test('named configurations retain the v6 marker only and never include chat mode', () => {
   const snapshot = schema().capturePresetConfiguration(preset(), {});
   assert.deepEqual(snapshot.discussion, { version: 6 });
   assert.equal(snapshot.prompts[0].extra.system_prompt, false);
@@ -18,14 +21,14 @@ test('configuration export retains the v6 marker only and never includes chat mo
   assert.equal(schema().validatePresetSnapshot(legacy).prompts[0].extra.destined_mode, 'old-value');
 });
 
-test('configuration snapshots retain all three length settings and normalize legacy imports', () => {
+test('configuration snapshots retain all three length settings and normalize older records', () => {
   const current = schema().capturePresetConfiguration(preset(), { managed_values: { min_hanzi: '1800', max_hanzi: '2400', length_mode: 'range' } });
   assert.deepEqual(current.config.managed_values, { ...DEFAULT_MANAGED_VALUES, min_hanzi: '1800', max_hanzi: '2400', length_mode: 'range' });
   const legacy = schema().validatePresetSnapshot({ ...current, config: { ...current.config, managed_values: { min_hanzi: '5000' } } });
   assert.deepEqual(legacy.config.managed_values, { ...DEFAULT_MANAGED_VALUES, min_hanzi: '5000', max_hanzi: '5000', length_mode: 'minimum' });
 });
 
-test('noise settings survive configuration export and import without including generated text', () => {
+test('noise settings survive a named configuration without including generated text', () => {
   const noise = { enabled: true, segments: 29, mode: 'random', seed: '1234567890abcdef' };
   const snapshot = schema().capturePresetConfiguration(preset(), { noise_padding: { ...noise, text: 'PRIVATE GENERATED TEXT' } });
   assert.deepEqual(snapshot.config.noise_padding, noise);
@@ -43,7 +46,7 @@ test('named configuration restore writes mode marks with native prompts and keep
   const previous = Object.fromEntries(names.map(name => [name, globalThis[name]])); t.after(() => Object.assign(globalThis, previous));
   let live = preset(), variables = {};
   globalThis.getPreset = () => live; globalThis.getLoadedPresetName = () => 'in_use'; globalThis.getVariables = () => structuredClone(variables); globalThis.replaceVariables = value => { variables = structuredClone(value); };
-  const ctx = { destroyed: false, state: { config: {} }, clone: structuredClone, fingerprintPresetValue: createStore({}).fingerprintPresetValue,
+  const ctx = { destroyed: false, state: { config: {} }, clone: structuredClone, ...createStore({}),
     assertData: (condition, message) => assert.ok(condition, message), commitPresetMutation: async (_label, mutate, guard) => { assert(guard()); mutate(live); }, rebuildModelRegistry: () => {} };
   const snapshot = schema().capturePresetConfiguration(live, {}); live.prompts[0].extra.destined_mode = 'story';
   await createConfigurations(ctx).writeWorkspace(snapshot, { configuration_library: { items: [] } }, () => true);

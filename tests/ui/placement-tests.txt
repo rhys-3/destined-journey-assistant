@@ -89,6 +89,6 @@
   check('自定义细则排序同步子选项网格',q('.expression-options [data-placement-id]').dataset.placementId===extraExpression);
   q('.expression-master input').click();await ui.settle();
   check('新增子控件也随总开关禁用并保留选择',customExpressionCard().querySelector('input').disabled&&customExpressionCard().querySelector('input').checked);
- }finally{data=before.data;stored=before.stored;vars=before.vars;ui.state.config=ui.loadScriptConfig();ui.rebuildModelRegistry();ui.closePromptEditor(true);ui.state.activeTab='daily';ui.reconcilePreset('placement restored');ui.render();await ui.settle();}
+ }finally{data=before.data;stored=before.stored;vars=before.vars;ui.reloadScriptConfig();ui.closePromptEditor(true);ui.state.activeTab='daily';ui.reconcilePreset('placement restored');ui.render();await ui.settle();}
  return results;
 })()

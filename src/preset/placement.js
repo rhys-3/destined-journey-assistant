@@ -109,7 +109,7 @@ export function createPlacement(ctx) {
     });
     // Current presets may omit the retired content-preference section; old layouts still load.
     for (const block of base.blocks) if(block.id!=='content-extra') ctx.assertData(blocks.some(b => b.id === block.id), '内置板块可以隐藏，不能删除：' + block.label);
-    ctx.assertData(Array.isArray(value.trash ?? []) && (value.trash ?? []).length <= 100, '回收站最多保留 100 项，请先清理或导出');
+    ctx.assertData(Array.isArray(value.trash ?? []) && (value.trash ?? []).length <= 100, '回收站最多保留 100 项，请先清理');
     const trashIds = new Set();
     const trash = (value.trash ?? []).map(item => {
       ctx.assertData(ctx.plainObject(item) && typeof item.included === 'boolean' && Number.isSafeInteger(item.ordinal) && item.ordinal >= 1 && typeof item.deletedAt === 'string', '回收站记录无效');

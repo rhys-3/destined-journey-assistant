@@ -148,6 +148,7 @@ export async function startPresetAssistant() {
     get canSortPrompts() { return canSortPrompts; },
     get cancelPromptSort() { return cancelPromptSort; },
     get captureConfiguration() { return captureConfiguration; },
+    get captureRecovery() { return captureRecovery; },
     get captureWorldContext() { return captureWorldContext; },
     get choiceButton() { return choiceButton; },
     get clampOrbToViewport() { return clampOrbToViewport; },
@@ -164,11 +165,11 @@ export async function startPresetAssistant() {
     get currentTransparency() { return currentTransparency; }, set currentTransparency(value) { currentTransparency = value; },
     get debounceTimers() { return debounceTimers; },
     get deleteConfiguration() { return deleteConfiguration; },
+    get deleteInvalidConfigurationData() { return deleteInvalidConfigurationData; },
     get deleteUserStyle() { return deleteUserStyle; },
     get destroyed() { return destroyed; }, set destroyed(value) { destroyed = value; },
     get detectModelAdapter() { return detectModelAdapter; },
     get dialogs() { return dialogs; }, set dialogs(value) { dialogs = value; },
-    get downloadConfiguration() { return downloadConfiguration; },
     get editEntryAction() { return editEntryAction; },
     get emptyLibrary() { return emptyLibrary; },
     get enqueueScriptConfigSave() { return enqueueScriptConfigSave; },
@@ -176,9 +177,6 @@ export async function startPresetAssistant() {
     get ensurePromptMetadata() { return ensurePromptMetadata; },
     get escapeHtml() { return escapeHtml; },
     get eventStops() { return eventStops; },
-    get exportConfigurations() { return exportConfigurations; },
-    get exportRecoverableConfigurations() { return exportRecoverableConfigurations; },
-    get exportScopes() { return exportScopes; }, set exportScopes(value) { exportScopes = value; },
     get findEditorPrompt() { return findEditorPrompt; },
     get fingerprintPresetValue() { return fingerprintPresetValue; },
     get flushPendingSaves() { return flushPendingSaves; },
@@ -200,7 +198,6 @@ export async function startPresetAssistant() {
     get hasManagedMacro() { return hasManagedMacro; },
     get hasLengthRequirementMacro() { return hasLengthRequirementMacro; },
     get host() { return host; }, set host(value) { host = value; },
-    get importConfigurations() { return importConfigurations; },
     get inferNativePlacement() { return inferNativePlacement; },
     get inferPromptMeta() { return inferPromptMeta; },
     get isMobileViewport() { return isMobileViewport; },
@@ -234,6 +231,7 @@ export async function startPresetAssistant() {
     get reconcilePreset() { return reconcilePreset; },
     get refreshPreset() { return refreshPreset; },
     get renameConfiguration() { return renameConfiguration; },
+    get resetConfigurationLibrary() { return resetConfigurationLibrary; },
     get render() { return render; },
     get renderActiveContent() { return renderActiveContent; },
     get renderEntryResults() { return renderEntryResults; },
@@ -271,7 +269,6 @@ export async function startPresetAssistant() {
     get savePlacement() { return savePlacement; },
     get savePromptEditor() { return savePromptEditor; },
     get savePromptOrder() { return savePromptOrder; },
-    get saveRecovery() { return saveRecovery; },
     get saveScriptConfig() { return saveScriptConfig; },
     get saveStyleEditor() { return saveStyleEditor; },
     get savedScriptConfig() { return savedScriptConfig; }, set savedScriptConfig(value) { savedScriptConfig = value; },
@@ -331,6 +328,7 @@ export async function startPresetAssistant() {
     get worldTimer() { return worldTimer; }, set worldTimer(value) { worldTimer = value; },
     get worldWrites() { return worldWrites; },
     get writePlacement() { return writePlacement; },
+    get writeScriptConfig() { return writeScriptConfig; },
     get writeWorkspace() { return writeWorkspace; },
   };
   const {
@@ -341,10 +339,10 @@ export async function startPresetAssistant() {
     sanitizeManagedValues,
     sanitizeLanguageSetting,
     loadScriptConfig,
+    writeScriptConfig,
     sanitizeEntryPoints,
     sanitizeBinding,
     saveScriptConfig,
-    commitScriptConfig,
     enqueueScriptConfigSave,
     getContext,
     getPrompt,
@@ -554,18 +552,14 @@ export async function startPresetAssistant() {
     runWorkspaceOperation,
     writeConfigurationData,
     writeWorkspace,
-    saveRecovery,
+    captureRecovery,
     saveNamedConfiguration,
     renameConfiguration,
     deleteConfiguration,
+    deleteInvalidConfigurationData,
+    resetConfigurationLibrary,
     withLinkedConnection,
-    applyConfiguration,
-    exportConfigurations,
-    redactSecrets,
-    exportRecoverableConfigurations,
-    rejectUnsafeKeys,
-    importConfigurations,
-    downloadConfiguration
+    applyConfiguration
   } = createConfigurations(ctx);
   const {
     addCustomModel,
@@ -576,7 +570,6 @@ export async function startPresetAssistant() {
     configurationIsDirty,
     renderConfigurationShortcut,
     configButton,
-    scopeCheckboxes,
     renderConfigurationsTab,
     renderCustomModelControls,
     handleConfigurationAction
@@ -639,7 +632,6 @@ export async function startPresetAssistant() {
   let discussion = null;
   let toolOutput = null;
   let configurationScopes = { preset: true, summary: true };
-  let exportScopes = { preset: true, summary: true };
   let metadataEnriching = false;
   let suppressOrbClick = false;
   let commitInProgress = false;

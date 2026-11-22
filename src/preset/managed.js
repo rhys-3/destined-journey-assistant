@@ -169,8 +169,7 @@ export function createManaged(ctx) {
     if (value.length > 80) return Promise.reject(new Error(`${definition.label}不能超过 80 个字符。`));
     if (/[\u0000-\u001f\u007f<>{}]/u.test(value)) return Promise.reject(new Error(`${definition.label}不能包含换行、控制字符、尖括号或花括号。`));
     if (!hasLanguageMacro(key)) return Promise.reject(new Error(`${definition.label}对应的短宏缺失或格式异常。`));
-    ctx.state.config.managed_values[definition.configKey] = value;
-    return ctx.enqueueScriptConfigSave(definition.label, `language:${key}`);
+    return ctx.enqueueScriptConfigSave(definition.label, `language:${key}`, null, config => { config.managed_values[definition.configKey] = value; });
   }
 
   function readNumericField(key) {
@@ -194,8 +193,7 @@ export function createManaged(ctx) {
     if (!hasManagedMacro(definition.promptId, definition.macro, definition.minimumOccurrences)) {
       return Promise.reject(new Error(`${definition.label}对应的短宏缺失或格式异常。`));
     }
-    ctx.state.config.managed_values[definition.configKey] = value;
-    return ctx.enqueueScriptConfigSave(definition.label, `field:${key}`);
+    return ctx.enqueueScriptConfigSave(definition.label, `field:${key}`, null, config => { config.managed_values[definition.configKey] = value; });
   }
 
   function hasLengthRequirementMacro(preset = ctx.state.preset) {
@@ -237,8 +235,9 @@ export function createManaged(ctx) {
     if (mode === 'range' && Number(minHanzi) > Number(maxHanzi)) return Promise.reject(new Error('范围的最少字数不能大于最多字数。'));
     const context = ctx.workspaceContextKey();
     const draft = ctx.state.lengthControlDraft;
-    ctx.state.config.managed_values = { ...ctx.state.config.managed_values, min_hanzi: minHanzi, max_hanzi: maxHanzi, length_mode: mode };
-    return ctx.enqueueScriptConfigSave('正文字数').then(() => {
+    return ctx.enqueueScriptConfigSave('正文字数', null, null, config => {
+      Object.assign(config.managed_values, { min_hanzi: minHanzi, max_hanzi: maxHanzi, length_mode: mode });
+    }).then(() => {
       if (ctx.workspaceContextKey() === context && ctx.state.lengthControlDraft === draft) clearLengthDraft();
     });
   }
@@ -265,8 +264,7 @@ export function createManaged(ctx) {
       || !hasManagedMacro(ctx.IDS.narration, ctx.MANAGED_MACROS.narrationRequirement)) {
       return ctx.showErrorToast(new Error('叙事人称短宏缺失或格式异常。'));
     }
-    ctx.state.config.managed_values.narration_person = person;
-    const task = ctx.enqueueScriptConfigSave('叙事人称');
+    const task = ctx.enqueueScriptConfigSave('叙事人称', null, null, config => { config.managed_values.narration_person = person; });
     for (const button of ctx.shadow.querySelectorAll('[data-action="person"]')) {
       button.classList.toggle('selected', button.dataset.value === person);
     }
@@ -395,11 +393,13 @@ export function createManaged(ctx) {
       return;
     }
     const legacyValues = readLegacyManagedValues(ctx.state.preset);
-    ctx.state.config.managed_values = ctx.sanitizeManagedValues({
-      ...ctx.state.config.managed_values,
-      ...(ctx.state.config.managed_values_version === ctx.MANAGED_VALUES_VERSION ? {} : legacyValues),
-    }, ctx.state.preset);
-    await ctx.enqueueScriptConfigSave('迁移预设设置', null, current);
+    const migrationPreset = ctx.state.preset;
+    await ctx.enqueueScriptConfigSave('迁移预设设置', null, current, config => {
+      config.managed_values = ctx.sanitizeManagedValues({
+        ...config.managed_values,
+        ...(config.managed_values_version === ctx.MANAGED_VALUES_VERSION ? {} : legacyValues),
+      }, migrationPreset);
+    });
     if (!current()) throw new Error('上下文已变化，设定迁移已停止。');
     await ctx.queuePresetMutation('迁移命定短宏', preset => {
       if (!current()) throw new Error('上下文已变化，设定迁移已停止。');
@@ -412,9 +412,8 @@ export function createManaged(ctx) {
       migrateNoisePlacement(preset, ctx.MODEL_ADAPTERS);
       if (preset.extensions?.destined_author) preset.extensions.destined_author = ctx.validateAuthorLayout(preset.extensions.destined_author);
     });
-    ctx.state.config.managed_values_version = ctx.MANAGED_VALUES_VERSION;
     if (!current()) throw new Error('上下文已变化，设定迁移已停止。');
-    await ctx.enqueueScriptConfigSave('设定列表迁移完成', null, current);
+    await ctx.enqueueScriptConfigSave('设定列表迁移完成', null, current, config => { config.managed_values_version = ctx.MANAGED_VALUES_VERSION; });
     ctx.renderActiveContent(true);
   }
 
@@ -534,8 +533,7 @@ export function createManaged(ctx) {
         }
       });
     }
-    ctx.state.config.style_structure_version = ctx.STYLE_STRUCTURE_VERSION;
-    await ctx.enqueueScriptConfigSave('文风标签结构已更新');
+    await ctx.enqueueScriptConfigSave('文风标签结构已更新', null, null, config => { config.style_structure_version = ctx.STYLE_STRUCTURE_VERSION; });
     if (malformedNames.length > 0) {
       toastr.warning(`以下自建条目的 XML 包装异常，未自动改写：${malformedNames.join('、')}`, ctx.BUTTON_NAME);
     }

@@ -1,23 +1,18 @@
 import { getSettings, getMegaSummaryMapping } from './storage.js';
-import { getRawMessages, processMessagesByTags, messagesToMergedText } from './messages.js';
+import { getRawMessages, processMessagesByTags, messagesToMergedText, isSummaryDiscussion } from './messages.js';
 import { getWorldbookEntriesSafe, getSummaryContentsBefore, isEntryDisabled } from './worldbook.js';
 import { sourceOf, sourcesMatch, fingerprint, readArchive, parseRange, consecutiveSummaries, recordValid, currentSources } from './provenance.js';
 import { makeSummaryEntryName } from './utils.js';
-import { isDiscussionMessage } from '../discussion/protocol.js';
 import { NO_AI_BODY_MESSAGE } from './errorHandler.js';
 
 export async function buildSummaryPromptParams(startFloor, endFloor, settings = getSettings()) {
   if (!Number.isInteger(startFloor) || !Number.isInteger(endFloor) || startFloor < 0 || endFloor < startFloor) throw new Error('请输入从 0 开始、起点不大于终点的整数楼层范围');
   if (endFloor > getLastMessageId()) throw new Error('本次来源楼层已删除，请重新选择范围');
   const raw = await getRawMessages(startFloor, endFloor);
-  const story = raw.filter(message => !isDiscussionMessage(message));
+  const story = raw.filter(message => !isSummaryDiscussion(message));
   const processed = processMessagesByTags(story, settings.includeTags, settings.excludeTags, settings.excludeHtmlComments);
   if (!processed.some(message => message.role === 'assistant')) throw new Error(NO_AI_BODY_MESSAGE);
-  const included = new Set(processed.map(message => message.id));
-  // An untagged opening has no story material, but is retired with the first
-  // successful batch. Its fingerprint still invalidates that batch if edited.
-  if (story.some(message => message.id === 0)) included.add(0);
-  const sources = story.filter(message => included.has(message.id)).map(sourceOf);
+  const sources = story.map(sourceOf);
   const history = settings.includeOldSummary ? await getSummaryContentsBefore(makeSummaryEntryName(startFloor, endFloor)) : [];
   return { kind: 'normal', startFloor, endFloor, promptBlocks: settings.promptBlocks, oldSummaryContent: history.map(entry => '[' + entry.name + ']\n' + entry.content).join('\n\n'), mergedChatText: messagesToMergedText(processed, settings.userPrefix, settings.assistantPrefix), scanText: story.map(message => message.message).join('\n'), sources, parents: [] };
 }
@@ -26,7 +21,7 @@ export async function buildRegeneratePromptParams(entryName, settings = getSetti
   return buildSummaryPromptParams(range.start, range.end, settings);
 }
 export async function buildMegaSummaryPromptParams(summaryNames, entryName = null, settings = getSettings()) {
-  const discussionIds = new Set((await getRawMessages(0, getLastMessageId())).filter(isDiscussionMessage).map(message => message.id));
+  const discussionIds = new Set((await getRawMessages(0, getLastMessageId())).filter(isSummaryDiscussion).map(message => message.id));
   const ranges = consecutiveSummaries(summaryNames, { discussionIds }), entries = await getWorldbookEntriesSafe(), archive = readArchive(), current = currentSources();
   const selected = ranges.map(range => entries.find(entry => entry.name === range.name));
   if (selected.some(entry => !entry?.content || !recordValid(entry, archive, current, entries) || (!entryName && isEntryDisabled(entry)))) throw new Error('大总结来源已失效、停用或缺失，请先处理普通总结');

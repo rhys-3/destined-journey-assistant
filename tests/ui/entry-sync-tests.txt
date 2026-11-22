@@ -36,6 +36,6 @@
   mode(false);check('退出编辑模式隐藏自定义模型增删入口',!q('[data-action="model-add"]')&&!q('[data-action="model-delete"]'));
   ui.state.activeTab='advanced';ui.render();check('退出模式隐藏新建和排序手柄',!q('[data-action="prompt-new"]')&&!q('.sort-handle'));
   ui.closePanel();ui.openPanel();await ui.settle();check('重新打开总开关默认关闭',!ui.state.editorUnlocked&&!q('[data-action="edit-mode"]').checked);
- }finally{data=initial.data;stored=initial.stored;vars=initial.vars;ui.state.config=ui.loadScriptConfig();ui.rebuildModelRegistry();ui.closePromptEditor(true);ui.state.editorUnlocked=false;ui.state.activeTab='daily';ui.reconcilePreset('同步验证完成');ui.render();await ui.settle();}
+ }finally{data=initial.data;stored=initial.stored;vars=initial.vars;ui.reloadScriptConfig();ui.closePromptEditor(true);ui.state.editorUnlocked=false;ui.state.activeTab='daily';ui.reconcilePreset('同步验证完成');ui.render();await ui.settle();}
  return results;
 })()

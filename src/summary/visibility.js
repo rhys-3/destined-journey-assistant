@@ -1,11 +1,85 @@
 import { assertRecordWritable, writeVariableKeys, setChatMessages, captureContext, checkContext } from '../platform/lifecycle.js';
-import { sourceOf } from './provenance.js';
-import { isDiscussionMessage } from '../discussion/protocol.js';
-import { AUTO_HIDDEN_FLOORS_VAR_KEY, VISIBILITY_AUTOMATION_VAR_KEY, VISIBILITY_OVERRIDES_VAR_KEY } from '../platform/storage-keys.js';
+import { fingerprint, sourceOf } from './provenance.js';
+import { isSummaryDiscussion } from './messages.js';
+import { AUTO_HIDDEN_FLOORS_VAR_KEY, AUTO_HIDDEN_FINGERPRINTS_VAR_KEY, VISIBILITY_AUTOMATION_VAR_KEY, VISIBILITY_OVERRIDES_VAR_KEY } from '../platform/storage-keys.js';
 
 export const VISIBILITY_OVERRIDES_KEY = VISIBILITY_OVERRIDES_VAR_KEY;
 export const VISIBILITY_AUTOMATION_KEY = VISIBILITY_AUTOMATION_VAR_KEY;
 const AUTO_HIDDEN_KEY = AUTO_HIDDEN_FLOORS_VAR_KEY;
+const contentFingerprint = msg => fingerprint([msg.role, msg.name ?? '', msg.swipe_id ?? null, msg.message ?? '']);
+function groupFloorIds(signatures) {
+  const bySignature = new Map();
+  signatures.forEach((signature, id) => {
+    if (!bySignature.has(signature)) bySignature.set(signature, []);
+    bySignature.get(signature).push(id);
+  });
+  return bySignature;
+}
+// After deletions the surviving messages form a subsequence. Surrounding
+// messages can identify a repeated reply even when its occurrence count fell.
+function ownershipAfterDeletion(previous, current, owned) {
+  const earliest = [];
+  let cursor = 0;
+  for (const signature of current) {
+    while (cursor < previous.length && previous[cursor] !== signature) cursor++;
+    if (cursor === previous.length) return null;
+    earliest.push(cursor++);
+  }
+  const unownedSignatures = new Set(previous.filter((_, id) => !owned.has(id)));
+  const result = new Set();
+  cursor = previous.length - 1;
+  for (let id = current.length - 1; id >= 0; id--) {
+    while (previous[cursor] !== current[id]) cursor--;
+    if ((cursor === earliest[id] && owned.has(cursor)) || !unownedSignatures.has(current[id])) result.add(id);
+    cursor--;
+  }
+  return result;
+}
+export function autoHiddenOwnership(ids, messages) {
+  const floors = [...new Set(ids)].sort((a, b) => a - b);
+  const signatures = [];
+  if (floors.length) for (const message of messages) signatures[message.message_id] = contentFingerprint(message);
+  return { [AUTO_HIDDEN_KEY]: floors, [AUTO_HIDDEN_FINGERPRINTS_VAR_KEY]: signatures };
+}
+export function loadAutoHiddenFloorIds(messages = allFloorMessages()) {
+  const vars = getVariables({ type: 'chat' }), owned = new Set(vars?.[AUTO_HIDDEN_KEY] ?? []);
+  const previous = vars?.[AUTO_HIDDEN_FINGERPRINTS_VAR_KEY];
+  if (!owned.size || !previous?.length) return owned;
+  const current = [];
+  for (const message of messages) current[message.message_id] = contentFingerprint(message);
+  if (current.length < previous.length) {
+    const survivors = ownershipAfterDeletion(previous, current, owned);
+    if (survivors) return survivors;
+  }
+  if (current.length >= previous.length) {
+    const replaced = new Set(), replacements = new Set();
+    current.forEach((signature, id) => {
+      if (signature === previous[id]) return;
+      if (id < previous.length) replaced.add(previous[id]);
+      replacements.add(signature);
+    });
+    // Edits and appended messages retain floor ownership. Only remap if an
+    // old signature could have moved from one changed slot into another.
+    if (![...replaced].some(signature => replacements.has(signature))) return owned;
+  }
+  const oldIds = groupFloorIds(previous), newIds = groupFloorIds(current), result = new Set();
+  for (const [signature, group] of oldIds) {
+    const now = newIds.get(signature) ?? [];
+    if (group.length === now.length) {
+      group.forEach((id, i) => { if (owned.has(id)) result.add(now[i]); });
+    } else if (now.length <= group.length && group.every(id => owned.has(id))) {
+      for (const id of now) result.add(id);
+    } else if (current.length >= previous.length && group.every(id => current[id] === signature)) {
+      for (const id of group) if (owned.has(id)) result.add(id);
+    }
+  }
+  // An edit or swipe replaces the text in place. A deletion moves an existing
+  // fingerprint into that slot, so it must not inherit the deleted floor's flag.
+  if (previous.length === current.length) for (const id of owned) {
+    if (current[id] && !newIds.has(previous[id]) && !oldIds.has(current[id])) result.add(id);
+  }
+  return result;
+}
 export function allFloorMessages() {
   const last = getLastMessageId();
   return last < 0 ? [] : getChatMessages(`0-${last}`, {role:'all',hide_state:'all',include_swipes:false}).filter(message => Number.isInteger(message.message_id) && message.message_id >= 0).sort((a,b)=>a.message_id-b.message_id);
@@ -27,12 +101,12 @@ export function setFloorVisibilityAutomation(enabled) {
   if (typeof enabled !== 'boolean') throw new Error('自动隐藏开关状态无效');
   const patch = {[VISIBILITY_AUTOMATION_KEY]:enabled};
   if (enabled) {
-    const messages = allFloorMessages(), ids = new Set(messages.map(message=>message.message_id));
-    const owned = getVariables({type:'chat'})?.[AUTO_HIDDEN_KEY] ?? [];
+    const messages = allFloorMessages();
+    const owned = loadAutoHiddenFloorIds(messages);
     // Reset general floor controls while preserving choices made in Discussion
     // Records. Native manual choices remain outside assistant ownership.
     const overrides = readVisibilityOverrides(messages);
-    patch[AUTO_HIDDEN_KEY] = [...new Set([...owned.filter(id=>ids.has(id)), ...Object.entries(overrides).filter(([,value])=>value.scope!=='discussion').map(([id])=>Number(id))])];
+    Object.assign(patch, autoHiddenOwnership([...owned, ...Object.entries(overrides).filter(([,value])=>value.scope!=='discussion').map(([id])=>Number(id))], messages));
     patch[VISIBILITY_OVERRIDES_KEY] = Object.fromEntries(Object.entries(overrides).filter(([,value])=>value.scope==='discussion'));
   }
   writeVariableKeys(patch,{type:'chat'});
@@ -45,7 +119,7 @@ export function discussionFloorsWithinCoverage(messages, floors) {
     const id = message.message_id;
     if (id !== previous + 1) { leftCovered = false; pending = []; }
     previous = id;
-    if (isDiscussionMessage(message)) {
+    if (isSummaryDiscussion(message)) {
       if (leftCovered) pending.push(id);
       continue;
     }
@@ -58,11 +132,11 @@ export function discussionFloorsWithinCoverage(messages, floors) {
 export function visibilitySnapshot(floors = new Set()) {
   const messages = allFloorMessages(), overrides = readVisibilityOverrides(messages);
   const discussionFloors = discussionFloorsWithinCoverage(messages, floors);
-  const owned = new Set(getVariables({type:'chat'})?.[AUTO_HIDDEN_KEY] ?? []);
+  const owned = loadAutoHiddenFloorIds(messages);
   const counts = { total:messages.length, shown:0, hidden:0, user:0, assistant:0, system:0, shownUser:0, shownAssistant:0, covered:0 };
   const groups = [];
   for (const message of messages) {
-    const id=message.message_id, hidden=!!message.is_hidden, role=message.role, discussion=isDiscussionMessage(message), covered=!discussion&&floors.has(id), followsSummary=discussionFloors.has(id);
+    const id=message.message_id, hidden=!!message.is_hidden, role=message.role, discussion=isSummaryDiscussion(message), covered=!discussion&&floors.has(id), followsSummary=discussionFloors.has(id);
     counts[hidden?'hidden':'shown']++;
     counts[role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : 'system']++;
     if (!hidden && role === 'user') counts.shownUser++;
@@ -91,10 +165,11 @@ export async function setManualFloorVisibilityByIds(ids, hidden, { discussionSou
   if(selected.length!==wanted.size)throw new Error('所选楼层已变化，请刷新后重试');
   if(discussionSources) assertDiscussionSelection(selected, discussionSources);
   if(!selected.length)return 0;
-  const overrides=readVisibilityOverrides(messages), vars=getVariables({type:'chat'}) ?? {};
+  const overrides=readVisibilityOverrides(messages);
   for (const message of selected) overrides[message.message_id]={hidden,fingerprint:sourceOf(message).fingerprint,...(discussionSources?{scope:'discussion'}:{})};
   const selectedIds=new Set(selected.map(message=>message.message_id));
-  writeVariableKeys({...(discussionSources?{}:{[VISIBILITY_AUTOMATION_KEY]:false}),[VISIBILITY_OVERRIDES_KEY]:overrides,[AUTO_HIDDEN_KEY]:(vars[AUTO_HIDDEN_KEY]??[]).filter(id=>!selectedIds.has(id))},{type:'chat'});
+  const owned = [...loadAutoHiddenFloorIds(messages)].filter(id=>!selectedIds.has(id));
+  writeVariableKeys({...(discussionSources?{}:{[VISIBILITY_AUTOMATION_KEY]:false}),[VISIBILITY_OVERRIDES_KEY]:overrides,...autoHiddenOwnership(owned,messages)},{type:'chat'});
   const updates=selected.filter(message=>!!message.is_hidden!==hidden).map(message=>({message_id:message.message_id,is_hidden:hidden}));
   for(let index=0;index<updates.length;index+=200) await setChatMessages(updates.slice(index,index+200),{refresh:'affected'});
   checkContext(token);
@@ -105,7 +180,7 @@ export async function setManualFloorVisibilityByIds(ids, hidden, { discussionSou
 
 function assertDiscussionSelection(messages, sources) {
   const expected = new Map(sources.map(source => [source.id, source.fingerprint]));
-  if (expected.size !== sources.length || messages.length !== sources.length || messages.some(message => !isDiscussionMessage(message) || expected.get(message.message_id) !== sourceOf(message).fingerprint)) {
+  if (expected.size !== sources.length || messages.length !== sources.length || messages.some(message => !isSummaryDiscussion(message) || expected.get(message.message_id) !== sourceOf(message).fingerprint)) {
     throw new Error('所选讨论记录已变化，请刷新后重试');
   }
 }
@@ -114,7 +189,7 @@ export function restoreDiscussionVisibilityAutomation(sources) {
   const messages = allFloorMessages(), wanted = new Set(sources.map(source=>source.id));
   const selected = messages.filter(message=>wanted.has(message.message_id));
   assertDiscussionSelection(selected, sources);
-  const overrides = readVisibilityOverrides(messages), vars = getVariables({type:'chat'}) ?? {};
+  const overrides = readVisibilityOverrides(messages);
   for (const id of wanted) delete overrides[id];
-  writeVariableKeys({[VISIBILITY_OVERRIDES_KEY]:overrides,[AUTO_HIDDEN_KEY]:[...new Set([...(vars[AUTO_HIDDEN_KEY]??[]),...wanted])]},{type:'chat'});
+  writeVariableKeys({[VISIBILITY_OVERRIDES_KEY]:overrides,...autoHiddenOwnership([...loadAutoHiddenFloorIds(messages),...wanted],messages)},{type:'chat'});
 }

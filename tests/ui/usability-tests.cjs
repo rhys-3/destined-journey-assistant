@@ -31,7 +31,9 @@ module.exports=async(cdp,evaluate,{click,fill,choose,check,pause,confirm,cancel}
   await check('关闭并发后回到串行，并发数不可编辑','!ui.summary.capture().parallelBatches&&ui.shadow.querySelector("#sa-batch-concurrency").disabled');
 
   await click('[data-sub-nav="tags"]');
-  await check('排除标签默认为空','ui.summary.capture().excludeTags.length===0&&ui.shadow.querySelectorAll("[data-tag-key=excludeTags] [data-tag-remove]").length===0');
+  await check('默认排除标签显示为可移除项','ui.summary.capture().excludeTags.includes("think")&&ui.summary.capture().excludeTags.includes("summary")&&ui.shadow.querySelectorAll("[data-tag-key=excludeTags] [data-tag-remove]").length===ui.summary.capture().excludeTags.length');
+  const defaultExcludes = await evaluate('ui.summary.capture().excludeTags');
+  for (const tag of defaultExcludes) await click('[data-tag-key="excludeTags"] [data-tag-remove="'+tag+'"]');
   await fill('#sa-exclude-tags','aside');await key('Enter',13);await pause(900);
   await check('标签按回车添加为独立项并持久保存','ui.summary.capture().excludeTags.join() === "aside"&&ui.shadow.querySelector("#sa-exclude-tags").value===""');
   await click('#sa-exclude-tags');await cdp('Input.insertText',{text:'！'});
@@ -117,12 +119,12 @@ module.exports=async(cdp,evaluate,{click,fill,choose,check,pause,confirm,cancel}
 
   await size(320);
   await evaluate(`(async()=>{
-    messages=Array.from({length:9},(_,id)=>({message_id:id,role:'assistant',message:'<oldprose>旧标签原文'+id+'</oldprose>',is_hidden:false}));
+    messages=Array.from({length:9},(_,id)=>({message_id:id,role:'assistant',message:'<aside><oldprose>旧标签原文'+id+'</oldprose></aside>',is_hidden:false}));
     books['旧正文验证书']=[];
     chatVars={summary_assistant_worldbook:'旧正文验证书',summary_assistant_visibility_auto:false};
     window.materialRequests=[];
     window.generateRaw=async request=>{materialRequests.push(JSON.stringify(request));return '<summary_result>'+dialogSummaryBody+'</summary_result>';};
-    await ui.summary.apply({...usabilityBefore.settings,enabled:false,includeTags:['gametxt'],excludeTags:[],keepFloorCount:1,batchFloorCount:4,parallelBatches:false});
+    await ui.summary.apply({...usabilityBefore.settings,enabled:false,includeTags:['gametxt'],excludeTags:['aside'],keepFloorCount:1,batchFloorCount:4,parallelBatches:false});
     ui.render();
   })()`);
   await click('#sa-start-summary');await pause(150);

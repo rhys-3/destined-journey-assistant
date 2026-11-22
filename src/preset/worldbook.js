@@ -271,9 +271,11 @@ export function createWorldbook(ctx) {
       }
       if (!worldContextIsCurrent(context, epoch)) return;
       const incomplete = verified.some(book => book.missing.length || book.duplicate.length || book.issue) || issues.length > 0;
-      if (!incomplete && verified.length && ctx.configLibrary().pendingWorld?.key === context.key) {
-        ctx.state.config.configuration_library.pendingWorld = null;
-        await ctx.saveScriptConfig('世界书同步状态');
+      if (!incomplete && ctx.configLibrary().pendingWorld?.key === context.key) {
+        await ctx.enqueueScriptConfigSave('世界书同步状态', null, () => worldContextIsCurrent(context, epoch), config => {
+          config.configuration_library.pendingWorld = null;
+          config.configuration_library_view.pendingWorld = null;
+        });
       }
       showWorldLink(incomplete || !verified.length ? 'warning' : 'ready', !verified.length
         ? '预设模式已保存；尚未联动到世界书。绑定后重新选择此模式即可同步。'

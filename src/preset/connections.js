@@ -119,25 +119,34 @@ export function createConnections(ctx) {
     if (enabled && ctx.state.profiles.length === 0) {
       return showErrorToast(new Error('未发现可用的 SillyTavern Connection Profile。'));
     }
-    ctx.state.config.connection_link.enabled = enabled;
-    ctx.saveScriptConfig(enabled ? '已开启连接配置联动' : '已关闭连接配置联动').catch(showErrorToast);
+    ctx.saveScriptConfig(enabled ? '已开启连接配置联动' : '已关闭连接配置联动', config => {
+      config.connection_link.enabled = enabled;
+    }).catch(showErrorToast);
   }
 
   function updateEntryPoint(key, enabled, control) {
-    if (!['floating_orb', 'input_button', 'wand_menu'].includes(key)) return;
-    const previous = ctx.sanitizeEntryPoints(ctx.state.config.entry_points);
-    if (!enabled && previous[key] && Object.values(previous).filter(Boolean).length <= 1) {
-      if (control) control.checked = true;
-      return showErrorToast(new Error('至少需要保留一个设置界面入口。'));
-    }
-    ctx.state.config.entry_points = { ...previous, [key]: enabled };
-    syncEntryPoints();
     const labels = {
       floating_orb: '悬浮球入口',
       input_button: '输入框上方入口',
       wand_menu: '魔术棒菜单入口',
     };
-    ctx.saveScriptConfig(`${labels[key]}已${enabled ? '开启' : '关闭'}`).catch(error => {
+    if (!Object.hasOwn(labels, key)) return;
+    const lastEntryError = '至少需要保留一个设置界面入口。';
+    const wouldCloseAll = points => !enabled && !Object.entries(points).some(([id, visible]) => id !== key && visible);
+    if (wouldCloseAll(ctx.state.config.entry_points)) {
+      if (control) control.checked = true;
+      return showErrorToast(new Error(lastEntryError));
+    }
+    const task = ctx.saveScriptConfig(`${labels[key]}已${enabled ? '开启' : '关闭'}`, (config, committing) => {
+      if (wouldCloseAll(config.entry_points)) {
+        // An earlier edit may have failed. Leave this draft unapplied until its turn to commit.
+        if (committing) throw new Error(lastEntryError);
+        return;
+      }
+      config.entry_points[key] = enabled;
+    });
+    syncEntryPoints();
+    return task.catch(error => {
       syncEntryPoints();
       showErrorToast(error);
     });
@@ -204,10 +213,8 @@ export function createConnections(ctx) {
 
   function updateProfileBinding(adapterName, key) {
     const profile = ctx.state.profiles.find(item => profileKey(item) === key);
-    ctx.state.config.connection_link.bindings[adapterName] = profile
-      ? { id: profile.id, name: profile.name }
-      : null;
-    ctx.saveScriptConfig(`${adapterName} 连接配置已保存`).catch(showErrorToast);
+    const binding = profile ? { id: profile.id, name: profile.name } : null;
+    ctx.saveScriptConfig(`${adapterName} 连接配置已保存`, config => { config.connection_link.bindings[adapterName] = binding; }).catch(showErrorToast);
   }
 
   function showErrorToast(error) {

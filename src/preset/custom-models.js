@@ -1,5 +1,5 @@
-import { FLAVOR } from '../flavor.js';
 import { GEMINI_TAIL_MODES, GEMINI_TAIL_LABELS } from './definitions.js';
+import { RECOVERY_ID, setLibraryField } from './configuration-schema.js';
 
 const tailSource = mode => GEMINI_TAIL_MODES.indexOf(mode);
 const tailOptions = selected => GEMINI_TAIL_MODES.map(mode => '<option value="' + mode + '" ' + (selected === mode ? 'selected' : '') + '>' + GEMINI_TAIL_LABELS[mode] + '</option>').join('');
@@ -74,8 +74,7 @@ export function createCustomModels(ctx) {
       ctx.assertData(model, '自定义模型不存在');
       ctx.assertData(!model.ids.some(promptId => ctx.getPrompt(ctx.state.preset, promptId)?.enabled), '该模型仍有启用条目，请先切换到其他模型。');
       const preset = ctx.clone(getPreset('in_use'));
-      ctx.saveRecovery(current);
-      next.configuration_library = ctx.clone(ctx.state.config.configuration_library);
+      setLibraryField(next, 'recovery', ctx.captureRecovery());
       preset.prompts = preset.prompts.filter(prompt => !model.ids.includes(prompt.id));
       preset.prompts_unused = preset.prompts_unused.filter(prompt => !model.ids.includes(prompt.id));
       next.custom_models = next.custom_models.filter(item => item.id !== id);
@@ -98,8 +97,7 @@ export function createCustomModels(ctx) {
       ctx.assertData(!edited || replaceEdited, '尾部正文已修改，请确认替换后再切换。');
       const source = ctx.getPrompt(preset, ctx.BUILTIN_MODEL_ADAPTERS.Gemini.tails[tailSource(mode)]);
       ctx.assertData(source, '当前预设没有 Gemini「' + GEMINI_TAIL_LABELS[mode] + '」尾部条目，请更新预设。');
-      ctx.saveRecovery(current);
-      next.configuration_library = ctx.clone(ctx.state.config.configuration_library);
+      setLibraryField(next, 'recovery', ctx.captureRecovery());
       tail.content = source.content;
       tail.role = source.role;
       tail.name = '🔌 ' + model.label + GEMINI_TAIL_LABELS[mode];
@@ -137,25 +135,28 @@ export function createCustomModels(ctx) {
     return '<button type="button" class="secondary-button" data-action="' + action + '" data-id="' + ctx.escapeHtml(id) + '">' + label + '</button>';
   }
 
-  function scopeCheckboxes(kind, scopes) {
-    return '<div class="configuration-actions" role="group" aria-label="' + (kind==='save'?'保存范围':'导出范围') + '"><strong>'+(kind==='save'?'保存范围':'导出范围')+'</strong>'
-      + ['preset','summary'].map(key=>'<label><input type="checkbox" data-action="configuration-scope" data-kind="'+kind+'" data-key="'+key+'" '+(scopes[key]?'checked':'')+'>'+(key==='preset'?'预设配置':'总结配置')+'</label>').join('')+'</div>';
+  function scopeCheckboxes(scopes) {
+    return '<div class="configuration-actions" role="group" aria-label="保存范围"><strong>保存范围</strong>'
+      + ['preset','summary'].map(key=>'<label><input type="checkbox" data-action="configuration-scope" data-key="'+key+'" '+(scopes[key]?'checked':'')+'>'+(key==='preset'?'预设配置':'总结配置')+'</label>').join('')+'</div>';
   }
 
   function renderConfigurationsTab() {
-    if (ctx.state.config.configuration_error) return '<div class="warning">' + ctx.escapeHtml(ctx.state.config.configuration_error) + '</div>' + scopeCheckboxes('export',ctx.exportScopes) + configButton('configuration-raw', '导出可恢复配置');
+    const header = ctx.renderSectionHeader('配置管理', '按范围保存与切换。');
+    const { configuration_library_error, configuration_library_issues } = ctx.state.config;
+    if (configuration_library_error) return header + '<div class="warning">' + ctx.escapeHtml(configuration_library_error) + '</div>' + configButton('configuration-reset-library', '重置配置库');
     const library = ctx.configLibrary();
-    return ctx.renderSectionHeader('配置管理', '按范围保存与切换。密钥、世界书和聊天记录不会导出。')
+    return header
+      + (configuration_library_issues ? '<details class="warning"><summary>部分配置数据未载入</summary><ul>'
+        + configuration_library_issues.map(issue => '<li>' + ctx.escapeHtml(issue) + '</li>').join('') + '</ul>'
+        + configButton('configuration-delete-invalid', '删除未载入的配置数据') + '</details>' : '')
       + '<article class="card"><label class="field-label">新配置名称<input data-action="configuration-name" maxlength="100" value="' + ctx.escapeHtml(ctx.state.configurationName) + '"></label><div class="configuration-actions">'
-      + scopeCheckboxes('save',ctx.configurationScopes) + configButton('configuration-save-new', '保存当前 / 另存为')
+      + scopeCheckboxes(ctx.configurationScopes) + configButton('configuration-save-new', '保存当前 / 另存为')
       + (library.activeId ? configButton('configuration-overwrite', '覆盖当前配置', library.activeId) : '') + '</div></article>'
-      + scopeCheckboxes('export',ctx.exportScopes) + '<div class="configuration-actions">' + configButton('configuration-import', '导入 JSON') + configButton('configuration-export-all', '导出配置库')
-      + (library.recovery ? configButton('configuration-recover', '恢复切换前设置') : '') + '</div>'
-      + '<input type="file" accept=".json,application/json" data-action="configuration-file" hidden>'
+      + (library.recovery ? '<div class="configuration-actions">' + configButton('configuration-recover', '恢复切换前设置') + '</div>' : '')
       + (library.items.length ? library.items.map(item => '<article class="card configuration-row"><div><h4>' + ctx.escapeHtml(item.name)
         + (item.id === library.activeId ? ' · 当前' : '') + '</h4><p>' + ctx.escapeHtml(item.updatedAt) + ' · ' + (item.snapshot.preset ? item.snapshot.preset.prompts.length + ' 个发送条目' : '仅总结配置') + (item.snapshot.preset && item.snapshot.summary ? ' · 含总结配置' : '') + '</p></div><div class="configuration-actions">'
         + configButton('configuration-apply', '切换', item.id) + configButton('configuration-rename', '重命名', item.id)
-        + configButton('configuration-export', '导出', item.id) + configButton('configuration-delete', '删除', item.id) + '</div></article>').join('')
+        + configButton('configuration-delete', '删除', item.id) + '</div></article>').join('')
         : '<p class="empty">还没有保存的配置。</p>');
   }
 
@@ -181,20 +182,15 @@ export function createCustomModels(ctx) {
       if (await ctx.dialogs.confirm('用当前设置覆盖这份命名配置？')) return ctx.saveNamedConfiguration('', id);
     }
     if (action === 'configuration-apply') return ctx.applyConfiguration(id);
-    if (action === 'configuration-recover') return ctx.applyConfiguration('__recovery__');
+    if (action === 'configuration-recover') return ctx.applyConfiguration(RECOVERY_ID);
+    if (action === 'configuration-reset-library' && await ctx.dialogs.confirm('重置后将清除配置库中的命名配置和恢复点。确定重置？')) return ctx.resetConfigurationLibrary();
+    if (action === 'configuration-delete-invalid' && await ctx.dialogs.confirm('确定永久删除配置库中未能载入的命名配置和相关数据？')) return ctx.deleteInvalidConfigurationData();
     if (action === 'configuration-rename') {
       const item = ctx.configLibrary().items.find(item => item.id === id);
       const name = await ctx.dialogs.prompt('配置名称', item?.name ?? '');
       if (name !== null) return ctx.renameConfiguration(id, name);
     }
     if (action === 'configuration-delete' && await ctx.dialogs.confirm('删除这份命名配置？当前设置不会被删除。')) return ctx.deleteConfiguration(id);
-    if (action === 'configuration-export') {
-      const item = ctx.configLibrary().items.find(item => item.id === id);
-      ctx.downloadConfiguration(ctx.exportConfigurations(id), item?.name ?? FLAVOR.exportLabel+'配置');
-    }
-    if (action === 'configuration-export-all') ctx.downloadConfiguration(ctx.exportConfigurations(), FLAVOR.exportLabel+'配置库');
-    if (action === 'configuration-raw') ctx.downloadConfiguration(ctx.exportRecoverableConfigurations(), FLAVOR.exportLabel+'配置恢复备份');
-    if (action === 'configuration-import') ctx.shadow.querySelector('[data-action="configuration-file"]')?.click();
     if (action === 'model-add') return addCustomModel(ctx.state.modelDraft.name, ctx.state.modelDraft.tailMode, ctx.state.modelDraft.binding);
     if (action === 'model-rename') {
       const name = await ctx.dialogs.prompt('模型名称', ctx.MODEL_ADAPTERS[id]?.label ?? '');
@@ -212,7 +208,6 @@ export function createCustomModels(ctx) {
     configurationIsDirty,
     renderConfigurationShortcut,
     configButton,
-    scopeCheckboxes,
     renderConfigurationsTab,
     renderCustomModelControls,
     handleConfigurationAction

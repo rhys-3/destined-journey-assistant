@@ -42,7 +42,7 @@ async function importRelease(primary, fallback) {
   }
 }
 
-let source=fs.readFileSync('tests/ui/test-ui.cjs','utf8').replace('exportConfigurations, importConfigurations,','exportConfigurations, exportRecoverableConfigurations, importConfigurations,');
+let source=fs.readFileSync('tests/ui/test-ui.cjs','utf8');
 const start=source.indexOf('console.log(await evaluate'),end=source.indexOf("await cdp('Browser.close');",start);
 source=source.slice(0,start)+`const environment=await evaluate('({secure:isSecureContext,uuid:typeof crypto.randomUUID,random:typeof crypto.getRandomValues})');
 assert.deepEqual(environment,{secure:false,uuid:'undefined',random:'function'});

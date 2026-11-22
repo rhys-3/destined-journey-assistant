@@ -1,11 +1,11 @@
 import { makeSummaryEntryName } from './utils.js';
-import { isDiscussionMessage } from '../discussion/protocol.js';
+import { isSummaryDiscussion } from './messages.js';
 
 export function bridgeDiscussionGaps(messages) {
   const byId = new Map(messages.map(message => [message.id, message]));
   return (previous, current) => {
     for (let id = previous.id + 1; id < current.id; id++) {
-      if (!isDiscussionMessage(byId.get(id))) return false;
+      if (!isSummaryDiscussion(byId.get(id))) return false;
     }
     return true;
   };

@@ -1,11 +1,11 @@
 import { errorCatched } from './errorHandler.js';
-import { CONFIG, BLOCK_TYPES, generateBlockId, DEFAULT_PROMPT_BLOCKS, DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS, DEFAULT_SETTINGS } from './config.js';
+import { CONFIG, BLOCK_TYPES, generateBlockId, DEFAULT_PROMPT_BLOCKS, DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS, DEFAULT_SETTINGS, DEFAULT_EXCLUDE_TAGS } from './config.js';
 import { getHost, setRuntimeEnabled, writeVariableKeys } from '../platform/lifecycle.js';
 import { assertRecordWritable } from '../platform/lifecycle.js';
-import { readStore, patchSummaryStore } from '../platform/store.js';
+import { readStore, patchSummaryStore, readGlobalStore, patchGlobalStore, migrateGlobalSummaryState } from '../platform/store.js';
 import { summarySnapshot } from './settingsSchema.js';
 import { PRESET_PROMPTS as LEGACY_PROMPTS } from './presetDefaults.js';
-import { OUTPUT_CONTRACT, PREVIOUS_ARCHIVE_PROMPTS, PREVIOUS_COMPACT_PROMPTS, optionBlocks, PROMPT_VERSION } from './archiveDefaults.js';
+import { PREVIOUS_ARCHIVE_PROMPTS, PREVIOUS_COMPACT_PROMPTS, PREVIOUS_V4_PROMPTS, buildArchivePromptBlocks, optionBlocks, PROMPT_VERSION } from './archiveDefaults.js';
 import { SECRETS_VAR_KEY } from '../platform/storage-keys.js';
 /**
  * storage.js
@@ -15,12 +15,38 @@ import { SECRETS_VAR_KEY } from '../platform/storage-keys.js';
 
 let _cachedSettings = null;
 
-const matchesDefaultBlocks = (actual, defaults) => {
+const matchesDefaultBlocks = (actual, defaults, matchesField = (key, value, expected) => value === expected) => {
   if (!Array.isArray(actual) || actual.length !== defaults.length) return false;
   // Persisted snapshots reorder object keys; compare the editable values, not JSON key order.
-  const value = (block, key) => key === 'content' ? String(block?.content ?? '').replace(/\n\{\{summary.depth\}\}/g,'') : block?.[key] ?? (key === 'role' ? 'system' : key === 'enabled' ? true : '');
-  return actual.every((block, index) => ['id','name','type','enabled','role','content','leadText','xmlTag'].every(key => value(block,key) === value(defaults[index],key)));
+  const value = (block, key) => block?.[key] ?? (key === 'role' ? 'system' : key === 'enabled' ? true : '');
+  return actual.every((block, index) => ['id','name','type','enabled','role','content','leadText','xmlTag','choiceGroup'].every(key =>
+    matchesField(key, value(block,key), value(defaults[index],key), defaults[index])));
 };
+
+const matchesOldDefault = (actual, defaults) => matchesDefaultBlocks(actual, defaults, (key, value, expected) =>
+  value === expected || (key === 'content' && String(value).replace(/\n\{\{summary.depth\}\}/g, '') === expected));
+
+const promptLists = [
+  ['promptBlocks', DEFAULT_PROMPT_BLOCKS, false],
+  ['megaPromptBlocks', DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS, true],
+];
+
+function migrateV4Blocks(blocks, defaults, previous, mega) {
+  if (matchesDefaultBlocks(blocks, previous)) return structuredClone(defaults);
+  const oldPlanPrefill = '<archive_check>核对完成。</archive_check>\n<summary_result>\n';
+  if (!matchesDefaultBlocks(blocks, previous, (key, value, expected, block) =>
+    value === expected || (key === 'enabled' && block.choiceGroup) ||
+    (key === 'content' && block.id === 'tail_prefill' && value === oldPlanPrefill))) return blocks;
+
+  const selected = group => blocks.filter(block => block.enabled && block.choiceGroup === group);
+  const format = selected('format'), check = selected('check'), tail = selected('tail');
+  if ([format, check, tail].some(items => items.length > 1)) return blocks;
+  return buildArchivePromptBlocks(mega, {
+    resultFormat: format[0]?.id.slice('format_'.length) ?? 'off',
+    thinkingTemplate: check[0]?.id === 'check_destined' ? 'plan' : check[0]?.id === 'check_brief' ? 'brief' : 'off',
+    prefillTemplate: tail[0]?.id === 'tail_prefill' ? (tail[0].content === oldPlanPrefill ? 'plan' : 'result') : 'off',
+  });
+}
 
 const cloneSettings = (settings) => ({
   ...structuredClone(settings),
@@ -44,16 +70,9 @@ const migrateOldSettings = (raw) => {
     if(raw.megaTriggerCount===8&&raw.megaBatchCount===6){raw.megaTriggerCount=15;raw.megaBatchCount=10;}
     raw.behaviorVersion=1;
   }
-  if (raw.promptVersion !== 3 && raw.promptVersion !== PROMPT_VERSION) {
-    let replacedNormal = false;
-    for (const [key, defaults] of [['promptBlocks', DEFAULT_PROMPT_BLOCKS], ['megaPromptBlocks', DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS]]) {
-      if ([LEGACY_PROMPTS[key], PREVIOUS_ARCHIVE_PROMPTS[key]].some(previous => matchesDefaultBlocks(raw[key], previous))) {
-        raw[key] = structuredClone(defaults);
-        if (key === 'promptBlocks') replacedNormal = true;
-      } else if (raw.promptVersion !== 2 && Array.isArray(raw[key]) && !raw[key].some(block => block.id === 'result_contract' || block.content?.includes('{{summary.output_format}}'))) raw[key].push({ id: 'result_contract', type: 'prompt', name: '结果标签协议', enabled: true, role: 'user', content: OUTPUT_CONTRACT });
-    }
-    if (replacedNormal && (!raw.resultFormat || raw.resultFormat === 'free')) raw.resultFormat = 'legacy';
-    raw.promptVersion = 3;
+  if (raw.behaviorVersion === 1) {
+    if (Array.isArray(raw.excludeTags) && !raw.excludeTags.length) raw.excludeTags = [...DEFAULT_EXCLUDE_TAGS];
+    raw.behaviorVersion = DEFAULT_SETTINGS.behaviorVersion;
   }
   if (Array.isArray(raw.promptBlocks)) return migrateNativeOptions(raw);
   const blocks = DEFAULT_PROMPT_BLOCKS.map((b) => ({ ...b }));
@@ -90,27 +109,39 @@ const migrateOldSettings = (raw) => {
   return migrateNativeOptions(raw);
 };
 
+function normalizeLegacyBlock(block) {
+  if(block.type===BLOCK_TYPES.PROMPT)return block;
+  let content=block.content;
+  if(block.type===BLOCK_TYPES.BUILTIN_GROUP)content??=['world_before','persona','character','personality','scenario','world_after','examples'].map(name=>'{{summary.'+name+'}}').join('\n\n');
+  if(block.type===BLOCK_TYPES.OLD_SUMMARY)content='<prior_memory>\n{{summary.history}}\n</prior_memory>';
+  if(block.type===BLOCK_TYPES.CHAT_MESSAGES){const tag=block.xmlTag||'source_material';content=(block.leadText||'')+'\n<'+tag+'>\n{{summary.material}}\n</'+tag+'>';}
+  return {...block,type:BLOCK_TYPES.PROMPT,role:block.role||'user',content:content??''};
+}
+
 function migrateNativeOptions(raw) {
-  if(raw.promptVersion!==PROMPT_VERSION){
-    for(const [key,defaults] of [['promptBlocks',DEFAULT_PROMPT_BLOCKS],['megaPromptBlocks',DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS]]){
-      if(!Array.isArray(raw[key])){raw[key]=structuredClone(defaults);continue;}
-      const untouched=matchesDefaultBlocks(raw[key],PREVIOUS_COMPACT_PROMPTS[key]);
-      const options=optionBlocks({resultFormat:raw.resultFormat??(untouched?'legacy':'free'),thinkingTemplate:raw.thinkingTemplate??'native',prefillTemplate:raw.prefillTemplate??'off'});
-      if(untouched)raw[key]=structuredClone(defaults).map(block=>options.find(option=>option.id===block.id)??block);
-      else if(!raw[key].some(block=>block.choiceGroup)){
-        const ids=new Set(raw[key].map(block=>block.id));
-        raw[key].push(...options.map(block=>ids.has(block.id)?{...block,id:generateBlockId()}:block));
-      }
+  for (const [key, defaults, mega] of promptLists) {
+    if (!Array.isArray(raw[key])) {
+      raw[key] = structuredClone(defaults);
+      continue;
     }
+    if (raw.promptVersion === 4) raw[key] = migrateV4Blocks(raw[key], defaults, PREVIOUS_V4_PROMPTS[key], mega);
+    if (raw.promptVersion !== undefined && raw.promptVersion >= 4) continue;
+    const oldDefault = [LEGACY_PROMPTS[key], PREVIOUS_ARCHIVE_PROMPTS[key]].some(previous => matchesOldDefault(raw[key], previous));
+    const compactDefault = matchesOldDefault(raw[key], PREVIOUS_COMPACT_PROMPTS[key]);
+    const options = {
+      mega,
+      resultFormat: oldDefault && raw.resultFormat === 'free' ? 'legacy' : raw.resultFormat ?? (compactDefault || oldDefault ? 'legacy' : 'free'),
+      thinkingTemplate: raw.thinkingTemplate ?? (compactDefault || oldDefault ? 'plan' : 'off'),
+      prefillTemplate: raw.prefillTemplate ?? 'off',
+    };
+    if (oldDefault || compactDefault) raw[key] = buildArchivePromptBlocks(mega, options);
+    else if (!raw[key].some(block => block.choiceGroup)) {
+      const ids = new Set(raw[key].map(block => block.id));
+      const choices = optionBlocks(options).filter(block => block.choiceGroup !== 'adapter');
+      raw[key].push(...choices.map(block => ids.has(block.id) ? { ...block, id: generateBlockId() } : block));
+    }
+    raw[key] = raw[key].map(normalizeLegacyBlock);
   }
-  for(const [key,defaults] of [['promptBlocks',DEFAULT_PROMPT_BLOCKS],['megaPromptBlocks',DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS]])raw[key]=(raw[key]??structuredClone(defaults)).map(block=>{
-    if(block.type===BLOCK_TYPES.PROMPT)return block;
-    let content=block.content;
-    if(block.type===BLOCK_TYPES.BUILTIN_GROUP)content??=['world_before','persona','character','personality','scenario','world_after','examples'].map(name=>'{{summary.'+name+'}}').join('\n\n');
-    if(block.type===BLOCK_TYPES.OLD_SUMMARY)content='<prior_memory>\n{{summary.history}}\n</prior_memory>';
-    if(block.type===BLOCK_TYPES.CHAT_MESSAGES){const tag=block.xmlTag||'source_material';content=(block.leadText||'')+'\n<'+tag+'>\n{{summary.material}}\n</'+tag+'>';}
-    return {...block,type:BLOCK_TYPES.PROMPT,role:block.role||'user',content:content??''};
-  });
   raw.promptVersion=PROMPT_VERSION;
   for(const key of ['resultFormat','thinkingTemplate','prefillTemplate','includeDepthWorldbook','noTransTag','noTransTagValue'])delete raw[key];
   return raw;
@@ -134,7 +165,8 @@ const validateBlocks = (blocks, defaultBlocks = DEFAULT_PROMPT_BLOCKS) => {
 };
 
 export function getKeyForUrl(url) {
-  const vars=readStore(), secrets=vars[SECRETS_VAR_KEY] ?? {};
+  migrateGlobalSummaryState();
+  const vars=readStore(), secrets=readGlobalStore()[SECRETS_VAR_KEY] ?? {};
   const key=String(url??'').trim();
   return secrets.keysByUrl?.[key] ?? (String(vars[CONFIG.SETTINGS_VAR_KEY]?.customApiUrl??'').trim()===key ? secrets.customApiKey ?? vars[CONFIG.SETTINGS_VAR_KEY]?.customApiKey ?? '' : '');
 }
@@ -148,10 +180,16 @@ const loadSettings = async () => {
 };
 const saveSettings = async settings => {
   const validated = summarySnapshot(settings);
-  patchSummaryStore({
-    [CONFIG.SETTINGS_VAR_KEY]: validated,
-    [SECRETS_VAR_KEY]: { keysByUrl: { ...readStore()[SECRETS_VAR_KEY]?.keysByUrl, [validated.customApiUrl.trim()]: String(settings.customApiKey ?? '') } },
-  });
+  migrateGlobalSummaryState();
+  const url = validated.customApiUrl.trim(), key = String(settings.customApiKey ?? '');
+  const secrets = readGlobalStore()[SECRETS_VAR_KEY] ?? { keysByUrl: {} };
+  const keyChanged = (secrets.keysByUrl?.[url] ?? '') !== key;
+  if (keyChanged) patchGlobalStore({ [SECRETS_VAR_KEY]: { keysByUrl: { ...secrets.keysByUrl, [url]: key } } });
+  try { patchSummaryStore({ [CONFIG.SETTINGS_VAR_KEY]: validated }); }
+  catch (error) {
+    if (keyChanged) patchGlobalStore({ [SECRETS_VAR_KEY]: secrets });
+    throw error;
+  }
   _cachedSettings = { ...validated, customApiKey: String(settings.customApiKey ?? '') };
   setRuntimeEnabled(validated.enabled);
   getHost()?.changed?.();
@@ -171,23 +209,30 @@ const resetSettings = async () => {
 
 // ---- 大总结映射管理 ----
 
-const loadMegaSummaryMap = errorCatched(async () => {
-  try {
-    const vars = getVariables({ type: 'chat' });
-    const map = vars?.[CONFIG.MEGA_SUMMARY_VAR_KEY];
-    if (map && typeof map === 'object' && !Array.isArray(map)) {
-      return map;
-    }
-    return {};
-  } catch (e) {
-    console.warn('加载大总结映射失败:', e);
-    return {};
-  }
+function mapsByBook(vars) {
+  const stored = vars?.[CONFIG.MEGA_SUMMARY_VAR_KEY];
+  if (!stored || stored.byBook) return stored?.byBook ?? {};
+  const bound = vars[CONFIG.CHAT_WB_VAR_KEY];
+  return bound ? { [bound]: stored } : {};
+}
+
+export function scopeLegacyMegaMapping(vars) {
+  const stored = vars?.[CONFIG.MEGA_SUMMARY_VAR_KEY];
+  if (!stored || stored.byBook) return {};
+  return { [CONFIG.MEGA_SUMMARY_VAR_KEY]: { byBook: mapsByBook(vars) } };
+}
+
+const loadMegaSummaryMap = errorCatched(async book => {
+  const vars = getVariables({ type: 'chat' });
+  const maps = mapsByBook(vars), name = book ?? vars?.[CONFIG.CHAT_WB_VAR_KEY];
+  return Object.hasOwn(maps, name) ? structuredClone(maps[name]) : {};
 });
 
-const saveMegaSummaryMap = errorCatched(async (map) => {
+const saveMegaSummaryMap = errorCatched(async (map, book) => {
+  const vars = getVariables({ type: 'chat' }), name = book ?? vars?.[CONFIG.CHAT_WB_VAR_KEY];
+  if (!name) throw new Error('当前聊天没有绑定总结世界书');
   writeVariableKeys(
-    { [CONFIG.MEGA_SUMMARY_VAR_KEY]: map || {} },
+    { [CONFIG.MEGA_SUMMARY_VAR_KEY]: { byBook: { ...mapsByBook(vars), [name]: map } } },
     { type: 'chat' }
   );
 });

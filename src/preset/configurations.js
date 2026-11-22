@@ -1,12 +1,9 @@
 import * as summary from '../summary/service.js';
 import { DISCUSSION_SETTINGS_KEY } from '../discussion/preferences.js';
 import { writePresetStore } from '../platform/store.js';
-import { createUuid } from '../platform/uuid.js';
 import { FLAVOR } from '../flavor.js';
 import { OPTIONAL_MODEL_PROMPT_IDS } from './definitions.js';
-
-// Credentials and per-chat records never enter a shared configuration file.
-const redactedKeyPattern = new RegExp(`(?:api[_-]?key|secrets|${FLAVOR.summaryVariablePrefix}_(?:worldbook|mega_summary_map|auto_hidden_floors))`, 'i');
+import { RECOVERY_ID, setLibraryField } from './configuration-schema.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createConfigurations(ctx) {
@@ -57,10 +54,8 @@ export function createConfigurations(ctx) {
     ctx.assertData(current(), '上下文已变化，未写入配置。');
     const before = ctx.clone(getVariables({ type: 'script' }));
     try {
-      writePresetStore(next);
+      ctx.writeScriptConfig(next, true);
       ctx.assertData(current(), '上下文已变化，配置保存未完成。');
-      const actual = getVariables({ type: 'script' });
-      ctx.assertData(JSON.stringify(actual.configuration_library) === JSON.stringify(next.configuration_library), '配置持久化校验失败');
       ctx.state.config = ctx.clone(next);
       ctx.savedScriptConfig = ctx.clone(next);
       ctx.rebuildModelRegistry();
@@ -107,24 +102,43 @@ export function createConfigurations(ctx) {
     }
   }
 
-  function saveRecovery(current, scopes) {
-    const next = ctx.clone(ctx.state.config);
-    next.configuration_library.recovery = { createdAt: new Date().toISOString(), snapshot: ctx.validateSnapshot(ctx.captureConfiguration(getPreset('in_use'), ctx.state.config, scopes)) };
-    writeConfigurationData(next, current);
+  function requireConfigurationLibrary() {
+    const error = ctx.state.config.configuration_library_error;
+    ctx.assertData(!error, error);
+    return ctx.configLibrary();
+  }
+
+  function keepDuplicatePositions(config, removedIndex = -1) {
+    // Keep the accepted record for each ID or name when an edit removes a conflict.
+    const indices = config.configuration_library_view.duplicateIndices;
+    if (!indices.length) return;
+    const nextIndices = removedIndex < 0 ? indices : indices.map(index => index > removedIndex ? index - 1 : index);
+    setLibraryField(config, 'duplicateItemIndices', nextIndices);
+  }
+
+  function captureRecovery(scopes = { preset: true, summary: false }) {
+    requireConfigurationLibrary();
+    const snapshot = ctx.validateSnapshot(ctx.captureConfiguration(getPreset('in_use'), ctx.state.config, scopes));
+    return { createdAt: new Date().toISOString(), snapshot };
   }
 
   async function saveNamedConfiguration(name, overwriteId = '', scopes = ctx.configurationScopes) {
     return runWorkspaceOperation('保存配置', async current => {
+      const library = requireConfigurationLibrary();
       const next = ctx.clone(ctx.state.config);
-      const library = next.configuration_library;
-      const previous = overwriteId ? library.items.find(item => item.id === overwriteId) : null;
+      const source = next.configuration_library;
+      const position = library.items.findIndex(item => item.id === overwriteId);
+      const previous = library.items[position];
       ctx.assertData(!overwriteId || previous, '要覆盖的配置已不存在');
       const chosenName = ctx.validName(previous?.name ?? name, library.items, overwriteId);
       const now = new Date().toISOString();
       const item = { id: previous?.id ?? ctx.createPromptId(), name: chosenName, createdAt: previous?.createdAt ?? now, updatedAt: now, snapshot: ctx.validateSnapshot(ctx.captureConfiguration(getPreset('in_use'), ctx.state.config, scopes)) };
-      if (previous) library.items[library.items.indexOf(previous)] = item;
-      else library.items.push(item);
-      library.activeId = item.id;
+      if (previous) source.items[library.itemIndices[position]] = item;
+      else {
+        ctx.assertData(!source.items.some(record => record?.id === item.id), '配置 ID 重复，请重新保存。');
+        source.items.push(item);
+      }
+      setLibraryField(next, 'activeId', item.id);
       writeConfigurationData(next, current);
       ctx.state.configurationName = '';
       return item.id;
@@ -133,21 +147,51 @@ export function createConfigurations(ctx) {
 
   async function renameConfiguration(id, name) {
     return runWorkspaceOperation('重命名配置', async current => {
+      const library = requireConfigurationLibrary();
       const next = ctx.clone(ctx.state.config);
-      const item = next.configuration_library.items.find(item => item.id === id);
-      ctx.assertData(item, '配置已不存在');
-      item.name = ctx.validName(name, next.configuration_library.items, id);
+      const index = library.itemIndices[library.items.findIndex(item => item.id === id)];
+      ctx.assertData(index !== undefined, '配置已不存在');
+      const item = next.configuration_library.items[index];
+      item.name = ctx.validName(name, library.items, id);
       item.updatedAt = new Date().toISOString();
+      keepDuplicatePositions(next);
       writeConfigurationData(next, current);
     });
   }
 
   async function deleteConfiguration(id) {
     return runWorkspaceOperation('删除配置', async current => {
+      const library = requireConfigurationLibrary();
       const next = ctx.clone(ctx.state.config);
-      ctx.assertData(next.configuration_library.items.some(item => item.id === id), '配置已不存在');
-      next.configuration_library.items = next.configuration_library.items.filter(item => item.id !== id);
-      if (next.configuration_library.activeId === id) next.configuration_library.activeId = null;
+      const index = library.itemIndices[library.items.findIndex(item => item.id === id)];
+      ctx.assertData(index !== undefined, '配置已不存在');
+      next.configuration_library.items.splice(index, 1);
+      keepDuplicatePositions(next, index);
+      if (library.activeId === id) setLibraryField(next, 'activeId', null);
+      writeConfigurationData(next, current);
+    });
+  }
+
+  async function deleteInvalidConfigurationData() {
+    return runWorkspaceOperation('删除未载入的配置数据', async current => {
+      const library = requireConfigurationLibrary();
+      ctx.assertData(ctx.state.config.configuration_library_issues?.length, '没有需要删除的未载入配置数据。');
+      const next = ctx.clone(ctx.state.config);
+      const source = next.configuration_library;
+      source.items = library.itemIndices.map(index => source.items[index]);
+      delete source.duplicateItemIndices;
+      delete source.unreadableMetadata;
+      for (const field of ['recovery', 'activeId', 'pendingWorld']) {
+        if (library.invalidFields.includes(field)) source[field] = null;
+      }
+      writeConfigurationData(next, current);
+    });
+  }
+
+  async function resetConfigurationLibrary() {
+    return runWorkspaceOperation('重置配置库', async current => {
+      ctx.assertData(ctx.state.config.configuration_library_error, '当前配置库可正常读取。');
+      const next = { ...ctx.clone(ctx.state.config), configuration_library: ctx.emptyLibrary() };
       writeConfigurationData(next, current);
     });
   }
@@ -226,21 +270,24 @@ export function createConfigurations(ctx) {
   async function applyConfiguration(id) {
     let worldMode = null;
     await runWorkspaceOperation('切换配置', async current => {
-      const library = ctx.configLibrary();
-      const source = id === '__recovery__' ? library.recovery : library.items.find(item => item.id === id);
+      const library = requireConfigurationLibrary();
+      const source = id === RECOVERY_ID ? library.recovery : library.items.find(item => item.id === id);
       ctx.assertData(source, '配置或恢复点不存在。');
       const complete = ctx.validateSnapshot(ctx.clone(source.snapshot));
       const snapshot = complete.preset ? keepOptionalModelPrompts(complete.preset, getPreset('in_use')) : null;
       const modelId = snapshot ? ctx.detectModelAdapter(snapshot, ctx.modelRegistry(snapshot.config)) : null;
       if(snapshot) ctx.assertData(modelId || !snapshot.config.connection_link.enabled, '配置的模型条目未正确互斥，无法联动连接。');
-      saveRecovery(current, ctx.selectedScopes(complete));
+      const recovery = captureRecovery(ctx.selectedScopes(complete));
       const apply = async () => {
-        const previousSummary = summary.capture();
         const next = { ...ctx.clone(ctx.state.config), ...(snapshot ? ctx.clone(snapshot.config) : {}) };
-        next.configuration_library.activeId = id === '__recovery__' ? null : id;
+        setLibraryField(next, 'recovery', recovery);
+        setLibraryField(next, 'activeId', id === RECOVERY_ID ? null : id);
         if(snapshot) {
-          if (FLAVOR.id === 'general') next.configuration_library.pendingWorld = null;
-          else { worldMode = ctx.variablePresetMode(snapshot); next.configuration_library.pendingWorld = { key: ctx.workspaceContextKey(), mode: worldMode }; }
+          if (FLAVOR.id === 'general') setLibraryField(next, 'pendingWorld', null);
+          else {
+            worldMode = ctx.variablePresetMode(snapshot);
+            setLibraryField(next, 'pendingWorld', { key: ctx.workspaceContextKey(), mode: worldMode });
+          }
         }
         try {
           if(complete.summary) await summary.apply(complete.summary);
@@ -248,7 +295,7 @@ export function createConfigurations(ctx) {
           if(snapshot) await writeWorkspace(snapshot, next, current);
           else writeConfigurationData(next, current);
         } catch(error) {
-          if(complete.summary && current()) { try { await summary.apply(previousSummary); } catch(rollback) { error.message += '；总结配置回滚失败：' + rollback.message; } }
+          if(complete.summary && current()) { try { await summary.apply(recovery.snapshot.summary); } catch(rollback) { error.message += '；总结配置回滚失败：' + rollback.message; } }
           throw error;
         }
         ctx.clearSettingDrafts();
@@ -260,101 +307,21 @@ export function createConfigurations(ctx) {
     if (worldMode && !ctx.destroyed) {
       await ctx.selectVariableMode(worldMode);
       if (ctx.configLibrary().pendingWorld?.key === ctx.workspaceContextKey()) ctx.setSaveStatus('idle', '配置已应用，世界书待同步；请在日常调整中重新检查。');
-      else ctx.setSaveStatus('saved', '配置已应用，世界书同步完成。');
+      else ctx.setSaveStatus('saved', ctx.worldLink.books.length ? '配置已应用，世界书同步完成。' : '配置已应用，当前没有需要同步的变量世界书。');
     }
-  }
-
-  function exportConfigurations(id = '', scopes = ctx.exportScopes) {
-    ctx.assertData(scopes.preset || scopes.summary, '请至少勾选一类导出配置');
-    ctx.assertData(!ctx.state.config.configuration_error, '当前配置数据异常，请使用“导出原始备份”。');
-    const library = ctx.configLibrary();
-    const candidates = id ? library.items.filter(item => item.id === id) : library.items;
-    const items = candidates.map(item => {
-      const complete=ctx.validateSnapshot(item.snapshot);
-      const snapshot={ version:2, ...(scopes.preset && complete.preset ? {preset:complete.preset}:{}), ...(scopes.summary && complete.summary ? {summary:complete.summary}:{}) };
-      return snapshot.preset || snapshot.summary ? {...item,snapshot}:null;
-    }).filter(Boolean);
-    ctx.assertData(items.length, '没有可导出的配置');
-    return JSON.stringify({ format: 'destined-configurations', version: 2, items: redactSecrets(items) }, null, 2);
-  }
-
-  function redactSecrets(value) {
-    if(Array.isArray(value))return value.map(redactSecrets);
-    if(!ctx.plainObject(value))return value;
-    return Object.fromEntries(Object.entries(value).filter(([key])=>!redactedKeyPattern.test(key)).map(([key,entry])=>[key,redactSecrets(entry)]));
-  }
-
-  function exportRecoverableConfigurations() {
-    ctx.assertData(ctx.exportScopes.preset || ctx.exportScopes.summary, '请至少勾选一类导出配置');
-    const raw=getVariables({type:'script'}).configuration_library;
-    const items=[];
-    for(const item of Array.isArray(raw?.items)?raw.items:[]) {
-      try {
-        const complete=ctx.validateSnapshot(item.snapshot);
-        const snapshot={version:2,...(ctx.exportScopes.preset&&complete.preset?{preset:complete.preset}:{}),...(ctx.exportScopes.summary&&complete.summary?{summary:complete.summary}:{})};
-        if(snapshot.preset||snapshot.summary) items.push({id:String(item.id ?? createUuid()),name:String(item.name ?? '恢复的配置'),createdAt:String(item.createdAt ?? ''),updatedAt:String(item.updatedAt ?? ''),snapshot});
-      } catch { /* Invalid records cannot be safely shared; the original remains stored. */ }
-    }
-    ctx.assertData(items.length, '没有可安全导出的有效配置；原始数据仍保留在脚本变量中');
-    return JSON.stringify({format:'destined-configurations',version:2,items:redactSecrets(items)},null,2);
-  }
-
-  function rejectUnsafeKeys(value) {
-    if (!value || typeof value !== 'object') return;
-    for (const key of Object.keys(value)) {
-      ctx.assertData(!['__proto__', 'constructor', 'prototype'].includes(key), '文件包含不支持的对象字段');
-      rejectUnsafeKeys(value[key]);
-    }
-  }
-
-  async function importConfigurations(text) {
-    ctx.assertData(typeof text === 'string' && text.length <= 20 * 1024 * 1024, '配置文件超过 20 MB 或格式无效');
-    const document = JSON.parse(text.replace(/^\uFEFF/u, ''));
-    rejectUnsafeKeys(document);
-    ctx.assertData(document.format === 'destined-configurations' && [1,2].includes(document.version), `不支持的${FLAVOR.exportLabel}配置文件或版本`);
-    const imported = ctx.validateLibrary({ ...ctx.emptyLibrary(), items: document.items }).items;
-    return runWorkspaceOperation('导入配置', async current => {
-      const next = ctx.clone(ctx.state.config);
-      const library = next.configuration_library;
-      for (const item of imported) {
-        const originalName = item.name;
-        let suffix = 2;
-        while (library.items.some(other => other.name.toLocaleLowerCase() === item.name.toLocaleLowerCase())) item.name = originalName.slice(0, 88) + ' (' + suffix++ + ')';
-        if (library.items.some(other => other.id === item.id)) item.id = ctx.createPromptId();
-        library.items.push(item);
-      }
-      writeConfigurationData(next, current);
-      return imported.length;
-    });
-  }
-
-  function downloadConfiguration(text, name) {
-    const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = name.replace(/[<>:"/\\|?*\u0000-\u001f]/gu, '_') + '.json';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   return {
     runWorkspaceOperation,
     writeConfigurationData,
     writeWorkspace,
-    saveRecovery,
+    captureRecovery,
     saveNamedConfiguration,
     renameConfiguration,
     deleteConfiguration,
+    deleteInvalidConfigurationData,
+    resetConfigurationLibrary,
     withLinkedConnection,
-    applyConfiguration,
-    exportConfigurations,
-    redactSecrets,
-    exportRecoverableConfigurations,
-    rejectUnsafeKeys,
-    importConfigurations,
-    downloadConfiguration
+    applyConfiguration
   };
 }

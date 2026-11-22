@@ -79,7 +79,10 @@ export const replaceWorldbook = (...args) => guardedWrite('replaceWorldbook', ..
 export const deleteWorldbook = (...args) => guardedWrite('deleteWorldbook', ...args);
 export const rebindGlobalWorldbooks = (...args) => guardedWrite('rebindGlobalWorldbooks', ...args);
 export const createWorldbookEntries = (...args) => guardedWrite('createWorldbookEntries', ...args);
-export const updateWorldbookWith = (name, updater) => guardedWrite('updateWorldbookWith', name, value => { assertCurrent(); return updater(value); });
+export function updateWorldbookWith(name, updater) {
+  const token = captureContext();
+  return guardedWrite('updateWorldbookWith', name, value => { checkContext(token); return updater(value); });
+}
 export const setChatMessages = (...args) => guardedWrite('setChatMessages', ...args);
 export function writeVariableKeys(patch, options) {
   assertCurrent();

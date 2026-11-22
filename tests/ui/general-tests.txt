@@ -81,14 +81,17 @@
   check('事件之后仍不显示世界书检查入口', !q('[data-action="refresh-worldbook"]'));
 
   // 配置应用不联动世界书。
-  await ui.selectVariableMode('main'); await ui.settle();
-  const configId = await ui.saveNamedConfiguration('通用配置 A');
-  await ui.selectVariableMode('extra'); await ui.settle();
-  const linkBeforeApply = JSON.stringify(ui.worldLink);
-  await ui.applyConfiguration(configId); await ui.settle();
-  check('应用配置恢复变量模式', ui.variablePresetMode() === 'main' && modeFlags() === 'true,false,false');
-  check('应用配置不留下待同步状态', ui.configLibrary().pendingWorld === null && ui.state.saveState === 'saved' && bookCalls() === quietCalls);
-  check('应用配置不改变世界书提示', JSON.stringify(ui.worldLink) === linkBeforeApply);
+  for (const key of ['main', 'extra', 'none']) {
+    await ui.selectVariableMode(key);
+    const configId = await ui.saveNamedConfiguration('通用配置 ' + key);
+    await ui.selectVariableMode(key === 'main' ? 'extra' : 'main');
+    const linkBeforeApply = JSON.stringify(ui.worldLink);
+    await ui.applyConfiguration(configId);
+    check('应用配置恢复变量模式 ' + key, ui.variablePresetMode() === key && modeIds.filter(enabledOf).join() === idOf(key));
+    check('应用配置不留下待同步状态 ' + key, ui.configLibrary().pendingWorld === null && ui.state.saveState === 'saved' && bookCalls() === quietCalls);
+    check('应用配置不改变世界书提示 ' + key, JSON.stringify(ui.worldLink) === linkBeforeApply);
+  }
+  await ui.selectVariableMode('main');
 
   // 保存失败保护：模式保持原样，世界书不被写入。
   window.failWrite = 'in_use';
@@ -114,7 +117,7 @@
   }
 
   // 连接配置。
-  ui.state.config.connection_link.enabled = true;
+  await ui.enqueueScriptConfigSave('开启连接联动', null, null, config => { config.connection_link.enabled = true; });
   ui.state.profiles = [{ id: 'profile-1', name: '通用连接 A', model: 'gpt-4o', api: '', mode: '' }];
   ui.renderActiveContent();
   let binding = q('[data-action="profile-binding"][data-model="Gemini"]');

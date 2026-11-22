@@ -88,7 +88,7 @@ test('custom cache conditions and consumers preserve the entire legacy preset', 
   }
 });
 
-test('legacy named snapshots migrate on import while keeping the saved noise selection', () => {
+test('legacy named snapshots migrate while keeping the saved noise selection', () => {
   const ctx = { ...definitions, state: { config: {} },
     sanitizeEntryPoints: () => ({}), sanitizeBinding: () => null,
     validateAuthorLayout: value => structuredClone(value), getGeminiTail: () => null,
@@ -97,13 +97,14 @@ test('legacy named snapshots migrate on import while keeping the saved noise sel
   const schema = createConfigurationSchema(ctx);
   const input = legacyPreset();
   input.prompts = input.prompts.filter(item => item.id !== 'custom-head');
+  input.prompts.push(...definitions.VARIABLE_MODES.map(({ id, key }) => ({ ...prompt(id, key), enabled: key === 'main' })));
   const legacy = schema.capturePresetConfiguration(input, { noise_padding: noiseSettings });
   const validated = schema.validatePresetSnapshot(legacy);
   assert.equal(needsNoisePlacementMigration(validated), false);
   assert.deepEqual(validated.config.noise_padding, noiseSettings);
   assert.equal(validated.prompts.find(item => item.id === definitions.BUILTIN_MODEL_ADAPTERS.Gemini.ids[0]).content.split(NATIVE_NOISE_MACRO).length - 1, 1);
   assert(!validated.prompts.find(item => item.id === outputId).content.includes(NATIVE_NOISE_MACRO));
-  assert(legacy.prompts.find(item => item.id === outputId).content.includes(NATIVE_NOISE_MACRO), 'validation must not mutate the imported file');
+  assert(legacy.prompts.find(item => item.id === outputId).content.includes(NATIVE_NOISE_MACRO), 'validation must preserve the loaded snapshot');
 });
 
 test('startup uses the existing guarded preset queue and leaves current managed settings unchanged', async t => {

@@ -27,7 +27,7 @@ function setup(settings, hostOverrides = {}) {
     async enqueueScriptConfigSave(label, debounceKey, guard, prepare) {
       saves.push({ label, debounceKey, guard, prepare });
       if (guard && !guard()) throw new Error('context changed');
-      prepare?.();
+      prepare(ctx.state.config);
     },
   };
   ctx.savedScriptConfig = structuredClone(ctx.state.config);
@@ -255,6 +255,7 @@ test('a pending save does not block optimistic segment updates, previews or real
   const state = setup({ enabled: true });
   const pending = [];
   state.ctx.enqueueScriptConfigSave = (label, debounceKey, guard, prepare) => new Promise((resolve, reject) => {
+    prepare(state.ctx.state.config);
     pending.push({ label, debounceKey, guard, prepare, resolve, reject });
   });
   const first = state.noise.setNoiseSetting('segments', 24);
@@ -268,7 +269,7 @@ test('a pending save does not block optimistic segment updates, previews or real
   assert.equal(state.invokeMacro(), buildNoiseText({ ...DEFAULT_NOISE_SETTINGS, segments: 48 }).text);
   assert.equal(pending.length, 2); assert(pending.every(item => item.debounceKey === 'noise-padding'));
   pending[0].resolve({ superseded: true });
-  assert(pending[1].guard()); pending[1].prepare?.(); pending[1].resolve();
+  assert(pending[1].guard()); pending[1].resolve();
   await Promise.all([first, second]);
   assert.equal(fetch.mock.callCount(), 0);
 });

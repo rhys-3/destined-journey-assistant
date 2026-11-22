@@ -135,13 +135,17 @@ module.exports = async (cdp, evaluate) => {
     await check('格式条目开关互斥并在左下角显示保存结果', 'ui.summary.capture().promptBlocks.find(block=>block.id==="format_archive").enabled&&!ui.summary.capture().promptBlocks.find(block=>block.id==="format_legacy").enabled&&ui.shadow.querySelector(".status").textContent.includes("总结设置已保存")&&summaryToastCalls.length===0');
     await click('[data-block-edit="format_archive"]');
     await check('格式在原生条目编辑窗中完整可编辑', 'ui.shadow.querySelector("[data-form-field=content]").value.includes("【时空与事件】")&&ui.shadow.querySelector("[data-form-field=role]").value==="user"');await cancel();
-    await click('[data-block-enable="check_brief"]');await click('[data-block-enable="tail_prefill"]');await pause(900);
-    await check('尾部预填充与非预填充二选一', 'ui.summary.capture().promptBlocks.find(block=>block.id==="tail_prefill").enabled&&!ui.summary.capture().promptBlocks.find(block=>block.id==="tail_instruction").enabled');
+    await click('[data-block-enable="jailbreak_gemini"]');await pause(900);
+    await check('切换 Gemini 头部后保留一个适配头和分组标签', 'ui.summary.capture().promptBlocks.filter(b=>b.choiceGroup==="adapter"&&b.enabled).map(b=>b.id).join()==="jailbreak_gemini"&&ui.shadow.querySelector("#sa-blocks-container .sa-choice-badge")');
+    await click('[data-block-enable="tail_prefill"]');await pause(900);
+    await check('开启结果预填充后关闭常规尾部', 'ui.summary.capture().promptBlocks.find(block=>block.id==="tail_prefill").enabled&&!ui.summary.capture().promptBlocks.find(block=>block.id==="tail_instruction").enabled');
     await click('[data-prompt-preview="normal"]');
-    await check('展开请求反映格式、检查和末尾 assistant 预填充', 'ui.shadow.querySelector(".dj-dialog textarea").value.includes("【时空与事件】")&&ui.shadow.querySelector(".dj-dialog textarea").value.includes("整理前简短核对")&&ui.shadow.querySelector(".dj-dialog textarea").value.includes("[8 · assistant]")&&!ui.shadow.querySelector(".dj-dialog textarea").value.includes("<|no-trans|>")');await cancel();
+    await check('展开请求反映格式、检查和末尾 assistant 预填充', 'ui.shadow.querySelector(".dj-dialog textarea").value.includes("【时空与事件】")&&ui.shadow.querySelector(".dj-dialog textarea").value.includes("<archive_plan_contract>")&&ui.shadow.querySelector(".dj-dialog textarea").value.includes("[8 · assistant]")&&!ui.shadow.querySelector(".dj-dialog textarea").value.includes("<|no-trans|>")');await cancel();
     await click('[data-block-enable="tail_prefill"]');await pause(900);
     await check('关闭预填充自动恢复另一尾部条目', '!ui.summary.capture().promptBlocks.find(block=>block.id==="tail_prefill").enabled&&ui.summary.capture().promptBlocks.find(block=>block.id==="tail_instruction").enabled');
-    await click('[data-block-enable="check_brief"]');await click('[data-block-enable="format_legacy"]');await pause(900);
+    await click('[data-block-enable="jailbreak_gemini"]');await pause(900);
+    await check('关闭唯一选中的头部会恢复常规适配', 'ui.summary.capture().promptBlocks.filter(b=>b.choiceGroup==="adapter"&&b.enabled).map(b=>b.id).join()==="jailbreak"');
+    await click('[data-block-enable="format_legacy"]');await pause(900);
     shot=await cdp('Page.captureScreenshot',{format:'png'});fs.writeFileSync('.ui-review/summary-native-prompts-'+width+'.png',Buffer.from(shot.data,'base64'));
   }
   await click('.sa-tab-item[data-tab="status"]');await fill('#sa-vis-from','0');await fill('#sa-vis-to','1');await click('#sa-vis-show-range');await pause(150);
@@ -180,7 +184,7 @@ module.exports = async (cdp, evaluate) => {
   await check('已有世界书中的其他条目和原有全局启用保持完整', `books['原有设定书'][0].content==='保留资料'&&globalBooks.includes('原有设定书')&&!chatVars.summary_assistant_worldbook&&summaryToastCalls.length===0`);
   await choose('#sa-wb-select','手动点击验证书');await click('#sa-bind-worldbook');
   await click('.sa-tab-item[data-tab="prompts"]');await click('[data-prompt-page="normal"]');
-  await check('两套预设都保留可拖动条目、右侧开关与弹窗编辑', 'ui.summary.capture().promptBlocks.length===12&&ui.summary.capture().megaPromptBlocks.length===12&&ui.shadow.querySelectorAll("#sa-blocks-container [draggable=true]").length===12&&ui.shadow.querySelectorAll("#sa-blocks-container [role=switch]").length===12');
+  await check('两套预设都保留可拖动条目、右侧开关与弹窗编辑', 'ui.summary.capture().promptBlocks.length===14&&ui.summary.capture().megaPromptBlocks.length===14&&ui.shadow.querySelectorAll("#sa-blocks-container [draggable=true]").length===14&&ui.shadow.querySelectorAll("#sa-blocks-container [role=switch]").length===14');
   await click('#sa-blocks-container .sa-block-drag');
   for(const type of ['keyDown','keyUp'])await cdp('Input.dispatchKeyEvent',{type,key:'ArrowDown',code:'ArrowDown',windowsVirtualKeyCode:40,modifiers:1});await pause(900);
   await check('条目可以使用辅助键向下排序并持久化','ui.summary.capture().promptBlocks[1].id==="jailbreak"');

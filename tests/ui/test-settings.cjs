@@ -3,7 +3,7 @@ let source=fs.readFileSync('tests/ui/test-ui.cjs','utf8');
 const start=source.indexOf('console.log(await evaluate'),end=source.indexOf("await cdp('Browser.close');",start);
 if(start<0||end<start)throw Error('Harness markers changed');
 const run=async(cdp,evaluate)=>{
- await evaluate(`ui.state.config.entry_points={floating_orb:true,input_button:false,wand_menu:false};ui.render();ui.shadow.querySelector('[data-tab="settings"]').click()`);
+ await evaluate(`vars.entry_points={floating_orb:true,input_button:false,wand_menu:false};ui.reloadScriptConfig();ui.render();ui.shadow.querySelector('[data-tab="settings"]').click()`);
  assert(await evaluate(`ui.state.activeTab==='settings'&&!!ui.shadow.querySelector('.entry-point-card')&&!ui.shadow.querySelector('.panel-head .appearance-controls')`));
  await evaluate(`ui.shadow.querySelector('[data-key="entry:input_button"]').click();ui.settle()`);
  assert(await evaluate('ui.state.config.entry_points.input_button'));
@@ -13,6 +13,15 @@ const run=async(cdp,evaluate)=>{
  assert(await evaluate('Object.values(ui.state.config.entry_points).some(Boolean)'));
  await evaluate(`ui.shadow.querySelector('[data-key="entry:floating_orb"]').click();ui.settle()`);
  assert(await evaluate('ui.state.config.entry_points.floating_orb'));
+ await evaluate(`(async()=>{
+  vars.entry_points={floating_orb:true,input_button:false,wand_menu:false};ui.reloadScriptConfig();ui.render();
+  const replace=window.replaceVariables;
+  window.replaceVariables=value=>{window.replaceVariables=replace;throw Error('入口保存失败');};
+  ui.shadow.querySelector('[data-key="entry:input_button"]').click();
+  ui.shadow.querySelector('[data-key="entry:floating_orb"]').click();
+  await ui.settle();
+ })()`);
+ assert(await evaluate(`ui.shadow.querySelector('[data-key="entry:floating_orb"]').checked&&!ui.shadow.querySelector('[data-key="entry:input_button"]').checked&&vars.entry_points.floating_orb&&!vars.entry_points.input_button`));
  console.log('设置页入口开关可保存，最后一个入口不能被关闭');
  for(const theme of ['midnight','forest','ember','parchment']){
   await evaluate(`(()=>{ui.state.activeTab='settings';ui.render();const t=ui.shadow.querySelector('[data-action="ui-theme"]');t.value='${theme}';t.dispatchEvent(new Event('change',{bubbles:true}));const s=ui.shadow.querySelector('[data-action="ui-transparency"]');s.value=10;s.dispatchEvent(new Event('change',{bubbles:true}));})()`);

@@ -6,6 +6,8 @@ import { normalizeBodyPool } from './body-pool.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createStore(ctx) {
+  const pendingConfigSaves = new Set();
+
   function clone(value) {
     return typeof structuredClone === 'function'
       ? structuredClone(value)
@@ -97,8 +99,8 @@ export function createStore(ctx) {
         },
       },
     };
+    delete result.configuration_error;
     try {
-      delete result.configuration_error;
       result.managed_values = sanitizeManagedValues(raw.managed_values);
       // Before managed values v2, the prompt body was authoritative. Do not turn
       // an old default string into a "new" array before that body can be read.
@@ -107,13 +109,34 @@ export function createStore(ctx) {
         if (typeof raw.managed_values?.global_preference === 'string') result.managed_values.global_preference = raw.managed_values.global_preference;
       }
       result.custom_models = ctx.validateCustomModels(raw.custom_models ?? []);
-      result.configuration_library = ctx.validateLibrary(raw.configuration_library ?? ctx.emptyLibrary());
       result.model_tail_modes = { Gemini: 'no-prefill', ...raw.model_tail_modes };
     } catch (error) {
-      result.configuration_error = '配置数据未载入：' + error.message + '。原始数据已保留，请先导出备份。';
+      result.configuration_error = '模型配置数据未载入：' + error.message + '。';
       console.error('[' + ctx.SCRIPT_NAME + ']', error);
     }
+    if (!Object.hasOwn(result, 'configuration_library')) result.configuration_library = ctx.emptyLibrary();
+    syncConfigurationLibrary(result);
     return result;
+  }
+
+  function syncConfigurationLibrary(config) {
+    // Keep the stored payload separate from the validated view used by the UI.
+    delete config.configuration_library_view;
+    delete config.configuration_library_error;
+    delete config.configuration_library_issues;
+    try {
+      const issues = [];
+      config.configuration_library_view = ctx.validateLibrary(config.configuration_library, issue => issues.push(issue));
+      if (issues.length) config.configuration_library_issues = issues;
+    } catch (error) {
+      config.configuration_library_error = '配置库未载入：' + error.message + '。可重置配置库后重新保存。';
+    }
+  }
+
+  function writeScriptConfig(config, libraryChanged = false) {
+    if (libraryChanged) syncConfigurationLibrary(config);
+    const { configuration_error, configuration_library_view, configuration_library_error, configuration_library_issues, ...next } = config;
+    writePresetStore(next);
   }
 
   function sanitizeEntryPoints(source) {
@@ -134,34 +157,48 @@ export function createStore(ctx) {
     return id || name ? { id, name } : null;
   }
 
-  function saveScriptConfig(message = '连接配置已保存') {
-    return enqueueScriptConfigSave(message);
+  function saveScriptConfig(message, mutate) {
+    return enqueueScriptConfigSave(message, null, null, mutate);
   }
 
-  async function commitScriptConfig(label, guard = null, prepare = null) {
-    ctx.syncSettingContext?.();
-    if (ctx.destroyed || (guard && !guard())) throw new Error('上下文已变化，已停止保存');
-    if (ctx.state.config.configuration_error) throw new Error(ctx.state.config.configuration_error);
-    setSaveStatus('saving', `正在保存：${label}`);
+  function commitScriptConfig(label, save) {
+    let failure;
     try {
-      prepare?.();
-      writePresetStore(ctx.state.config);
-      ctx.savedScriptConfig = clone(ctx.state.config);
-      ctx.rebuildModelRegistry();
+      ctx.syncSettingContext?.();
+      if (ctx.destroyed || (save.guard && !save.guard())) throw new Error('上下文已变化，已停止保存');
+      if (ctx.state.config.configuration_error) throw new Error(ctx.state.config.configuration_error);
+      setSaveStatus('saving', `正在保存：${label}`);
+      // Each save writes its own edit against the last successful write.
+      const next = clone(ctx.savedScriptConfig);
+      save.mutate(next, true);
+      writeScriptConfig(next);
+      ctx.savedScriptConfig = next;
       setSaveStatus('saved', `已保存：${label}`);
     } catch (error) {
+      failure = error;
+    } finally {
+      pendingConfigSaves.delete(save);
       ctx.state.config = clone(ctx.savedScriptConfig);
+      // Keep later edits visible when an earlier write is rolled back.
+      for (const pending of pendingConfigSaves) {
+        if (!pending.guard || pending.guard()) pending.mutate(ctx.state.config);
+      }
       ctx.rebuildModelRegistry();
+    }
+    if (failure) {
       ctx.renderActiveContent(true);
-      const message = error instanceof Error ? error.message : String(error);
+      const message = failure instanceof Error ? failure.message : String(failure);
       setSaveStatus('error', `保存失败：${message}`);
-      throw error;
+      throw failure;
     }
   }
 
-  function enqueueScriptConfigSave(label, debounceKey = null, guard = null, prepare = null) {
+  function enqueueScriptConfigSave(label, debounceKey, guard, mutate) {
+    const save = { guard, mutate };
+    mutate(ctx.state.config);
+    pendingConfigSaves.add(save);
     const enqueueConfig = () => {
-      const task = ctx.saveChain.then(() => commitScriptConfig(label, guard, prepare));
+      const task = ctx.saveChain.then(() => commitScriptConfig(label, save));
       ctx.saveChain = task.catch(error => console.error(`[${ctx.SCRIPT_NAME}] ${label} 失败。`, error));
       return task;
     };
@@ -170,6 +207,7 @@ export function createStore(ctx) {
     const previous = ctx.debounceTimers.get(key);
     if (previous) {
       clearTimeout(previous.timer);
+      pendingConfigSaves.delete(previous.save);
       previous.resolve({ superseded: true });
     }
     return new Promise((resolve, reject) => {
@@ -181,7 +219,7 @@ export function createStore(ctx) {
         return task;
       };
       const timer = setTimeout(flush, ctx.SAVE_DELAY);
-      ctx.debounceTimers.set(key, { timer, resolve, reject, flush });
+      ctx.debounceTimers.set(key, { timer, resolve, reject, flush, save });
     });
   }
 
@@ -412,10 +450,10 @@ export function createStore(ctx) {
     sanitizeManagedValues,
     sanitizeLanguageSetting,
     loadScriptConfig,
+    writeScriptConfig,
     sanitizeEntryPoints,
     sanitizeBinding,
     saveScriptConfig,
-    commitScriptConfig,
     enqueueScriptConfigSave,
     getContext,
     getPrompt,

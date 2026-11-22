@@ -16,6 +16,7 @@ export const MEGA_SUMMARY_VAR_KEY = key('mega_summary_map');
 export const ARCHIVE_VAR_KEY = key('archive');
 export const BINDING_PAUSED_VAR_KEY = key('binding_paused');
 export const AUTO_HIDDEN_FLOORS_VAR_KEY = key('auto_hidden_floors');
+export const AUTO_HIDDEN_FINGERPRINTS_VAR_KEY = key('auto_hidden_fingerprints');
 export const VISIBILITY_AUTOMATION_VAR_KEY = key('visibility_auto');
 export const VISIBILITY_OVERRIDES_VAR_KEY = key('visibility_overrides');
 

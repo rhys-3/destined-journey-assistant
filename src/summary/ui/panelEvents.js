@@ -9,7 +9,6 @@ import { parseMegaSummaryEntryName } from '../utils.js';
 import { BINDING_PAUSED_VAR_KEY } from '../../platform/storage-keys.js';
 import { getMegaSummaryMapping } from '../storage.js';
 import { upsertMegaSummaryEntry, deleteBoundSummaryBook, deleteMegaSummaryEntry } from '../worldbook.js';
-import { reconcileChatBinding } from '../worldbook.js';
 import { feedback } from '../feedback.js';
 import { safeErrorDetails } from '../errorHandler.js';
 import { MACROS } from '../macros.js';
@@ -132,11 +131,19 @@ const deleteBlock = async (
     SillyTavern.POPUP_TYPE.CONFIRM,
   );
   if (cfm !== SillyTavern.POPUP_RESULT.AFFIRMATIVE) return;
-  const blocks = collectBlocksFromPanel(overlay, containerId).filter(
-    (b) => b.id !== blockId,
-  );
-  rerenderBlocks(overlay, blocks, containerId);
+  const blocks = collectBlocksFromPanel(overlay, containerId);
+  const current = blocks.find(block => block.id === blockId);
+  const remaining = blocks.filter(block => block.id !== blockId);
+  if (current?.enabled) enableRequiredChoice(current, remaining);
+  rerenderBlocks(overlay, remaining, containerId);
 };
+
+function enableRequiredChoice(current, others) {
+  if (current.choiceGroup !== 'adapter' && current.choiceGroup !== 'tail') return;
+  const peers = others.filter(block => block.choiceGroup === current.choiceGroup);
+  const replacement = peers.find(block => block.id === 'tail_instruction') ?? peers[0];
+  if (replacement) replacement.enabled = true;
+}
 
 const resetBlocks = async (
   overlay,
@@ -155,6 +162,7 @@ const resetBlocks = async (
 };
 
 const viewEditEntry = async (overlay, entryName) => {
+  const token = captureContext();
   const entries = await getWorldbookEntriesSafe();
   const entry = entries.find((e) => e && e.name === entryName);
   if (!entry) {
@@ -173,7 +181,14 @@ const viewEditEntry = async (overlay, entryName) => {
     typeof result !== "string"
   )
     return;
-  await runAction(async()=>{assertRecordWritable();if(parseMegaSummaryEntryName(entryName))await upsertMegaSummaryEntry(entryName,result,await getMegaSummaryMapping(entryName),{preserveDisabled:true});else await upsertSummaryEntryByName(entryName,result);});
+  checkContext(token);
+  const saved = await runAction(async () => {
+    assertRecordWritable();
+    if (parseMegaSummaryEntryName(entryName)) await upsertMegaSummaryEntry(entryName,result,await getMegaSummaryMapping(entryName),{preserveDisabled:true});
+    else await upsertSummaryEntryByName(entryName,result);
+    return true;
+  });
+  if (!saved) return;
   feedback.success(`已保存条目: ${entryName}`);
   await refreshEntryList(overlay);
   await refreshStatus(overlay);
@@ -232,9 +247,10 @@ const bindBlockEventsForContainer = (overlay, containerId, defaultBlocks) => {
   container.addEventListener('change',event=>{
     const toggle=event.target.closest('[data-block-enable]');if(!toggle)return;
     const blocks=collectBlocksFromPanel(overlay,containerId),current=blocks.find(block=>block.id===toggle.dataset.blockEnable);
-    if(current.choiceGroup){
-      if(current.enabled){for(const block of blocks)if(block!==current&&block.choiceGroup===current.choiceGroup)block.enabled=false;}
-      else if(current.choiceGroup==='tail'){const other=blocks.find(block=>block!==current&&block.choiceGroup==='tail');if(other)other.enabled=true;}
+    if (current.choiceGroup) {
+      const others = blocks.filter(block => block !== current && block.choiceGroup === current.choiceGroup);
+      if (current.enabled) for (const block of others) block.enabled = false;
+      else enableRequiredChoice(current, others.length ? others : [current]);
     }
     for(const row of container.querySelectorAll('.sa-block')){const block=blocks.find(item=>item.id===row.dataset.blockId);row.querySelector('[data-block-enable]').checked=block.enabled;row.dataset.block=JSON.stringify(block);row.classList.toggle('sa-block-disabled',!block.enabled);}
     overlay.dispatchEvent(new Event('summary-blocks-changed'));
@@ -535,7 +551,7 @@ const refreshEntryList = async (panel, enableSelection = false) => {
       bindMegaSelectionLogic(el);
     }
   } catch (err) {
-    el.innerHTML = `<div class="sa-empty">加载条目列表失败: ${err.message}</div>`;
+    el.innerHTML = `<div class="sa-empty">加载条目列表失败: ${escapeHtml(err.message)}</div>`;
   }
 };
 
@@ -687,7 +703,7 @@ const refreshMegaEntryList = async (panel) => {
       });
     });
   } catch (err) {
-    el.innerHTML = `<div class="sa-empty">加载大总结列表失败: ${err.message}</div>`;
+    el.innerHTML = `<div class="sa-empty">加载大总结列表失败: ${escapeHtml(err.message)}</div>`;
   }
 };
 
@@ -714,13 +730,13 @@ const refreshStatus = async (panel) => {
     const hint=panel.querySelector('[data-binding-hint]');
     if(hint) hint.textContent=isChatWorldbookBound()?`本聊天总结书：${getActiveWorldbookName()}`:getVariables({type:'chat'})?.[BINDING_PAUSED_VAR_KEY]?'已主动解绑；重新绑定后可继续总结。':'未绑定世界书：首次总结时将自动创建并绑定本聊天的独立总结书。';
   } catch (err) {
-    el.innerHTML = `加载状态失败: ${err.message}`;
+    el.textContent = `加载状态失败: ${err.message}`;
   }
 };
 
 // ---- 面板事件绑定 ----
 
-const bindPanelEvents = (overlay, initialSettings) => {
+const bindPanelEvents = (overlay, initialSettings, reconcileBinding) => {
   // 主标签页切换
   overlay.querySelectorAll(".sa-tab-item").forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -921,7 +937,7 @@ const bindPanelEvents = (overlay, initialSettings) => {
     if (!select) return;
     try {
       const token = captureContext();
-      const names = isBusy() ? await getWorldbookNames() : await reconcileChatBinding();
+      const names = isBusy() ? await getWorldbookNames() : await reconcileBinding();
       checkContext(token);
       const currentName = getActiveWorldbookName();
       const previous = select.value;

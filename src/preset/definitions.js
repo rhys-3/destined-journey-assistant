@@ -286,7 +286,7 @@ export const PROTECTED_IDS = new Set([
   '03adb1e6-e613-48ad-844e-035444017ec4',
   'dafd56fc-9b51-4936-98b5-bc16f7c37db9',
   'f7feb57e-6fd8-4c7a-b872-cdc3980f62e4',
-  '900cb71c-f6a6-441f-a78c-056ddfc8db10',
+  ...(FLAVOR.id === 'prime' ? ['900cb71c-f6a6-441f-a78c-056ddfc8db10'] : []),
   'a7c417bc-d976-414f-a507-f142833d1b3e',
   IDS.writingEnd,
   IDS.nsfwStart, IDS.nsfwEnd,

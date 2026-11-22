@@ -38,6 +38,6 @@
   open(added);ui.setPlacementField('block','expression-constraints');await save();open(master);type('description','可自定义的总开关简介');await save();ui.state.activeTab='style';ui.render();
   check('表达总开关简介可修改且固定细则说明保持原样',q('.expression-master small').textContent==='可自定义的总开关简介'&&q('.expression-options legend').textContent==='可选细则'&&q('#expression-help').textContent==='以下细则随表达约束一同生效。');
   open(master);type('description','');await save();check('清空总开关简介不删除固定说明',!q('.expression-master small')&&q('#expression-help').textContent==='以下细则随表达约束一同生效。');
- }finally{window.failWrite=null;data=before.data;stored=before.stored;vars=before.vars;ui.state.config=ui.loadScriptConfig();ui.rebuildModelRegistry();ui.closePromptEditor(true);ui.state.activeTab='daily';ui.reconcilePreset('descriptions restored');ui.render();await ui.settle();}
+ }finally{window.failWrite=null;data=before.data;stored=before.stored;vars=before.vars;ui.reloadScriptConfig();ui.closePromptEditor(true);ui.state.activeTab='daily';ui.reconcilePreset('descriptions restored');ui.render();await ui.settle();}
  return results;
 })()

@@ -191,7 +191,7 @@ export function createEvents(ctx) {
   async function handleChange(event) {
     const target = event.target;
     const action = target.dataset.action;
-    if (action === 'configuration-scope') { const scopes=target.dataset.kind==='save'?ctx.configurationScopes:ctx.exportScopes; scopes[target.dataset.key]=target.checked; return; }
+    if (action === 'configuration-scope') { ctx.configurationScopes[target.dataset.key] = target.checked; return; }
     if (action === 'ui-theme') return ctx.applyTheme(target.value, true);
     if (action === 'ui-transparency') return ctx.applyTransparency(Number(target.value), true);
     if (ctx.state.workspaceBusy) return;
@@ -207,11 +207,6 @@ export function createEvents(ctx) {
     if (action === 'placement-field') return ctx.setPlacementField(target.dataset.field,target.value);
     if (action === 'model-draft') { ctx.state.modelDraft[target.dataset.field] = target.value; return; }
     if (action === 'configuration-switch') { if (target.value) ctx.applyConfiguration(target.value).catch(ctx.showErrorToast); else ctx.updateWorkspaceUi(); return; }
-    if (action === 'configuration-file') {
-      const file = target.files?.[0];
-      if (file) { if (file.size > 20 * 1024 * 1024) ctx.showErrorToast(new Error('配置文件不能超过 20 MB')); else file.text().then(ctx.importConfigurations).catch(ctx.showErrorToast); }
-      target.value = ''; return;
-    }
     if (action === 'custom-tail') {
       const model = ctx.state.config.custom_models.find(item => item.id === target.dataset.model);
       const tail = model && ctx.getPrompt(ctx.state.preset, model.ids[2]);

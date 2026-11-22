@@ -12,7 +12,8 @@ function setup(t, overrides = {}) {
   t.mock.method(console, 'error', () => {});
   const preset = { prompts: [{ id: definitions.IDS.outputLength, content: '<|字数|> <|字数要求|>' }] };
   let workspace = 'A';
-  const ctx = { ...definitions, presetIsMine: () => true, state: { preset, config: { managed_values: { ...definitions.DEFAULT_MANAGED_VALUES, ...overrides } } }, workspaceContextKey: () => workspace, getPrompt: (value, id) => value?.prompts?.find(prompt => prompt.id === id), enqueueScriptConfigSave: () => Promise.resolve() };
+  const ctx = { ...definitions, presetIsMine: () => true, state: { preset, config: { managed_values: { ...definitions.DEFAULT_MANAGED_VALUES, ...overrides } } }, workspaceContextKey: () => workspace, getPrompt: (value, id) => value?.prompts?.find(prompt => prompt.id === id) };
+  ctx.enqueueScriptConfigSave = async (_label, _debounceKey, _guard, mutate) => mutate(ctx.state.config);
   ctx.sanitizeManagedValues = createStore(ctx).sanitizeManagedValues;
   return { ...createManaged(ctx), notices, setWorkspace: value => { workspace = value; }, setSave: save => { ctx.enqueueScriptConfigSave = save; } };
 }
@@ -36,7 +37,7 @@ function setupMigration(t, { content, version, values = {} }) {
     },
     workspaceContextKey: () => 'migration-regression',
     getPrompt: (value, id) => value?.prompts?.find(prompt => prompt.id === id),
-    enqueueScriptConfigSave: () => Promise.resolve(),
+    enqueueScriptConfigSave: async (_label, _debounceKey, _guard, mutate) => mutate(ctx.state.config),
     queuePresetMutation: async (_label, mutate) => { mutations += 1; mutate(preset); },
     renderActiveContent: () => {},
   };

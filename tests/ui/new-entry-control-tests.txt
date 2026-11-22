@@ -35,6 +35,6 @@
    const added=data.prompts.find(p=>p.name.includes('控件回归 '+kind));const tag=kind==='base-tone'?'base_tone':'main_writing_style';
    check(kind+' 新建保留格式与单选互斥',!!added&&group(added.id)===kind&&enabled(added.id)&&ui.getGroupOptions(kind).filter(([id])=>enabled(id)).length===1&&added.content.includes('<'+tag+'>')&&added.content.includes('专用风格正文'));
   }
- }finally{window.failWrite=null;data=before.data;stored=before.stored;vars=before.vars;ui.state.config=ui.loadScriptConfig();ui.rebuildModelRegistry();ui.state.styleEditor=null;ui.closePromptEditor(true);ui.state.activeTab='daily';ui.reconcilePreset('new entry controls restored');ui.render();await ui.settle();}
+ }finally{window.failWrite=null;data=before.data;stored=before.stored;vars=before.vars;ui.reloadScriptConfig();ui.state.styleEditor=null;ui.closePromptEditor(true);ui.state.activeTab='daily';ui.reconcilePreset('new entry controls restored');ui.render();await ui.settle();}
  return results;
 })()

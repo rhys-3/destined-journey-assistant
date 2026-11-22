@@ -34,23 +34,22 @@ export function createBodyPoolControls(ctx) {
     return Promise.reject(failure);
   }
 
-  function commit(next, key) {
+  function commit(mutate, key) {
     if (ctx.state.workspaceBusy) return fail(new Error('上一项设置尚未保存，请稍候。'));
     if (!supported()) return fail(new Error('体型随机条目缺少体型池短宏。'));
     error = '';
-    ctx.state.config.managed_values.body_pool = next;
-    return ctx.enqueueScriptConfigSave('体型比例', key);
+    return ctx.enqueueScriptConfigSave('体型比例', key, null, mutate);
   }
 
   function setBodyPoolOption(groupKey, option, weight) {
     let next;
     try { next = setBodyPoolWeight(pool(), groupKey, option, weight); }
     catch (failure) { return fail(failure); }
-    return commit(next, `body-pool:${groupKey}`);
+    return commit(config => { config.managed_values.body_pool = { ...config.managed_values.body_pool, [groupKey]: next[groupKey] }; }, `body-pool:${groupKey}`);
   }
 
   function resetBodyPool() {
-    return commit(defaultBodyPool(), 'body-pool').then(result => {
+    return commit(config => { config.managed_values.body_pool = defaultBodyPool(); }, 'body-pool').then(result => {
       ctx.renderActiveContent?.(true);
       return result;
     });

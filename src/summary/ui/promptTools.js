@@ -6,6 +6,22 @@ import { prepareGeneration } from '../api.js';
 import { computeSummaryPlan, computeMegaPlan } from '../summary.js';
 import { snapshotContext } from '../macros.js';
 import { FLAVOR } from '../../flavor.js';
+import { PROMPT_VERSION } from '../archiveDefaults.js';
+
+const legacyPromptFields = ['jailbreakPrompt','jailbreakRole','summaryRulesPrompt','summaryRulesRole','oldSummaryRole','chatMessagesRole','summaryInstruction','summaryInstructionRole'];
+
+export function readPromptFile(raw, settings) {
+  if (raw?.format !== 'destined-summary-prompts') throw new Error('请选择总结提示词导出文件');
+  const version = raw.version ?? 1;
+  if (!Number.isInteger(version) || version < 1 || version > PROMPT_VERSION) throw new Error('不支持的总结提示词文件版本');
+  const fields = ['promptBlocks','megaPromptBlocks','customMacros','resultFormat','thinkingTemplate','prefillTemplate',...legacyPromptFields];
+  const prompts = Object.fromEntries(fields.filter(field => Object.hasOwn(raw, field)).map(field => [field, raw[field]]));
+  if (!Object.hasOwn(prompts, 'promptBlocks') && !legacyPromptFields.some(field => Object.hasOwn(prompts, field))) prompts.promptBlocks = settings.promptBlocks;
+  if (!Object.hasOwn(prompts, 'megaPromptBlocks')) prompts.megaPromptBlocks = settings.megaPromptBlocks;
+  if (!Object.hasOwn(prompts, 'customMacros')) prompts.customMacros = settings.customMacros;
+  const migrated = migrateOldSettings({ ...structuredClone(prompts), promptVersion: version });
+  return summarySnapshot({ ...settings, promptBlocks: migrated.promptBlocks, megaPromptBlocks: migrated.megaPromptBlocks, customMacros: migrated.customMacros });
+}
 
 export function collectCustomMacros(panel) { return structuredClone(panel._customMacros??[]); }
 export function bindPromptTools(panel, settings, {collect,rerender}) {
@@ -22,7 +38,7 @@ export function bindPromptTools(panel, settings, {collect,rerender}) {
   panel.querySelector('[data-prompts-export]').onclick=()=>{
     try{
       const value=summarySnapshot(collect(panel));
-      const data={format:'destined-summary-prompts',version:4,promptBlocks:value.promptBlocks,megaPromptBlocks:value.megaPromptBlocks,customMacros:value.customMacros};
+      const data={format:'destined-summary-prompts',version:PROMPT_VERSION,promptBlocks:value.promptBlocks,megaPromptBlocks:value.megaPromptBlocks,customMacros:value.customMacros};
       const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),link=panel.ownerDocument.createElement('a');link.href=url;link.download=FLAVOR.exportLabel+'总结提示词.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     }catch(error){report(error);}
   };
@@ -30,8 +46,7 @@ export function bindPromptTools(panel, settings, {collect,rerender}) {
   file.onchange=async()=>{
     try{
       if(!file.files?.[0])return;
-      const raw=JSON.parse(await file.files[0].text());if(raw.format!=='destined-summary-prompts')throw new Error('请选择总结提示词导出文件');
-      const value=summarySnapshot(migrateOldSettings({...collect(panel),...raw,promptVersion:raw.version??1}));
+      const value = readPromptFile(JSON.parse(await file.files[0].text()), collect(panel));
       rerender(panel,value.promptBlocks);rerender(panel,value.megaPromptBlocks,'#sa-mega-blocks-container');panel._customMacros=value.customMacros;changed();
     }catch(error){report(error);}finally{file.value='';}
   };

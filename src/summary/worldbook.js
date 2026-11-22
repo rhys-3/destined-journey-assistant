@@ -1,17 +1,16 @@
 import { errorCatched } from './errorHandler.js';
-import { readStore, patchSummaryStore } from '../platform/store.js';
+import { readStore, patchSummaryStore, readGlobalStore, patchGlobalStore } from '../platform/store.js';
 import { assertRecordWritable } from '../platform/lifecycle.js';
 import { readArchive, writeArchive, fingerprint, currentSources, sourceOf, recordValid, sourceFloors, sourcesMatch, excludeRange, parseRange, consecutiveSummaries } from './provenance.js';
 import { helperApi } from '../platform/ambient.js';
 import { CONFIG } from './config.js';
 import { feedback } from './feedback.js';
-import { allFloorMessages, readVisibilityOverrides, readVisibilityAutomation, discussionFloorsWithinCoverage } from './visibility.js';
-import { isDiscussionMessage } from '../discussion/protocol.js';
+import { allFloorMessages, readVisibilityOverrides, readVisibilityAutomation, discussionFloorsWithinCoverage, autoHiddenOwnership, loadAutoHiddenFloorIds } from './visibility.js';
 import { parseSummaryEntryName, parseMegaSummaryEntryName, isMegaSummaryEntry, normalizeWorldbookEntries } from './utils.js';
-import { getSettings, getMegaSummaryMap, saveMegaSummaryMap, setMegaSummaryMapping, getMegaSummaryMapping, deleteMegaSummaryMapping } from './storage.js';
+import { getSettings, getMegaSummaryMap, loadMegaSummaryMap, saveMegaSummaryMap, scopeLegacyMegaMapping, setMegaSummaryMapping, getMegaSummaryMapping, deleteMegaSummaryMapping } from './storage.js';
 import { recoverLegacyMegaSources } from './legacySources.js';
-import { getDiscussionMessageIds } from './messages.js';
-import { captureContext, checkContext, createWorldbook, rebindGlobalWorldbooks, createWorldbookEntries, updateWorldbookWith, setChatMessages, writeVariableKeys, replaceWorldbook, deleteWorldbook } from '../platform/lifecycle.js';
+import { getDiscussionMessageIds, isSummaryDiscussion } from './messages.js';
+import { captureContext, checkContext, createWorldbook, createWorldbookEntries, updateWorldbookWith, setChatMessages, writeVariableKeys, replaceWorldbook, deleteWorldbook } from '../platform/lifecycle.js';
 import { AUTO_HIDDEN_FLOORS_VAR_KEY, BINDING_PAUSED_VAR_KEY, BOOKS_VAR_KEY, OWNED_BOOKS_VAR_KEY } from '../platform/storage-keys.js';
 /**
  * worldbook.js
@@ -42,7 +41,7 @@ const readChatWorldbookBinding = () => {
 const writeChatWorldbookBinding = (name) => {
   try {
     writeVariableKeys(
-      { [CONFIG.CHAT_WB_VAR_KEY]: name || "", [BINDING_PAUSED_VAR_KEY]: false },
+      { ...scopeLegacyMegaMapping(getVariables({ type: 'chat' })), [CONFIG.CHAT_WB_VAR_KEY]: name || "", [BINDING_PAUSED_VAR_KEY]: false },
       { type: "chat" },
     );
     _cachedChatWbName = name || null;
@@ -54,7 +53,7 @@ const writeChatWorldbookBinding = (name) => {
 
 const clearChatWorldbookBinding = () => {
   try {
-    writeVariableKeys({ [CONFIG.CHAT_WB_VAR_KEY]: "" }, { type: "chat" });
+    writeVariableKeys({ ...scopeLegacyMegaMapping(getVariables({ type: 'chat' })), [CONFIG.CHAT_WB_VAR_KEY]: "" }, { type: "chat" });
     _cachedChatWbName = null;
   } catch (e) {
     console.warn("清除聊天世界书绑定失败:", e);
@@ -83,11 +82,7 @@ const bindWorldbookToChat = errorCatched(async (name, { legacy = false } = {}) =
     feedback.info(`已创建新世界书: "${name}"`);
   }
   registerSummaryBook(name);
-  if (
-    typeof getGlobalWorldbookNames === "function" &&
-    typeof rebindGlobalWorldbooks === "function"
-  ) {
-    const globalNames = getGlobalWorldbookNames() || [];
+  if (typeof getGlobalWorldbookNames === "function") {
     await syncOwnedBinding(name);
   }
   writeChatWorldbookBinding(name);
@@ -97,11 +92,7 @@ const unbindWorldbookFromChat = errorCatched(async () => {
   assertRecordWritable();
   const name = getActiveWorldbookName();
   if (!name) return;
-  if (
-    typeof getGlobalWorldbookNames === "function" &&
-    typeof rebindGlobalWorldbooks === "function"
-  ) {
-    const globalNames = getGlobalWorldbookNames() || [];
+  if (typeof getGlobalWorldbookNames === "function") {
     await syncOwnedBinding(null);
   }
   await applySummarizedFloorsVisibility({ autoHide: false });
@@ -154,32 +145,40 @@ const migrateWorldbookEntries = errorCatched(async (oldName, newName) => {
       (e) => e && (parseSummaryEntryName(e.name) || parseMegaSummaryEntryName(e.name)),
     );
     if (summaryEntries.length > 0) {
-      const newEntries = normalizeWorldbookEntries(await getWorldbook(newName));
-      if (summaryEntries.some(entry => newEntries.some(existing => existing.name === entry.name && existing.content !== entry.content))) throw new Error('目标世界书已有不同内容的同名总结，请先处理重名条目');
-      const newByName = new Map(newEntries.map((e) => [e.name, e]));
-      for (const entry of summaryEntries) {
-        newByName.set(entry.name, { ...entry });
-      }
-      await replaceWorldbook(newName, [...newByName.values()]);
+      await updateWorldbookWith(newName, wb => {
+        const target = normalizeWorldbookEntries(wb);
+        for (const source of summaryEntries) {
+          const matches = target.filter(entry => entry.name === source.name);
+          if (matches.some(entry => entry.content !== source.content)) throw new Error('目标世界书已有不同内容的同名总结，请先处理重名条目');
+          if (!matches.length) {
+            const { uid, ...addition } = source;
+            target.push(addition);
+            continue;
+          }
+          for (const entry of matches) {
+            setEnabled(entry, !isEntryDisabled(source));
+            if (source.position) entry.position = { ...entry.position, ...source.position };
+          }
+        }
+        return target;
+      });
       const actual = normalizeWorldbookEntries(await getWorldbook(newName));
-      if (!summaryEntries.every(entry => actual.some(item => item.name === entry.name && item.content === entry.content))) throw new Error('迁移后的记录校验失败，原书已保留');
-      writeArchive(readArchive(oldName), newName);
+      const copied = summaryEntries.every(source => {
+        const matches = actual.filter(entry => entry.name === source.name);
+        return matches.length && matches.every(entry => entry.content === source.content &&
+          isEntryDisabled(entry) === isEntryDisabled(source) &&
+          ['depth', 'order'].every(key => source.position?.[key] === undefined || entry.position?.[key] === source.position[key]));
+      });
+      if (!copied) throw new Error('迁移后的记录校验失败，原书已保留');
+      const from = readArchive(oldName), to = readArchive(newName);
+      writeArchive({ ...to, records: { ...to.records, ...from.records }, excluded: [...to.excluded, ...from.excluded], megaExcluded: [...to.megaExcluded, ...from.megaExcluded] }, newName);
+      const mappings = await loadMegaSummaryMap(oldName);
+      if (Object.keys(mappings).length) await saveMegaSummaryMap({ ...await loadMegaSummaryMap(newName), ...mappings }, newName);
       const remaining = oldEntries.filter(
         (e) => !e || (!parseSummaryEntryName(e.name) && !parseMegaSummaryEntryName(e.name)),
       );
       if (remaining.length === 0) {
-        await deleteWorldbook(oldName);
-        if (
-          typeof getGlobalWorldbookNames === "function" &&
-          typeof rebindGlobalWorldbooks === "function"
-        ) {
-          const globalNames = getGlobalWorldbookNames() || [];
-          if (globalNames.includes(oldName) && (readStore()[OWNED_BOOKS_VAR_KEY] ?? []).includes(oldName)) {
-            await rebindGlobalWorldbooks(
-              globalNames.filter((n) => n !== oldName),
-            );
-          }
-        }
+        if (await deleteWorldbook(oldName) === false) throw new Error('原世界书删除失败，绑定已保留');
       } else {
         await replaceWorldbook(oldName, remaining);
       }
@@ -188,11 +187,7 @@ const migrateWorldbookEntries = errorCatched(async (oldName, newName) => {
       );
     }
   }
-  if (
-    typeof getGlobalWorldbookNames === "function" &&
-    typeof rebindGlobalWorldbooks === "function"
-  ) {
-    const globalNames = getGlobalWorldbookNames() || [];
+  if (typeof getGlobalWorldbookNames === "function") {
     await syncOwnedBinding(newName);
   }
   writeChatWorldbookBinding(newName);
@@ -252,6 +247,7 @@ const isEntryDisabled = (e) => {
 
 const applyEntryDepthAndOrder = (entry, order) => {
   if (!entry || typeof entry !== "object") return;
+  entry.ignoreBudget = true;
   entry.strategy = {
     ...(entry.strategy && typeof entry.strategy === "object"
       ? entry.strategy
@@ -314,46 +310,21 @@ const buildSummarizedFloorSet = (entries, lastId, megaSummaryMap = {}, archive =
 
   // Legacy ranges may span discussions. Visibility coverage must not call
   // those records summarized story or change their archive provenance.
-  for (const message of messages) if (isDiscussionMessage(message)) set.delete(message.message_id);
+  for (const message of messages) if (isSummaryDiscussion(message)) set.delete(message.message_id);
   return set;
 };
 
-const loadAutoHiddenFloorIds = () => {
-  try {
-    const vars = getVariables({ type: "chat" });
-    const value = vars?.[AUTO_HIDDEN_FLOORS_VAR_KEY];
-    if (!Array.isArray(value)) return new Set();
-    return new Set(
-      value
-        .map((id) => Number.parseInt(id, 10))
-        .filter((id) => Number.isFinite(id) && id >= 0),
-    );
-  } catch (e) {
-    console.warn("加载自动隐藏楼层记录失败:", e);
-    return new Set();
-  }
-};
-
-const saveAutoHiddenFloorIds = (floorIds) => {
-  try {
-    const list = [...new Set([...floorIds])]
-      .filter((id) => Number.isFinite(id) && id >= 0)
-      .sort((a, b) => a - b);
-    writeVariableKeys(
-      { [AUTO_HIDDEN_FLOORS_VAR_KEY]: list },
-      { type: "chat" },
-    );
-  } catch (e) {
-    console.warn("保存自动隐藏楼层记录失败:", e);
-    throw e;
-  }
-};
+const saveAutoHiddenFloorIds = (ids, messages = allFloorMessages()) =>
+  writeVariableKeys(autoHiddenOwnership(ids, messages), { type: 'chat' });
 
 const applySummarizedFloorsVisibility = errorCatched(async ({ taskId, autoHide } = {}) => {
   assertRecordWritable(taskId);
   const settings = getSettings();
   const lastId = getLastMessageId();
-  if (lastId < 0) return false;
+  if (lastId < 0) {
+    if (getVariables({ type: 'chat' })?.[AUTO_HIDDEN_FLOORS_VAR_KEY]?.length) saveAutoHiddenFloorIds([], []);
+    return false;
+  }
   const entries = await getWorldbookEntriesSafe();
   const megaSummaryMap = await getMegaSummaryMap();
   const messages = allFloorMessages(), overrides = readVisibilityOverrides(messages);
@@ -364,13 +335,13 @@ const applySummarizedFloorsVisibility = errorCatched(async ({ taskId, autoHide }
     megaSummaryMap,
     readArchive(), messages.map(sourceOf), messages,
   );
-  const previousAutoHiddenSet = loadAutoHiddenFloorIds();
+  const previousAutoHiddenSet = loadAutoHiddenFloorIds(messages);
   const discussionFloors = discussionFloorsWithinCoverage(messages, summarizedSet);
   const updates = [];
   const nextAutoHiddenSet = new Set();
   for (const message of messages) {
     const id = message.message_id;
-    const eligible = isDiscussionMessage(message) ? discussionFloors.has(id) : summarizedSet.has(id);
+    const eligible = summarizedSet.has(id) || discussionFloors.has(id);
     // Manual actions happen once; the paused policy does not reapply them.
     if (overrides[id]) continue;
     const currentHidden = !!message.is_hidden;
@@ -382,11 +353,11 @@ const applySummarizedFloorsVisibility = errorCatched(async ({ taskId, autoHide }
     if (currentHidden !== targetHidden) updates.push({message_id:id,is_hidden:targetHidden});
   }
   if (updates.length === 0) {
-    saveAutoHiddenFloorIds(nextAutoHiddenSet);
+    saveAutoHiddenFloorIds(nextAutoHiddenSet, messages);
     return false;
   }
   // Write ownership before host changes, so partial writes can be recovered safely.
-  saveAutoHiddenFloorIds(new Set([...previousAutoHiddenSet, ...nextAutoHiddenSet]));
+  saveAutoHiddenFloorIds(new Set([...previousAutoHiddenSet, ...nextAutoHiddenSet]), messages);
   const uniqueUpdates = [...new Map(updates.filter(update => update.message_id <= lastId).map(update => [update.message_id, update])).values()];
   for (let i = 0; i < uniqueUpdates.length; i += VISIBILITY_CHUNK_SIZE) {
     await setChatMessages(uniqueUpdates.slice(i, i + VISIBILITY_CHUNK_SIZE), { refresh: 'affected' });
@@ -394,7 +365,7 @@ const applySummarizedFloorsVisibility = errorCatched(async ({ taskId, autoHide }
   const actual = getChatMessages(`0-${lastId}`, { role: 'all', hide_state: 'all', include_swipes: false });
   const actualHidden = new Map(actual.map(message=>[message.message_id,!!message.is_hidden]));
   if (!uniqueUpdates.every(update => actualHidden.get(update.message_id) === update.is_hidden)) throw new Error('楼层显隐同步未完成');
-  saveAutoHiddenFloorIds(nextAutoHiddenSet);
+  saveAutoHiddenFloorIds(nextAutoHiddenSet, messages);
   return true;
 });
 
@@ -597,7 +568,10 @@ async function toggleMegaSummary(name, enabled, remove = false) {
     if (!recordValid(entries.find(entry=>entry.name===name),archive,sources,entries)) throw new Error('来源已变化，请先重新生成大总结');
     const range=parseRange(name);
     if(entries.some(entry=>entry.name!==name&&parseMegaSummaryEntryName(entry.name)&&!isEntryDisabled(entry)&&parseRange(entry.name).end>=range.start&&parseRange(entry.name).start<=range.end))throw new Error('范围与另一条启用的大总结重叠');
-  } else excludeRange(name,{mega:true});
+  } else {
+    const parents = summaryNames.map(parent => ({ name: parent, fingerprint: fingerprint(entries.find(entry => entry.name === parent)?.content ?? '') }));
+    excludeRange(name, { mega: true, parents });
+  }
   await updateWorldbookWith(getActiveWorldbookName(),wb=>{
     const list=normalizeWorldbookEntries(wb);
     for(const entry of list) {
@@ -660,32 +634,56 @@ const reconcileChatBinding = async () => {
   return names;
 };
 
-async function syncOwnedBinding(name) {
-  const token = captureContext(), owned = new Set(readStore()[OWNED_BOOKS_VAR_KEY] ?? []);
+// Preset script frames share the native global list. Finish an old frame's
+// pending bind and cleanup before the replacement frame claims its book.
+const bindingQueue = Symbol.for('destined-journey-assistant.global-worldbook-write');
+function syncOwnedBinding(name, { unloading = false } = {}) {
+  const owner = typeof window === 'undefined' ? globalThis : window.parent;
+  const previous = owner[bindingQueue], token = unloading ? null : captureContext();
+  const apply = () => {
+    if (token) checkContext(token);
+    return writeOwnedBinding(name, token);
+  };
+  const pending = previous ? previous.then(apply, apply) : apply();
+  owner[bindingQueue] = pending;
+  return pending.finally(() => { if (owner[bindingQueue] === pending) delete owner[bindingQueue]; });
+}
+
+export function releaseOwnedBooks() {
+  return syncOwnedBinding(null, { unloading: true });
+}
+
+async function writeOwnedBinding(name, token) {
+  const owned = new Set(readGlobalStore()[OWNED_BOOKS_VAR_KEY] ?? []);
+  if (!name && !owned.size) return;
   const before = helperApi('getGlobalWorldbookNames')() ?? [];
   const next = before.filter(book => !owned.has(book) || book === name);
   if (name && !next.includes(name)) next.push(name);
-  if (JSON.stringify(next) !== JSON.stringify(before)) {
-    try { await helperApi('rebindGlobalWorldbooks')(next); }
-    finally {
-      const actual = helperApi('getGlobalWorldbookNames')() ?? [], stillOwned = [...owned].filter(book => actual.includes(book));
-      if (name && !before.includes(name) && actual.includes(name)) stillOwned.push(name);
-      patchSummaryStore({ [OWNED_BOOKS_VAR_KEY]: [...new Set(stillOwned)] });
-    }
-    checkContext(token);
+  try {
+    if (JSON.stringify(next) !== JSON.stringify(before)) await helperApi('rebindGlobalWorldbooks')(next);
+  } finally {
+    const actual = helperApi('getGlobalWorldbookNames')() ?? [];
+    const stillOwned = [...owned].filter(book => actual.includes(book));
+    if (name && !before.includes(name) && actual.includes(name) && !owned.has(name)) stillOwned.push(name);
+    if (JSON.stringify(stillOwned) !== JSON.stringify([...owned])) patchGlobalStore({ [OWNED_BOOKS_VAR_KEY]: stillOwned });
   }
+  if (token) checkContext(token);
+  const actual = helperApi('getGlobalWorldbookNames')();
+  if ((name && !actual.includes(name)) || [...owned].some(book => book !== name && actual.includes(book))) throw new Error('总结世界书全局绑定校验失败');
   _cachedChatWbName = name;
 }
 export async function deleteBoundSummaryBook() {
   assertRecordWritable();
   const name = getActiveWorldbookName(); if (!name) return;
   const entries = await getWorldbookEntriesSafe(), remaining = entries.filter(entry => !parseRange(entry?.name));
+  if (remaining.length) await replaceWorldbook(name, remaining);
+  else if (await deleteWorldbook(name) === false) throw new Error('总结世界书删除失败，绑定与记录已保留');
   await applySummarizedFloorsVisibility({ autoHide: false });
-  if (remaining.length) await replaceWorldbook(name, remaining); else await deleteWorldbook(name);
-  await syncOwnedBinding(null); clearChatWorldbookBinding();
+  await syncOwnedBinding(null);
+  await saveMegaSummaryMap({}, name);
+  clearChatWorldbookBinding();
   patchSummaryStore({ [BOOKS_VAR_KEY]: (readStore()[BOOKS_VAR_KEY] ?? []).filter(book => book !== name) });
   writeArchive({ records: {}, excluded: [] }, name);
-  writeVariableKeys({ [CONFIG.MEGA_SUMMARY_VAR_KEY]: {} }, { type: 'chat' });
   writeVariableKeys({ [BINDING_PAUSED_VAR_KEY]: true }, { type: 'chat' });
   return { keptOtherEntries: remaining.length };
 }
@@ -705,6 +703,7 @@ export async function auditArchiveSources({ taskId } = {}) {
       archive.records[entry.name] = { sources: sources.filter(source => ids.has(source.id)), legacy: true, committed: true }; changed = true;
     }
     const record = archive.records[entry.name];
+    if (record.committed === false && !isEntryDisabled(entry)) invalid.push(entry.name);
     if (!recordValid(entry, archive, sources, entries) && record.committed !== false) {
       const reason = parseMegaSummaryEntryName(entry.name) && !record.sources?.length
         ? '缺少可恢复的来源记录，请检查原始普通总结是否完整'
@@ -734,6 +733,12 @@ export async function commitArchiveEntry(name, content, { taskId, sources, paren
   await ensureWorldbookExists({ taskId });
   const book = getActiveWorldbookName(), archive = readArchive(book), entries = await getWorldbookEntriesSafe();
   const existing = entries.find(entry => entry.name === name);
+  if (!mega && existing && preserveDisabled) {
+    const map = await getMegaSummaryMap();
+    if (entries.some(entry => !isEntryDisabled(entry) && isMegaSummaryEntry(entry.name) && map[entry.name]?.includes(name))) {
+      throw new Error('该条目已被大总结包含，请先回档对应的大总结再修改');
+    }
+  }
   if (sources && !sourcesMatch(sources)) throw new Error('来源已变化，请重新生成本次总结');
   if (mega && !summaryNames.every(parent => entries.some(entry => entry.name === parent && entry.content))) throw new Error('大总结来源记录不完整');
   const keepDisabled = !!(preserveDisabled && existing && isEntryDisabled(existing));
@@ -754,7 +759,14 @@ export async function commitArchiveEntry(name, content, { taskId, sources, paren
   const actual = await getWorldbookEntriesSafe();
   if (!actual.some(entry => entry.name === name && entry.content === content.trim() && isEntryDisabled(entry) === keepDisabled)) throw new Error('总结保存后校验失败');
   if (sources && !sourcesMatch(sources)) throw new Error('保存期间来源发生变化，请重新生成');
-  metadata.committed = true; archive.excluded = archive.excluded.filter(item => item.end < range.start || item.start > range.end);
+  metadata.committed = true;
+  archive.excluded = archive.excluded.flatMap(item => {
+    if (item.end < range.start || item.start > range.end) return [item];
+    const remainder = [];
+    if (item.start < range.start) remainder.push({ start: item.start, end: range.start - 1 });
+    if (item.end > range.end) remainder.push({ start: range.end + 1, end: item.end });
+    return remainder;
+  });
   writeArchive(archive, book); return name;
 }
 

@@ -20,6 +20,6 @@ module.exports=async(cdp,evaluate)=>{
   assert(!card.overflow&&!card.cardOverflow&&card.actions,JSON.stringify(card));
   const cardShot=await cdp('Page.captureScreenshot',{format:'png'});fs.writeFileSync(`.ui-review/description-card-${width}.png`,Buffer.from(cardShot.data,'base64'));
  }
- }finally{await evaluate(`(async()=>{ui.closePromptEditor(true);data=descriptionLayoutBefore.data;stored=descriptionLayoutBefore.stored;vars=descriptionLayoutBefore.vars;delete window.descriptionLayoutBefore;ui.state.config=ui.loadScriptConfig();ui.rebuildModelRegistry();ui.reconcilePreset('description layout restored');ui.render();await ui.settle();})()`);}
+ }finally{await evaluate(`(async()=>{ui.closePromptEditor(true);data=descriptionLayoutBefore.data;stored=descriptionLayoutBefore.stored;vars=descriptionLayoutBefore.vars;delete window.descriptionLayoutBefore;ui.reloadScriptConfig();ui.reconcilePreset('description layout restored');ui.render();await ui.settle();})()`);}
  return results;
 };

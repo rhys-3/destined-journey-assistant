@@ -5,6 +5,23 @@ import { migrateCustomSettingPrompts } from './setting-items.js';
 import { GEMINI_TAIL_MODES, OPTIONAL_MODEL_PROMPT_IDS, geminiTailMode } from './definitions.js';
 import { normalizeNoiseSettings } from './noise-text.js';
 import { migrateNoisePlacement } from './noise-placement.js';
+import { FLAVOR } from '../flavor.js';
+
+export const RECOVERY_ID = '__recovery__';
+
+export function setLibraryField(config, field, value) {
+  const source = config.configuration_library;
+  // A valid replacement can use the slot while its unreadable predecessor remains available for cleanup.
+  if (config.configuration_library_view.invalidFields.includes(field)) {
+    const archived = source.unreadableMetadata;
+    source.unreadableMetadata = Array.isArray(archived) ? archived : [];
+    if (archived != null && !Array.isArray(archived)) {
+      source.unreadableMetadata.push({ field: 'unreadableMetadata', value: archived });
+    }
+    source.unreadableMetadata.push({ field, value: source[field] });
+  }
+  source[field] = value;
+}
 
 // Dependencies use live accessors so asynchronous operations share the current state.
 export function createConfigurationSchema(ctx) {
@@ -102,7 +119,12 @@ export function createConfigurationSchema(ctx) {
     }
     if (plainObject(prompt.extra)) {
       const ui = prompt.extra.destined_ui;
-      if(ui?.version===3)assertData(typeof ui.block==='string'&&ui.block.length<=100&&Number.isFinite(ui.order)&&typeof ui.group==='string'&&typeof ui.label==='string'&&typeof ui.description==='string','条目显示位置格式无效：'+prompt.name);
+      if (ui?.version === 3) {
+        const optionalText = { group: 100, label: 100, description: 2000 };
+        assertData(typeof ui.block === 'string' && ui.block.length <= 100 && Number.isFinite(ui.order)
+          && Object.entries(optionalText).every(([key, limit]) => !Object.hasOwn(ui, key) || (typeof ui[key] === 'string' && ui[key].length <= limit)),
+        '条目显示位置格式无效：' + prompt.name);
+      }
       if (ui?.version === 2) {
         assertData(typeof ui.block === 'string' && ui.block.length <= 100 && typeof ui.label === 'string' && ui.label.length <= 100 && typeof ui.description === 'string' && ui.description.length <= 2000 && Number.isFinite(ui.order) && typeof ui.protected === 'boolean' && typeof ui.defaultEnabled === 'boolean', '条目展示设置格式无效：' + prompt.name);
       }
@@ -113,7 +135,7 @@ export function createConfigurationSchema(ctx) {
           .map(key => [key,ui[key]])
       );
       if (Object.hasOwn(prompt.extra, 'destined_mode')) {
-        // v1-v3 exports may retain this field. It has no runtime meaning in v4.
+        // Older snapshots may retain this field. It has no runtime meaning.
         assertData(typeof prompt.extra.destined_mode === 'string' && prompt.extra.destined_mode.length <= 32, '旧版讨论标记无效：' + prompt.name);
         result.extra.destined_mode = prompt.extra.destined_mode;
       }
@@ -187,7 +209,7 @@ export function createConfigurationSchema(ctx) {
       }
     }
     const mode = ctx.variablePresetMode(result);
-    assertData(mode === 'main' || mode === 'extra', '配置中的变量模式必须二选一');
+    assertData(ctx.VARIABLE_MODES.every(item => result.prompts.some(prompt => prompt.id === item.id)) && ctx.VARIABLE_MODES.some(item => item.key === mode), '配置须包含当前预设的所有变量模式，且只能启用一种');
     return migrateNoisePlacement(migrateCustomSettingPrompts(result), modelRegistry(result.config));
   }
 
@@ -195,35 +217,84 @@ export function createConfigurationSchema(ctx) {
 
   function captureConfiguration(preset = getPreset('in_use'), config = ctx.state.config, scopes = ctx.configurationScopes) {
     assertData(scopes.preset || scopes.summary, '请至少选择预设配置或总结配置');
-    return { version: 2, ...(scopes.preset ? { preset: capturePresetConfiguration(preset, config) } : {}), ...(scopes.summary ? { summary: summary.capture() } : {}) };
+    return { version: 2, flavor: FLAVOR.id, ...(scopes.preset ? { preset: capturePresetConfiguration(preset, config) } : {}), ...(scopes.summary ? { summary: summary.capture() } : {}) };
   }
 
   function validateSnapshot(value) {
-    if (value?.version === 1) return { version: 2, preset: validatePresetSnapshot(value) };
+    if (plainObject(value) && Object.hasOwn(value, 'flavor')) {
+      assertData(value.flavor === FLAVOR.id, '该配置属于其他预设版本，无法在当前助手应用');
+    }
+    if (value?.version === 1) return { version: 2, flavor: FLAVOR.id, preset: validatePresetSnapshot(value) };
     assertData(plainObject(value) && value.version === 2 && (value.preset || value.summary), '配置范围为空或版本无效');
-    return { version: 2, ...(value.preset ? { preset: validatePresetSnapshot(value.preset) } : {}), ...(value.summary ? { summary: summary.validate(value.summary) } : {}) };
+    return { version: 2, flavor: FLAVOR.id, ...(value.preset ? { preset: validatePresetSnapshot(value.preset) } : {}), ...(value.summary ? { summary: summary.validate(value.summary) } : {}) };
   }
 
-  function validateLibrary(value) {
+  function validateLibrary(value, report = () => {}) {
     assertData(plainObject(value) && value.version === 1 && Array.isArray(value.items), '不支持的配置库版本或格式');
     const ids = new Set();
-    const names = [];
-    const items = value.items.map(item => {
-      assertData(plainObject(item) && typeof item.id === 'string' && item.id && !ids.has(item.id), '配置 ID 无效或重复');
-      ids.add(item.id);
-      const name = validName(item.name, names);
-      names.push({ id: item.id, name });
-      return { id: item.id, name, createdAt: String(item.createdAt ?? ''), updatedAt: String(item.updatedAt ?? ''), snapshot: validateSnapshot(item.snapshot) };
-    });
-    assertData(value.activeId == null || ids.has(value.activeId), '当前配置引用不存在');
-    const recovery = value.recovery == null ? null : { createdAt: String(value.recovery.createdAt ?? ''), snapshot: validateSnapshot(value.recovery.snapshot) };
+    const names = new Set();
+    const items = [];
+    const itemIndices = [];
+    const invalidFields = [];
+    const storedDuplicates = value.duplicateItemIndices;
+    const duplicateIndices = new Set();
+    if (Array.isArray(storedDuplicates) && storedDuplicates.every(index => Number.isInteger(index) && index >= 0 && index < value.items.length)) {
+      for (const index of storedDuplicates) duplicateIndices.add(index);
+    } else if (storedDuplicates != null) {
+      invalidFields.push('duplicateItemIndices');
+      report('重复配置记录索引无效');
+    }
+    for (const [index, item] of value.items.entries()) {
+      try {
+        assertData(!duplicateIndices.has(index), '与先前载入的配置 ID 或名称重复');
+        assertData(plainObject(item) && typeof item.id === 'string' && item.id.trim() && item.id !== RECOVERY_ID, '配置 ID 无效或保留');
+        assertData(typeof item.name === 'string', '配置名称无效');
+        const name = validName(item.name);
+        const snapshot = validateSnapshot(item.snapshot);
+        const foldedName = name.toLocaleLowerCase();
+        if (ids.has(item.id) || names.has(foldedName)) {
+          duplicateIndices.add(index);
+          throw new Error(ids.has(item.id) ? '配置 ID 重复' : '配置名称重复');
+        }
+        items.push({ id: item.id, name, createdAt: String(item.createdAt ?? ''), updatedAt: String(item.updatedAt ?? ''), snapshot });
+        itemIndices.push(index);
+        ids.add(item.id);
+        names.add(foldedName);
+      } catch (error) { report(`第 ${index + 1} 份命名配置：${error.message}`); }
+    }
+    let recovery = null;
+    if (value.recovery != null) {
+      try {
+        assertData(plainObject(value.recovery), '恢复点格式无效');
+        recovery = { createdAt: String(value.recovery.createdAt ?? ''), snapshot: validateSnapshot(value.recovery.snapshot) };
+      } catch (error) {
+        invalidFields.push('recovery');
+        report(`恢复点：${error.message}`);
+      }
+    }
+    const activeId = ids.has(value.activeId) ? value.activeId : null;
+    if (value.activeId != null && !activeId) {
+      invalidFields.push('activeId');
+      report('当前配置引用不存在');
+    }
     const pending = value.pendingWorld;
-    assertData(pending == null || (plainObject(pending) && typeof pending.key === 'string' && ['main', 'extra'].includes(pending.mode)), '世界书待同步状态无效');
-    return { version: 1, items, activeId: value.activeId ?? null, recovery, pendingWorld: pending ? { key: pending.key, mode: pending.mode } : null };
+    let pendingWorld = null;
+    if (pending != null) {
+      if (FLAVOR.id === 'prime' && plainObject(pending) && typeof pending.key === 'string' && ctx.VARIABLE_MODES.some(item => item.key === pending.mode)) pendingWorld = { key: pending.key, mode: pending.mode };
+      else {
+        invalidFields.push('pendingWorld');
+        report('世界书待同步状态无效');
+      }
+    }
+    if (Object.hasOwn(value, 'unreadableMetadata')) {
+      invalidFields.push('unreadableMetadata');
+      report('此前被替换的无效配置数据已保留');
+    }
+    return { version: 1, items, activeId, recovery, pendingWorld, itemIndices, duplicateIndices: [...duplicateIndices], invalidFields };
   }
 
   function configLibrary() {
-    return ctx.state.config.configuration_error ? emptyLibrary() : ctx.state.config.configuration_library;
+    return ctx.state.config.configuration_library_error ? emptyLibrary() : ctx.state.config.configuration_library_view;
   }
 
   function workspaceContextKey() {

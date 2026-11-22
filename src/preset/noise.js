@@ -60,13 +60,11 @@ export function createNoise(ctx) {
     const before = settings();
     const seed = prepared?.key === key(before) && next.seed === before.seed && next.mode === before.mode
       ? prepared.seed : next.seed;
-    // Update the visible draft now. The shared queue debounces, verifies and
-    // rolls back failed writes without holding up local generation or dragging.
-    ctx.state.config.noise_padding = next;
     prepared = { ...buildNoiseText({ ...next, seed }), key: key(next), seed };
     error = '';
+    const task = ctx.enqueueScriptConfigSave('噪声填充', 'noise-padding', guard, config => { config.noise_padding = next; });
     render();
-    return ctx.enqueueScriptConfigSave('噪声填充', 'noise-padding', guard).catch(failure => {
+    return task.catch(failure => {
       if (guard()) { error = failure.message ?? String(failure); render(); }
       throw failure;
     });

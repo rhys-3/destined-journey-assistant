@@ -101,7 +101,7 @@ export function clearTaskLog() {
   persist(next);current=next;publish();
 }
 export function detachTaskState() {
-  if (current?.running) {
+  if (current?.running && current.key === contextKey()) {
     current.running = false; current.phase = 'stopped'; current.message = '聊天或预设已切换，任务已中断'; current.endedAt = Date.now();
     try { persist(current); } catch { /* Previously persisted running state is recovered as interrupted on reload. */ }
   }

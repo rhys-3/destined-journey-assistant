@@ -1,14 +1,13 @@
 import { getSettings, getMegaSummaryMapping } from './storage.js';
 import { getCoverage, auditArchiveSources, applySummarizedFloorsVisibility, upsertSummaryEntryByName, upsertMegaSummaryEntry, isEntryDisabled } from './worldbook.js';
 import { validateResultBody } from './result.js';
-import { getRawMessages, processMessagesByTags } from './messages.js';
+import { getRawMessages, processMessagesByTags, isSummaryDiscussion as isDiscussionMessage } from './messages.js';
 import { makeSummaryEntryName, makeMegaSummaryEntryName } from './utils.js';
-import { parseRange, excludeRange, consecutiveSummaries, recordValid } from './provenance.js';
+import { parseRange, excludeRange, consecutiveSummaries, recordValid, sameMegaParents, fingerprint } from './provenance.js';
 import { getTask, clearTask, updatePendingTask, taskBatchFields } from './taskState.js';
 import { getHost, captureContext, checkContext } from '../platform/lifecycle.js';
 import { runSummaryTask } from './taskRunner.js';
 import { splitFloorBatches, batchTaskSpec, bridgeDiscussionGaps } from './batchPlan.js';
-import { isDiscussionMessage } from '../discussion/protocol.js';
 
 export const showSummaryHint = (message, kind = 'info') => getHost()?.status(message, kind);
 export const hideSummaryHint = () => {};
@@ -25,7 +24,10 @@ export const finalizeMegaSummarySave = (name, content, names) => upsertMegaSumma
 export async function computeSummaryPreview(settings = getSettings()) {
   const token=captureContext(),lastId=getLastMessageId();
   const { floors, archive, entries } = await getCoverage();
-  const ignored = [...archive.excluded, ...entries.filter(entry => isEntryDisabled(entry) && !archive.records[entry.name]?.invalid).map(entry => parseRange(entry.name)).filter(Boolean)];
+  const ignored = [...archive.excluded, ...entries.filter(entry => {
+    const record = archive.records[entry.name];
+    return isEntryDisabled(entry) && !record?.invalid && record?.committed !== false;
+  }).map(entry => parseRange(entry.name)).filter(Boolean)];
   const isIgnored = id => ignored.some(range => id >= range.start && id <= range.end);
   const raw = await getRawMessages(0, lastId);
   const story = raw.filter(message => !isDiscussionMessage(message));
@@ -53,11 +55,13 @@ export async function computeMegaPlan() {
   const normals = entries.filter(entry => entry.name.startsWith('总结') && parseRange(entry.name) && !isEntryDisabled(entry) && recordValid(entry, archive, sources, entries)).sort((a, b) => parseRange(a.name).start - parseRange(b.name).start);
   if (normals.length < settings.megaTriggerCount) return null;
   for (let i = 0; i <= normals.length - settings.megaBatchCount; i++) {
-    const names = normals.slice(i, i + settings.megaBatchCount).map(entry => entry.name);
+    const candidates = normals.slice(i, i + settings.megaBatchCount);
+    const names = candidates.map(entry => entry.name);
     try {
       const discussionIds = new Set((await getRawMessages(0, getLastMessageId())).filter(isDiscussionMessage).map(message => message.id));
       const ranges = consecutiveSummaries(names, { discussionIds }), entryName = makeMegaSummaryEntryName(ranges[0].start, ranges.at(-1).end);
-      if (!archive.megaExcluded.some(name=>{const range=parseRange(name);return range&&range.end>=ranges[0].start&&range.start<=ranges.at(-1).end;})) return { summaryNames: names, entryName };
+      const parents = candidates.map(entry => ({ name: entry.name, fingerprint: fingerprint(entry.content) }));
+      if (!archive.megaExcluded.some(item => sameMegaParents(item, entryName, parents, archive))) return { summaryNames: names, entryName };
     } catch { /* Skip a gap, never claim its intervening floors. */ }
   }
   return null;
@@ -88,7 +92,7 @@ export async function retryTask(mode, body) {
 export function skipPendingTask() {
   const task = getTask(); if (!task || task.running) return;
   const index=task.selectedBatch??0,batch=task.batches?.[index],spec=batch?.spec??task.spec;
-  excludeRange(spec.entryName,{mega:spec.kind==='mega'});
+  excludeRange(spec.entryName,{mega:spec.kind==='mega', parents:batch?.parents ?? task.parents});
   if(task.batches?.length>1){
     const batches=task.batches;batches[index].phase='skipped';
     const next=batches.findIndex(item=>!['complete','skipped','paused'].includes(item.phase));

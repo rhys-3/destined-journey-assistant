@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, BLOCK_TYPES } from './config.js';
+import { CHOICE_GROUP_LABELS } from './archiveDefaults.js';
 
 const booleans = ['enabled','streamGeneration','includeOldSummary','autoTriggerConfirm','autoHideSummarizedFloors','excludeHtmlComments','autoMegaSummary','parallelBatches'];
 const strings = ['customApiUrl','customApiModel','customApiSource','userPrefix','assistantPrefix'];
@@ -7,7 +8,8 @@ export function summarySnapshot(input) {
   demand(input && typeof input === 'object' && !Array.isArray(input), '总结配置格式无效');
   const value = { ...structuredClone(DEFAULT_SETTINGS), ...input };
   const out = {};
-  demand(value.behaviorVersion===1,'不支持的总结行为设置版本');out.behaviorVersion=1;
+  demand([1, DEFAULT_SETTINGS.behaviorVersion].includes(value.behaviorVersion), '不支持的总结行为设置版本');
+  out.behaviorVersion = DEFAULT_SETTINGS.behaviorVersion;
   demand(['with-summary','without-summary','custom'].includes(value.batchPreset),'批次方案无效');out.batchPreset=value.batchPreset;
   demand(Number.isInteger(value.batchConcurrency)&&value.batchConcurrency>=1&&value.batchConcurrency<=8,'并发数须为 1—8 的整数');out.batchConcurrency=value.batchConcurrency;
   for (const key of booleans) { demand(typeof value[key] === 'boolean', `总结参数 ${key} 必须是开关`); out[key]=value[key]; }
@@ -41,13 +43,18 @@ export function summarySnapshot(input) {
       demand(block && typeof block.id==='string' && block.id && !ids.has(block.id), '总结板块 ID 缺失或重复'); ids.add(block.id);
       demand(Object.values(BLOCK_TYPES).includes(block.type) && typeof block.name==='string' && typeof block.enabled==='boolean', '总结板块格式无效');
       const item={id:block.id,type:block.type,name:block.name,enabled:block.enabled};
-      if(block.choiceGroup!==undefined){demand(['format','check','tail'].includes(block.choiceGroup),'总结条目分组无效');item.choiceGroup=block.choiceGroup;}
+      if(block.choiceGroup!==undefined){demand(typeof block.choiceGroup==='string'&&Object.hasOwn(CHOICE_GROUP_LABELS,block.choiceGroup),'总结条目分组无效');item.choiceGroup=block.choiceGroup;}
       demand(['system','user','assistant'].includes(block.role ?? 'system'),'总结板块角色无效'); item.role=block.role ?? 'system';
       for(const field of ['content','leadText','xmlTag']) if(Object.hasOwn(block,field)) { demand(typeof block[field]==='string','总结板块内容须为文本'); item[field]=block[field]; }
       if(item.xmlTag) demand(/^[\w:-]+$/.test(item.xmlTag),'总结内容标签格式无效');
       return item;
     });
-    for(const group of ['format','check','tail'])demand(out[key].filter(block=>block.enabled&&block.choiceGroup===group).length<=1,`同一总结预设中只能启用一个${group==='format'?'输出格式':group==='tail'?'尾部条目':'检查条目'}`);
+    for (const group of Object.keys(CHOICE_GROUP_LABELS)) {
+      const entries = out[key].filter(block => block.choiceGroup === group);
+      const enabled = entries.filter(block => block.enabled).length;
+      demand(enabled <= 1, `同一总结预设的${CHOICE_GROUP_LABELS[group].split(' · ')[1]}分组只能启用一个条目`);
+      if (group === 'adapter' && entries.length) demand(enabled === 1, '带头部适配条目的总结预设须启用一个头部');
+    }
   }
   return out;
 }

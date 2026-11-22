@@ -36,6 +36,22 @@ const BUILTIN_PROMPTS = [
   "dialogue_examples",
 ];
 
+const DEFAULT_EXCLUDE_TAGS = Object.freeze([
+  "thinking",
+  "think",
+  "recorder_thinking",
+  "archive_plan",
+  "UpdateVariable",
+  "StatusPlaceHolderImpl",
+  "summary",
+  "options",
+  "action_options",
+  "discussion_record",
+  "destined_discussion",
+  "appendix",
+  "Disclaimer",
+]);
+
 const generateBlockId = () =>
   `custom_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -43,7 +59,7 @@ const DEFAULT_PROMPT_BLOCKS = PRESET_PROMPTS.promptBlocks;
 const DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS = PRESET_PROMPTS.megaPromptBlocks;
 
 const DEFAULT_SETTINGS = {
-  behaviorVersion: 1,
+  behaviorVersion: 2,
   enabled: false,
   apiMode: "tavern",
   streamGeneration: true,
@@ -54,7 +70,7 @@ const DEFAULT_SETTINGS = {
   temperature: 'same_as_preset',
   maxTokens: 'same_as_preset',
   includeTags: ["tp", "gametxt"],
-  excludeTags: [],
+  excludeTags: [...DEFAULT_EXCLUDE_TAGS],
   excludeHtmlComments: true,
   triggerFloorCount: 30,
   keepFloorCount: 10,
@@ -77,4 +93,4 @@ const DEFAULT_SETTINGS = {
 };
 
 
-export { CONFIG, BLOCK_TYPES, BUILTIN_PROMPTS, generateBlockId, DEFAULT_PROMPT_BLOCKS, DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS, DEFAULT_SETTINGS };
+export { CONFIG, BLOCK_TYPES, BUILTIN_PROMPTS, DEFAULT_EXCLUDE_TAGS, generateBlockId, DEFAULT_PROMPT_BLOCKS, DEFAULT_MEGA_SUMMARY_PROMPT_BLOCKS, DEFAULT_SETTINGS };

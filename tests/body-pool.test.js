@@ -96,8 +96,9 @@ test('managed short macros expand to freshly drawn pools from the saved weights'
 
 test('configuration snapshots carry the body pool and old snapshots fall back to defaults', () => {
   const sanitizeManagedValues = createStore({ DEFAULT_MANAGED_VALUES: definitions.DEFAULT_MANAGED_VALUES }).sanitizeManagedValues;
-  const schema = createConfigurationSchema({ state: { config: {} }, BUILTIN_MODEL_ADAPTERS: {}, PROTECTED_IDS: [], IDS: {}, sanitizeManagedValues, sanitizeEntryPoints: () => ({}), sanitizeBinding: () => null, validateAuthorLayout: value => structuredClone(value), getGeminiTail: () => null, variablePresetMode: () => 'main' });
-  const preset = { settings: {}, prompts: [], prompts_unused: [], extensions: {} };
+  const schema = createConfigurationSchema({ state: { config: {} }, BUILTIN_MODEL_ADAPTERS: {}, PROTECTED_IDS: [], IDS: {}, VARIABLE_MODES: definitions.VARIABLE_MODES, sanitizeManagedValues, sanitizeEntryPoints: () => ({}), sanitizeBinding: () => null, validateAuthorLayout: value => structuredClone(value), getGeminiTail: () => null, variablePresetMode: () => 'main' });
+  const prompts = definitions.VARIABLE_MODES.map(({ id, key }) => ({ id, name: key, enabled: key === 'main', role: 'system' }));
+  const preset = { settings: {}, prompts, prompts_unused: [], extensions: {} };
   const custom = setBodyPoolWeight(undefined, 'male_build', '魁梧', 9);
   const snapshot = schema.capturePresetConfiguration(preset, { managed_values: { body_pool: custom } });
   assert.equal(snapshot.config.managed_values.body_pool.male_build.魁梧, 9);
@@ -113,7 +114,7 @@ function controlsSetup(content = '<|女性体型池|><|男性体型池|>') {
     state: { preset: { prompts: [{ id: definitions.IDS.bodyPool, content }] }, config: { managed_values: { body_pool: defaultBodyPool() } }, disclosures: new Set(), workspaceBusy: false },
     getPrompt: (value, id) => value?.prompts?.find(prompt => prompt.id === id),
     escapeHtml: value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'),
-    enqueueScriptConfigSave: (label, key) => { saves.push([label, key]); return Promise.resolve(); },
+    enqueueScriptConfigSave: async (label, key, _guard, mutate) => { saves.push([label, key]); mutate(ctx.state.config); },
     renderActiveContent: () => renders.push(true),
   };
   return { ctx, saves, renders, controls: createBodyPoolControls(ctx) };

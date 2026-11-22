@@ -2,6 +2,7 @@ import { escapeHtml } from '../utils.js';
 import { renderTagEditor } from './tagEditor.js';
 import { getActiveWorldbookName, isChatWorldbookBound } from '../worldbook.js';
 import { renderVisibilityPanel } from './visibilityView.js';
+import { CHOICE_GROUP_LABELS } from '../archiveDefaults.js';
 /**
  * ui/panel.js
  * 设置面板 UI、HTML 构建、事件绑定
@@ -20,7 +21,9 @@ export function editablePromptBlock(block) {
 }
 const renderBlock = raw => {
   const block=editablePromptBlock(raw),id=escapeHtml(block.id);
-  return '<div class="sa-block sa-prompt-entry '+(block.enabled?'':'sa-block-disabled')+'" data-block-id="'+id+'" data-block="'+escapeHtml(JSON.stringify(block))+'" draggable="true"><div class="sa-block-header"><span class="sa-block-drag" title="拖动排序；也可用 Alt 加方向键" role="button" tabindex="0" aria-label="拖动 '+escapeHtml(block.name)+'">⠿</span><button type="button" class="sa-block-name" data-block-edit="'+id+'">'+escapeHtml(block.name)+'</button><span class="sa-role-badge">'+escapeHtml(block.role||'system')+'</span><label class="sa-block-enable" title="启用 '+escapeHtml(block.name)+'"><input type="checkbox" role="switch" aria-label="启用 '+escapeHtml(block.name)+'" data-block-enable="'+id+'" '+(block.enabled?'checked':'')+'></label></div></div>';
+  const group = CHOICE_GROUP_LABELS[block.choiceGroup];
+  const badge = group ? '<span class="sa-choice-badge">'+escapeHtml(group)+'</span>' : '';
+  return '<div class="sa-block sa-prompt-entry '+(block.enabled?'':'sa-block-disabled')+'" data-block-id="'+id+'" data-block="'+escapeHtml(JSON.stringify(block))+'" draggable="true"><div class="sa-block-header"><span class="sa-block-drag" title="拖动排序；也可用 Alt 加方向键" role="button" tabindex="0" aria-label="拖动 '+escapeHtml(block.name)+'">⠿</span><button type="button" class="sa-block-name" data-block-edit="'+id+'">'+escapeHtml(block.name)+badge+'</button><span class="sa-role-badge">'+escapeHtml(block.role||'system')+'</span><label class="sa-block-enable" title="启用 '+escapeHtml(block.name)+'"><input type="checkbox" role="switch" aria-label="启用 '+escapeHtml(block.name)+'" data-block-enable="'+id+'" '+(block.enabled?'checked':'')+'></label></div></div>';
 };
 
 const renderBlocks = (blocks, containerId = "sa-blocks-container") => {
@@ -146,9 +149,9 @@ const buildPanelHtml = (settings) => `
           </div>
            <div class="sa-settings-pane" data-sub-pane="tags">
             ${renderTagEditor('includeTags','提取标签',settings.includeTags)}
-            <div class="sa-hint">AI 回复只读取这些标签内的正文；用户输入保留全文。未添加任何标签时读取完整 AI 回复。</div>
+            <div class="sa-hint">按出现顺序优先读取这些标签内的 AI 正文。没有匹配时，改从整楼读取。用户输入保留全文。</div>
             ${renderTagEditor('excludeTags','排除标签',settings.excludeTags)}
-            <div class="sa-hint">从已经提取的 AI 正文中移除这些标签及其内容，默认留空。</div>
+            <div class="sa-hint">从正文中移除这些标签及其内容。默认排除思考、变量更新和独立摘要，保留折叠标题。</div>
             <div class="sa-row" style="margin-top:12px">
               <label><input type="checkbox" id="sa-exclude-html-comments" ${settings.excludeHtmlComments !== false ? "checked" : ""}> 隐藏HTML注释 (&lt;!-- ... --&gt;)</label>
             </div>

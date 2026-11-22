@@ -2,20 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import variableMocks from './helpers/tavern-variables.cjs';
-import { DEFAULT_SETTINGS, CONFIG } from '../src/summary/config.js';
+import { DEFAULT_SETTINGS, DEFAULT_EXCLUDE_TAGS, CONFIG } from '../src/summary/config.js';
 import { summarySnapshot } from '../src/summary/settingsSchema.js';
 import { writePresetStore, patchSummaryStore } from '../src/platform/store.js';
 import { configureRuntime, captureContext, checkContext, contextKey, invalidate, runAction, isBusy, setRuntimeEnabled } from '../src/platform/lifecycle.js';
 import { loadSettings, saveSettings, getSettings, updateSettings, getKeyForUrl, migrateOldSettings } from '../src/summary/storage.js';
-import { PREVIOUS_ARCHIVE_PROMPTS, PREVIOUS_COMPACT_PROMPTS, THINKING_TEMPLATES, PREFILLS, optionBlocks, activeResultFormat } from '../src/summary/archiveDefaults.js';
+import { ADAPTER_PROMPTS, PREVIOUS_ARCHIVE_PROMPTS, PREVIOUS_COMPACT_PROMPTS, PREVIOUS_V4_PROMPTS, THINKING_TEMPLATES, PREFILLS, buildArchivePromptBlocks, optionBlocks, activeResultFormat } from '../src/summary/archiveDefaults.js';
+import { PRESET_PROMPTS } from '../src/summary/presetDefaults.js';
+import { readPromptFile } from '../src/summary/ui/promptTools.js';
 import { deleteBoundSummaryBook, getManagedSummaryBookNames } from '../src/summary/worldbook.js';
 import { computeSummaryPlan, computeSummaryPlans, computeSummaryPreview, shouldAutoTrigger, executeSummary, finalizeMegaSummarySave, regenerateAndReplaceEntry, startSummaryProcess, startCustomRangeSummaryProcess, skipPendingTask } from '../src/summary/summary.js';
 import { callSummaryApi, callMegaSummaryApi, testConnection } from '../src/summary/api.js';
-import { processMessagesByTags } from '../src/summary/messages.js';
+import { extractTagContent, processMessagesByTags } from '../src/summary/messages.js';
 import { upsertSummaryEntryByName, upsertMegaSummaryEntry, restoreMegaSummaryToSummaries, activateMegaSummaryEntry, applySummarizedFloorsVisibility, writeChatWorldbookBinding, migrateWorldbookEntries, getAllSummaryEntriesForDisplay } from '../src/summary/worldbook.js';
 import { migrate } from '../src/summary/service.js';
 import { reconcileChatBinding, getActiveWorldbookName } from '../src/summary/worldbook.js';
-import { extractSummaryResult } from '../src/summary/result.js';
+import { extractSummaryResult, IncompleteSummaryError } from '../src/summary/result.js';
 import { getTask, stopTask, detachTaskState, restoreTaskState, clearTaskLog, beginTask, updateTask, finishTask, selectTaskBatch } from '../src/summary/taskState.js';
 import { retryTask, autoTriggerSummary, computeMegaPlan, executeMegaSummary } from '../src/summary/summary.js';
 import { getCoverage, getAllSummaryContents, auditArchiveSources, bindWorldbookToChat, deleteSummaryEntry, setSummaryEntryEnabled } from '../src/summary/worldbook.js';
@@ -86,6 +88,7 @@ test('legacy migration preserves enabled state and custom prompts, once only',as
   globalThis.getScriptTrees=()=>[legacy];globalThis.updateScriptTreesWith=fn=>fn([legacy]);
   globalThis.getVariables=option=>structuredClone(option.script_id?legacy.data:option.type==='chat'?chat:script);
   await migrate();assert.equal(script.summary_assistant_settings.enabled,true);assert.equal(legacy.enabled,false);assert.equal(script.summary_assistant_secrets.keysByUrl[''],'old-secret');
+  assert(!JSON.stringify(legacy.data).includes('old-secret'));
   script.summary_assistant_settings.userPrefix='新用户';await migrate();assert.equal(script.summary_assistant_settings.userPrefix,'新用户');assert.equal(legacy.data.summary_assistant_settings.userPrefix,'旧用户');
 });
 test('legacy scripts with a regenerated id migrate by an unambiguous name and loader',async()=>{
@@ -142,20 +145,23 @@ test('the saved streaming preference applies to regular summaries, mega summarie
     assert.deepEqual(streamed.splice(0), [expected, expected, expected]);
   }
 });
-test('speaker prefixes remain customizable while the AI default avoids the card name',async()=>{
+test('speaker prefixes remain customizable and append the actual AI speaker once',async()=>{
   await saveSettings({...FLOW_SETTINGS,userPrefix:'玩家 {{user}}'});seedFloors(2);let request;
   globalThis.SillyTavern.name2='不应标注为发言者的角色卡名';
   globalThis.generateRaw=async config=>{request=config;return '<summary_result>正文</summary_result>';};
   const params=await buildSummaryPromptParams(0,1);await callSummaryApi(params);
-  const material=request.ordered_prompts.find(prompt=>prompt.content.includes('<source_material>')).content;
+  const material=request.ordered_prompts.find(prompt=>prompt.content.startsWith('<source_material>')).content;
   assert(material.includes('第 0 楼 · 用户输入（意图，未必实现） · 玩家 User'));
-  assert(material.includes('[第 1 楼 · AI 正文（实际剧情） · AI]'));
+  assert(material.includes('[第 1 楼 · AI 正文（实际剧情） · AI · 角色]'));
   assert(!material.includes(SillyTavern.name2));assert.equal(getSettings().assistantPrefix,'AI');
   assert(!material.includes('{{user}}')&&!material.includes('{{char}}'));
   await updateSettings({assistantPrefix:'自定义记录员 {{char}}'});
   await callSummaryApi(await buildSummaryPromptParams(0,1));
   assert(request.ordered_prompts.some(prompt=>prompt.content.includes('自定义记录员 '+SillyTavern.name2)));
   await loadSettings();assert.equal(getSettings().assistantPrefix,'自定义记录员 {{char}}');
+  const aligned = await buildSummaryPromptParams(0,1,{...getSettings(),assistantPrefix:'角色'});
+  assert.match(aligned.mergedChatText, /实际剧情） · 角色\]/);
+  assert.doesNotMatch(aligned.mergedChatText, /角色 · 角色/);
 });
 test('write depths and mega mapping preserve original summary records on restore',async()=>{
   seedFloors(20);
@@ -227,7 +233,7 @@ test('audit repairs a legacy mega without its map, preserves its closed state, a
   ];
   chat[ARCHIVE_VAR_KEY]={book:{records:{'大总结0-19楼':{legacy:true,sources:[],invalid:'来源楼层、回复版本或原总结已变化',committed:true}},excluded:[],megaExcluded:[]}};
   assert.deepEqual(await auditArchiveSources(),[]);
-  assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],{'大总结0-19楼':['总结0-9楼','总结10-19楼']});
+  assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY]?.byBook.book,{'大总结0-19楼':['总结0-9楼','总结10-19楼']});
   const recovered=readArchive().records['大总结0-19楼'];assert.equal(recovered.invalid,null);assert.equal(recovered.sources.length,20);
   assert.equal(books.book.find(entry=>entry.name==='大总结0-19楼').enabled,false);
   await activateMegaSummaryEntry('大总结0-19楼');
@@ -243,7 +249,7 @@ test('audit uses valid archived mega parents when the worldbook alone has multip
     '大总结0-19楼':{legacy:true,committed:true,sources:[],invalid:'旧审计误判',parents:['总结0-9楼','总结10-19楼'].map(name=>({name,fingerprint:fingerprint(books.book.find(entry=>entry.name===name).content)}))},
   },excluded:[],megaExcluded:[]}};
   assert.deepEqual(await auditArchiveSources(),[]);
-  assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],{'大总结0-19楼':['总结0-9楼','总结10-19楼']});assert.equal(readArchive().records['大总结0-19楼'].invalid,null);
+  assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY]?.byBook.book,{'大总结0-19楼':['总结0-9楼','总结10-19楼']});assert.equal(readArchive().records['大总结0-19楼'].invalid,null);
 });
 test('audit refuses incomplete or ambiguous legacy mega sources instead of inventing a map',async()=>{
   for(const ordinary of [
@@ -302,7 +308,7 @@ test('audit accepts sparse real sources but rejects sources outside a recorded p
     '总结10-19楼':{legacy:true,committed:true,sources:sources.filter(source=>source.id===10)},
     '大总结0-19楼':{legacy:true,committed:true,sources:[],invalid:'旧审计误判'},
   },excluded:[],megaExcluded:[]}};
-  assert.deepEqual(await auditArchiveSources(),[]);assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],{'大总结0-19楼':['总结0-9楼','总结10-19楼']});assert.deepEqual(readArchive().records['大总结0-19楼'].sources.map(source=>source.id),[0,10]);
+  assert.deepEqual(await auditArchiveSources(),[]);assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY]?.byBook.book,{'大总结0-19楼':['总结0-9楼','总结10-19楼']});assert.deepEqual(readArchive().records['大总结0-19楼'].sources.map(source=>source.id),[0,10]);
   reset();await saveSettings(FLOW_SETTINGS);seedFloors(20);const fresh=currentSources();
   for(const ordinary of [
     [{name:'总结0-9楼',content:'甲',enabled:false},{name:'总结10-19楼',content:'乙',enabled:false}],
@@ -321,7 +327,7 @@ test('a failed recovered-archive write leaves the saved map retryable',async()=>
   chat[ARCHIVE_VAR_KEY]={book:{records:{'大总结0-19楼':{legacy:true,committed:true,sources:[],invalid:'旧审计误判'}},excluded:[],megaExcluded:[]}};
   const replace=globalThis.replaceVariables,before=structuredClone(chat[ARCHIVE_VAR_KEY]);globalThis.replaceVariables=(value,option)=>{if(option.type==='chat'&&JSON.stringify(value[ARCHIVE_VAR_KEY])!==JSON.stringify(before))return;replace(value,option);};
   await assert.rejects(auditArchiveSources(),/持久化校验失败/);
-  assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY],{'大总结0-19楼':['总结0-9楼','总结10-19楼']});assert.equal(readArchive().records['大总结0-19楼'].sources.length,0);
+  assert.deepEqual(chat[CONFIG.MEGA_SUMMARY_VAR_KEY]?.byBook.book,{'大总结0-19楼':['总结0-9楼','总结10-19楼']});assert.equal(readArchive().records['大总结0-19楼'].sources.length,0);
   globalThis.replaceVariables=replace;assert.deepEqual(await auditArchiveSources(),[]);assert.equal(readArchive().records['大总结0-19楼'].sources.length,20);
 });
 test('every automatic normal batch stays inside the soft target and ends after an AI reply',async()=>{
@@ -571,14 +577,15 @@ test('legacy SPreset fixture documents the compatible memory, reference and runt
 
 test('native prompt entries send their enabled roles and combine world and character material', async () => {
   for (const key of ['promptBlocks','megaPromptBlocks']) {
-    assert.equal(DEFAULT_SETTINGS[key].length,12);
+    assert.equal(DEFAULT_SETTINGS[key].length,14);
     const values=Object.fromEntries(['world_before','persona','character','personality','scenario','world_after','history','material'].map(name=>['summary.'+name,'DATA_'+name]));
     const compiled=await compilePrompt({promptBlocks:DEFAULT_SETTINGS[key],macroValues:values},DEFAULT_SETTINGS);
-    assert.deepEqual(compiled.orderedPrompts.map(message=>message.role),['system','user','user','user','user','user','user']);
-    const world=compiled.orderedPrompts.find(message=>message.content.includes('<world_and_characters>'));
+    assert.deepEqual(compiled.orderedPrompts.map(message=>message.role),['system','user','user','user','user','user','user','user']);
+    const world=compiled.orderedPrompts.find(message=>message.content.startsWith('<world_and_characters>'));
     for(const name of ['world_before','persona','character','personality','scenario','world_after'])assert(world.content.includes('DATA_'+name));
     assert(compiled.orderedPrompts.every(message=>!message.content.includes('<|no-trans|>')));
-    assert(compiled.orderedPrompts[2].content.includes('【信息变动】'));
+    assert(compiled.orderedPrompts[5].content.includes('【信息变动】'));
+    assert(compiled.orderedPrompts[6].content.includes('<archive_plan_contract>'));
   }
 });
 const timelineBody = '---\n复兴纪元488年4月15日 | 瓦伦蒂亚城-城门:\n  清晨\n  两人抵达城门，守卫核验身份后放行。\n  【未决事项】两人答应在午后回报调查结果。';
@@ -596,24 +603,28 @@ test('format entries change sent rules and edited formats use custom validation'
   assert.throws(()=>extractSummaryResult('<summary_result>- 人物醒来</summary_result>',{format:'archive'}));
 });
 
-test('check and tail entries are independently selectable and parse the actual assistant prefill',async()=>{
-  for(const thinkingTemplate of ['native','brief','destined'])for(const prefillTemplate of ['off','result','destined']){
-    const settings=withOptions(DEFAULT_SETTINGS,{thinkingTemplate,prefillTemplate});
+test('planning and tail entries are independently selectable and parse the actual assistant prefill',async()=>{
+  for(const thinkingTemplate of ['off','brief','plan'])for(const prefillTemplate of ['off','result','plan','gemini']){
+    const settings={...DEFAULT_SETTINGS,promptBlocks:buildArchivePromptBlocks(false,{thinkingTemplate,prefillTemplate})};
     const compiled=await compilePrompt({promptBlocks:settings.promptBlocks,macroValues:{}},settings);
     assert.equal(compiled.orderedPrompts.filter(message=>message.role==='system').length,1);
     const thinking=THINKING_TEMPLATES[thinkingTemplate];if(thinking.head)assert(compiled.orderedPrompts.some(message=>message.content.includes(thinking.head)&&message.content.includes(thinking.tail)));
     assert.equal(compiled.prefill,PREFILLS[prefillTemplate]);
     assert.equal(settings.promptBlocks.filter(block=>block.choiceGroup==='tail'&&block.enabled).length,1);
-    if(compiled.prefill){assert.equal(compiled.orderedPrompts.at(-1).content,compiled.prefill);assert.equal(extractSummaryResult(timelineBody+'</summary_result>',{format:'legacy',prefill:compiled.prefill}),timelineBody);}
+    if(compiled.prefill){
+      assert.equal(compiled.orderedPrompts.at(-1).content,compiled.prefill);
+      const continuation = prefillTemplate === 'plan' ? 'PASS</archive_plan>\n<summary_result>\n' : '';
+      assert.equal(extractSummaryResult(continuation+timelineBody+'</summary_result>',{format:'legacy',prefill:compiled.prefill}),timelineBody);
+    }
   }
 });
 
 test('worldbook material includes only before and after context, excluding all depth entries',async()=>{
   books.book=[{name:'总结0-1楼',content:'OWN_MEMORY'}];
   globalThis.SillyTavern.getCharacterCardFields=()=>({description:'CHARACTER',personality:'PERSONALITY',persona:'PERSONA',scenario:'SCENARIO'});
-  let dryRun,scanData;globalThis.SillyTavern.getWorldInfoPrompt=async(text,budget,dry,globalScanData)=>{dryRun=dry;scanData=globalScanData;return {worldInfoBefore:'BEFORE OWN_MEMORY',worldInfoAfter:'AFTER',worldInfoDepth:[{entries:['EXTERNAL_DEPTH','OWN_MEMORY']}]};};
+  let dryRun,scanData;globalThis.SillyTavern.getWorldInfoPrompt=async(text,budget,dry,globalScanData)=>{dryRun=dry;scanData=globalScanData;return {worldInfoBefore:'BEFORE\nOWN_MEMORY',worldInfoAfter:'AFTER',worldInfoDepth:[{entries:['EXTERNAL_DEPTH','OWN_MEMORY']}]};};
   const compiled=await compilePrompt({promptBlocks:DEFAULT_SETTINGS.promptBlocks,mergedChatText:'MATERIAL'},DEFAULT_SETTINGS);
-  const world=compiled.orderedPrompts.find(message=>message.content.includes('<world_and_characters>'));
+  const world=compiled.orderedPrompts.find(message=>message.content.startsWith('<world_and_characters>'));
   assert.equal(world.role,'user');assert(!world.content.includes('EXTERNAL_DEPTH'));assert(!world.content.includes('OWN_MEMORY'));assert(world.content.includes('CHARACTER'));assert.equal(dryRun,true);
   // Builds between ST c292f6416 and 4177c829d read globalScanData.trigger without a default.
   assert.equal(scanData?.trigger,'normal');for(const key of ['personaDescription','characterDescription','characterPersonality','characterDepthPrompt','scenario','creatorNotes'])assert.equal(scanData[key],'');
@@ -621,13 +632,93 @@ test('worldbook material includes only before and after context, excluding all d
 
 test('old prompt settings migrate to selectable entries while preserving edited lists and roles',()=>{
   const raw={...structuredClone(DEFAULT_SETTINGS),...structuredClone(PREVIOUS_ARCHIVE_PROMPTS),promptVersion:2,resultFormat:'free'};
-  const migrated=migrateOldSettings(structuredClone(raw));assert.equal(migrated.promptVersion,4);assert.deepEqual(migrated.promptBlocks,DEFAULT_SETTINGS.promptBlocks);
+  const migrated=migrateOldSettings(structuredClone(raw));assert.equal(migrated.promptVersion,5);assert.deepEqual(migrated.promptBlocks,DEFAULT_SETTINGS.promptBlocks);
   assert.deepEqual(migrateOldSettings({...summarySnapshot(raw),promptVersion:2}).promptBlocks,DEFAULT_SETTINGS.promptBlocks);
   raw.promptBlocks[1].content='用户自己写的格式';raw.promptBlocks[1].role='assistant';raw.resultFormat='archive';
   const custom=migrateOldSettings(structuredClone(raw));assert.deepEqual(custom.promptBlocks.slice(0,raw.promptBlocks.length),raw.promptBlocks);assert.equal(activeResultFormat(custom.promptBlocks),'archive');assert.deepEqual(migrateOldSettings(structuredClone(custom)),custom);
   const compact=migrateOldSettings({...structuredClone(PREVIOUS_COMPACT_PROMPTS),promptVersion:3,resultFormat:'archive',prefillTemplate:'result',thinkingTemplate:'brief',includeDepthWorldbook:true,noTransTag:true});
-  assert.equal(compact.promptBlocks.length,12);assert.equal(activeResultFormat(compact.promptBlocks),'archive');assert(compact.promptBlocks.find(block=>block.id==='tail_prefill').enabled);assert(!compact.promptBlocks.find(block=>block.id==='tail_instruction').enabled);
+  assert.equal(compact.promptBlocks.length,14);assert.equal(activeResultFormat(compact.promptBlocks),'archive');assert(compact.promptBlocks.find(block=>block.id==='tail_prefill').enabled);assert(!compact.promptBlocks.find(block=>block.id==='tail_instruction').enabled);
   for(const key of ['resultFormat','thinkingTemplate','prefillTemplate','includeDepthWorldbook','noTransTag'])assert(!Object.hasOwn(compact,key));
+});
+
+test('V4 defaults upgrade while format, planning and tail selections migrate independently', () => {
+  const stock = migrateOldSettings({ promptVersion: 4, ...structuredClone(PREVIOUS_V4_PROMPTS) });
+  assert.deepEqual(stock.promptBlocks, DEFAULT_SETTINGS.promptBlocks);
+  assert.deepEqual(stock.megaPromptBlocks, DEFAULT_SETTINGS.megaPromptBlocks);
+  for (const [format, check, prefill, planId, tailId] of [
+    ['archive', null, null, undefined, 'tail_instruction'],
+    ['free', 'check_brief', PREFILLS.result, 'check_brief', 'tail_prefill'],
+    ['legacy', 'check_destined', '<archive_check>核对完成。</archive_check>\n<summary_result>\n', 'plan_structured', 'tail_prefill_plan'],
+  ]) {
+    const promptBlocks = structuredClone(PREVIOUS_V4_PROMPTS.promptBlocks);
+    for (const block of promptBlocks) {
+      if (block.choiceGroup === 'format') block.enabled = block.id === `format_${format}`;
+      if (block.choiceGroup === 'check') block.enabled = block.id === check;
+      if (block.choiceGroup === 'tail') block.enabled = block.id === (prefill ? 'tail_prefill' : 'tail_instruction');
+      if (block.id === 'tail_prefill' && prefill) block.content = prefill;
+    }
+    const migrated = summarySnapshot(migrateOldSettings({ promptVersion: 4, promptBlocks }));
+    const enabled = group => migrated.promptBlocks.find(block => block.choiceGroup === group && block.enabled)?.id;
+    assert.equal(activeResultFormat(migrated.promptBlocks), format);
+    assert.equal(enabled('adapter'), 'jailbreak');
+    assert.equal(enabled('plan'), planId);
+    assert.equal(enabled('tail'), tailId);
+  }
+});
+
+test('V4 edited lists keep ordering, custom content and roles through V5', async () => {
+  const promptBlocks = structuredClone(PREVIOUS_V4_PROMPTS.promptBlocks);
+  promptBlocks[0].content += '\n{{summary.depth}}';
+  promptBlocks[0].role = 'user';
+  promptBlocks[1].enabled = false;
+  promptBlocks.splice(1, 0, promptBlocks.pop(), { id: 'custom-history', type: 'old_summary', role: 'user', enabled: true, name: '自定义来源' });
+  const migrated = summarySnapshot(migrateOldSettings({ promptVersion: 4, promptBlocks: structuredClone(promptBlocks) }));
+  assert.deepEqual(migrated.promptBlocks, promptBlocks);
+  assert.deepEqual(migrateOldSettings(structuredClone(migrated)), migrated);
+  const compiled = await compilePrompt({ promptBlocks, macroValues: {} }, migrated);
+  assert.equal(compiled.orderedPrompts[0].role, 'user');
+  assert.match(compiled.orderedPrompts[0].content, /你是独立的第三方剧情档案员/);
+});
+
+test('V1 through V5 prompt files update only the prompt lists and custom macros', () => {
+  const settings = { ...DEFAULT_SETTINGS, excludeTags: [], triggerFloorCount: 42 };
+  const format = 'destined-summary-prompts';
+  const sources = [PRESET_PROMPTS, PREVIOUS_ARCHIVE_PROMPTS, PREVIOUS_COMPACT_PROMPTS, PREVIOUS_V4_PROMPTS, DEFAULT_SETTINGS];
+  for (const [index, source] of sources.entries()) {
+    const raw = {
+      ...source, format, version: index + 1, triggerFloorCount: 100, excludeTags: ['custom'],
+      customMacros: [{ name: 'example', content: '示例' }], customApiKey: 'ignored',
+    };
+    const data = readPromptFile(raw, settings);
+    assert.equal(data.promptVersion, 5);
+    assert.deepEqual(data.promptBlocks, DEFAULT_SETTINGS.promptBlocks);
+    assert.deepEqual(data.megaPromptBlocks, DEFAULT_SETTINGS.megaPromptBlocks);
+    assert.deepEqual(data.customMacros, raw.customMacros);
+    assert.equal(data.triggerFloorCount, 42);
+    assert.deepEqual(data.excludeTags, []);
+    assert(!Object.hasOwn(data, 'customApiKey'));
+  }
+  assert.throws(() => readPromptFile({ format, version: 6 }, settings), /不支持/);
+  const legacy = readPromptFile({ format, summaryInstruction: 'V1 独立末尾条目' }, settings);
+  assert.equal(legacy.promptBlocks.at(-1).content, 'V1 独立末尾条目');
+});
+
+test('choice groups allow a single enabled entry and adapter blocks insist on an active head', async () => {
+  for (const choiceGroup of ['adapter', 'format', 'plan', 'check', 'tail']) {
+    const block = { id: 'a', type: 'prompt', name: 'A', enabled: true, role: 'system', content: 'A', choiceGroup };
+    assert.throws(() => summarySnapshot({ promptBlocks: [block, { ...block, id: 'b' }] }), /只能启用一个/);
+    assert.equal(summarySnapshot({ promptBlocks: [block, { ...block, id: 'b', enabled: false }] }).promptBlocks.length, 2);
+  }
+  const heads = DEFAULT_SETTINGS.promptBlocks.filter(block => block.choiceGroup === 'adapter');
+  const inactive = heads.map(block => ({ ...block, enabled: false }));
+  assert.throws(() => summarySnapshot({ promptBlocks: inactive }), /须启用一个头部/);
+  const compiled = await compilePrompt({ promptBlocks: inactive, macroValues: {} }, DEFAULT_SETTINGS);
+  assert.deepEqual(compiled.orderedPrompts[0], { role: 'system', content: ADAPTER_PROMPTS.standard });
+  const adapted = buildArchivePromptBlocks(false, { adapterMode: 'gemini', prefillTemplate: 'gemini' });
+  const request = await compilePrompt({ promptBlocks: adapted, macroValues: {} }, DEFAULT_SETTINGS);
+  assert.deepEqual(request.orderedPrompts[0], { role: 'system', content: ADAPTER_PROMPTS.gemini });
+  assert.equal(request.prefill, '');
+  assert.match(request.orderedPrompts.at(-1).content, /Native reasoning is the single word "Ready"/);
 });
 
 test('legacy individual prompt fields retain the custom output instruction and its role', () => {
@@ -675,8 +766,8 @@ test('default generation saves the timeline format and rejects arbitrary bullet 
   assert(!books.book.some(entry=>entry.name==='总结20-39楼'));assert(messages.slice(20).every(message=>!message.is_hidden));
 });
 
-test('untagged opening floor zero is fingerprinted and hidden only after a successful batch',async()=>{
-  await saveSettings(FLOW_SETTINGS);seedFloors(30);messages[0]={message_id:0,role:'assistant',message:'开局界面，没有剧情正文',is_hidden:false};
+test('an opening with filtered material is fingerprinted and hidden only after a successful batch',async()=>{
+  await saveSettings(FLOW_SETTINGS);seedFloors(30);messages[0]={message_id:0,role:'assistant',message:'<options>开局界面，没有剧情正文</options>',is_hidden:false};
   const params=await buildSummaryPromptParams(0,19);assert(!params.mergedChatText.includes('开局界面'));assert(params.sources.some(source=>source.id===0));
   globalThis.generateRaw=async()=>'<summary_result>事件档案</summary_result>';assert(await executeSummary(0,19,'总结0-19楼'));assert(messages[0].is_hidden);assert((await getCoverage()).floors.has(0));
   messages[0].message='<gametxt>修改过的开局剧情</gametxt>';await auditArchiveSources();await applySummarizedFloorsVisibility();assert(!messages[0].is_hidden);assert(!(await getCoverage()).floors.has(0));
@@ -773,27 +864,29 @@ test('manual actions pause hiding for later generated summaries and automation c
   assert(messages.slice(0,4).every(message=>message.is_hidden));assert(messages.slice(4,10).every(message=>!message.is_hidden));
 });
 
-test('discussion visibility hides only metadata-tagged records bracketed by covered story sources',async()=>{
+test('discussion visibility hides native and pure legacy records bracketed by covered story sources',async()=>{
   await saveSettings({...FLOW_SETTINGS,autoHideSummarizedFloors:false});
   messages=[
     {message_id:0,role:'user',message:'剧情 0',is_hidden:false},
-    {message_id:1,role:'assistant',message:'<discussion_record>文字不是依据</discussion_record>',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+    {message_id:1,role:'assistant',message:'有原生标记的讨论',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
     {message_id:2,role:'assistant',message:'剧情 2',is_hidden:false},
-    // Text resembling a discussion record without metadata remains story text.
-    {message_id:3,role:'assistant',message:'<discussion_record>未标记</discussion_record>',is_hidden:false},
-    {message_id:4,role:'assistant',message:'剧情 4',is_hidden:false},
-    {message_id:5,role:'assistant',message:'讨论尾部',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+    {message_id:3,role:'assistant',message:'<!--旧记录--><discussion_record note="a > b">旧讨论</discussion_record>',is_hidden:false},
+    {message_id:4,role:'assistant',message:'<discussion_record>附带片段</discussion_record><gametxt>剧情 4</gametxt>',is_hidden:false},
+    {message_id:5,role:'user',message:'<discussion_record>用户引用</discussion_record>',is_hidden:false},
+    {message_id:6,role:'assistant',message:'<destined_discussion>讨论尾部</destined_discussion>',is_hidden:false},
   ];
-  await upsertSummaryEntryByName('总结0-5楼','档案');
-  chat[ARCHIVE_VAR_KEY]={book:{records:{'总结0-5楼':{sources:[0,2,3,4].map(id=>sourceOf(messages[id]))}}}};
+  await upsertSummaryEntryByName('总结0-6楼','档案');
+  chat[ARCHIVE_VAR_KEY]={book:{records:{'总结0-6楼':{sources:messages.map(sourceOf)}}}};
   const coverage=await getCoverage();
-  assert.deepEqual([...coverage.floors],[0,2,3,4]);
+  assert.deepEqual([...coverage.floors],[0,2,4,5]);
   setFloorVisibilityAutomation(true);await applySummarizedFloorsVisibility();
-  assert.deepEqual(messages.map(message=>!!message.is_hidden),[true,true,true,true,true,false]);
+  assert.deepEqual(messages.map(message=>!!message.is_hidden),[true,true,true,true,true,true,false]);
   const {visibilitySnapshot}=await import('../src/summary/visibility.js');
   const snapshot=visibilitySnapshot(coverage.floors);
-  assert.deepEqual([...snapshot.discussionFloors],[1]);
+  assert.deepEqual([...snapshot.discussionFloors],[1,3]);
   assert.equal(snapshot.counts.covered,4);
+  const {discussionRecordPage}=await import('../src/summary/ui/discussionRecords.js');
+  assert.deepEqual(discussionRecordPage(snapshot).records.map(record=>record.message_id),[6,3,1]);
 });
 
 test('discussion visibility excludes discussion-only and unbracketed records from coverage and automation',async()=>{
@@ -818,7 +911,7 @@ test('discussion choices are scoped, source-guarded, and restore to automatic vi
   await saveSettings({...FLOW_SETTINGS,autoHideSummarizedFloors:false});
   messages=[
     {message_id:0,role:'user',message:'剧情 0',is_hidden:false},
-    {message_id:1,role:'assistant',message:'讨论 1',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
+    {message_id:1,role:'assistant',message:'<destined_discussion>旧讨论 1</destined_discussion>',is_hidden:false},
     {message_id:2,role:'assistant',message:'剧情 2',is_hidden:false},
     {message_id:3,role:'assistant',message:'讨论 3',extra:{destined_discussion:{version:1,mode:'discussion'}},is_hidden:false},
     {message_id:4,role:'assistant',message:'剧情 4',is_hidden:false},
@@ -944,8 +1037,8 @@ test('a failed parallel batch preserves successful siblings and retries only unf
   assert(messages.slice(0,60).every(message=>message.is_hidden));
 });
 
-test('a batch with no AI text under the default tags can retry after changing the tags',async()=>{
-  await saveSettings(FLOW_SETTINGS);
+test('a batch with no AI text after filtering can retry after changing the tags',async()=>{
+  await saveSettings({...FLOW_SETTINGS,excludeTags:['narrative']});
   seedFloors(2);
   messages[1].message='<narrative>原来的剧情</narrative>';
   const requests=[];
@@ -973,7 +1066,7 @@ test('skipping a batch with no AI text keeps the original floors and resumes lat
   await saveSettings({...FLOW_SETTINGS,enabled:true,triggerFloorCount:82,keepFloorCount:10,batchFloorCount:20});
   seedFloors(82);
   for(const message of messages.slice(24,48)) {
-    if(message.role==='assistant')message.message=`<narrative>未提取的剧情 ${message.message_id}</narrative>`;
+    if(message.role==='assistant')message.message=`<summary>没有可用正文 ${message.message_id}</summary>`;
   }
   const skippedMessages=structuredClone(messages.slice(24,48));
   const requests=[];
@@ -1067,10 +1160,14 @@ test('custom and regenerated ranges stay one request and pause stops queuing aft
   await autoTriggerSummary();assert.equal(calls,1);assert.equal(books.book.length,1);assert.equal(getTask().batches[1].phase,'paused');
 });
 
-test('new defaults and migration clear only the previous excluded-tag default and preserve custom settings',async()=>{
-  assert.deepEqual(DEFAULT_SETTINGS.excludeTags,[]);assert.equal(DEFAULT_SETTINGS.megaTriggerCount,15);assert.equal(DEFAULT_SETTINGS.megaBatchCount,10);assert.equal(DEFAULT_SETTINGS.parallelBatches,false);
+test('behavior migration upgrades old exclusion defaults and preserves custom settings',()=>{
+  assert.deepEqual(DEFAULT_SETTINGS.excludeTags,DEFAULT_EXCLUDE_TAGS);assert.equal(DEFAULT_SETTINGS.behaviorVersion,2);assert.equal(DEFAULT_SETTINGS.megaTriggerCount,15);assert.equal(DEFAULT_SETTINGS.megaBatchCount,10);assert.equal(DEFAULT_SETTINGS.parallelBatches,false);
   const previous={...structuredClone(DEFAULT_SETTINGS),excludeTags:['think'],megaTriggerCount:8,megaBatchCount:6};delete previous.behaviorVersion;
-  const migrated=migrateOldSettings(previous);assert.deepEqual(migrated.excludeTags,[]);assert.equal(migrated.megaTriggerCount,15);assert.equal(migrated.megaBatchCount,10);
+  const migrated=migrateOldSettings(previous);assert.deepEqual(migrated.excludeTags,DEFAULT_EXCLUDE_TAGS);assert.equal(migrated.behaviorVersion,2);assert.equal(migrated.megaTriggerCount,15);assert.equal(migrated.megaBatchCount,10);
+  assert.deepEqual(migrateOldSettings({...DEFAULT_SETTINGS,behaviorVersion:1,excludeTags:[]}).excludeTags,DEFAULT_EXCLUDE_TAGS);
+  assert.deepEqual(migrateOldSettings({...DEFAULT_SETTINGS,behaviorVersion:1,excludeTags:['think']}).excludeTags,['think']);
+  assert.deepEqual(migrateOldSettings({...DEFAULT_SETTINGS,excludeTags:[]}).excludeTags,[]);
+  assert.equal(summarySnapshot({...DEFAULT_SETTINGS,behaviorVersion:1}).behaviorVersion,2);
   assert.deepEqual(migrateOldSettings({...previous,behaviorVersion:undefined,excludeTags:['hidden'],megaTriggerCount:12,megaBatchCount:9}).excludeTags,['hidden']);
   assert.deepEqual(migrateOldSettings({...DEFAULT_SETTINGS,excludeTags:['think']}).excludeTags,['think']);
 });
@@ -1080,6 +1177,83 @@ test('tag exclusions apply inside extracted AI text and accept nested tags and a
   const result=processMessagesByTags(input,['gametxt'],['hidden'],true);
   assert.equal(result[0].content,'保留结尾');assert.equal(result[1].content,input[1].message);
   assert.equal(processMessagesByTags([{id:0,role:'assistant',message:'<gametxt>甲<think>正文中的思考</think>乙</gametxt>'}],['gametxt'],[],true)[0].content,'甲<think>正文中的思考</think>乙');
+});
+
+test('AI extraction follows document order, uses a union of matching blocks and skips public reasoning', () => {
+  const message = `<recorder_thinking mode="a > b"><tp>假时间</tp><gametxt>假正文</gametxt></recorder_thinking>
+    <archive_plan><gametxt>规划示例</gametxt></archive_plan>
+    <gametxt data-note='a < b > c'>甲<style>样式</style><tp>嵌套地点</tp>乙<script>脚本</script><gametxt>嵌套正文</gametxt>丙</gametxt>
+    <tp>后到的时间</tp><gametxt>续篇</gametxt>`;
+  const [processed] = processMessagesByTags([{ id: 1, role: 'assistant', message }], ['tp', 'gametxt', 'tp'], [], true);
+  assert.equal(processed.content, '甲<tp>嵌套地点</tp>乙<gametxt>嵌套正文</gametxt>丙\n后到的时间\n续篇');
+  const [filtered] = processMessagesByTags([{ id: 1, role: 'assistant', message }], ['tp', 'gametxt'], ['tp'], true);
+  assert.equal(filtered.content, '甲乙<gametxt>嵌套正文</gametxt>丙\n后到的时间\n续篇');
+});
+
+test('AI extraction falls back only when no include tag matches', () => {
+  const input = [
+    { id: 0, role: 'assistant', message: '<gametxt> \n </gametxt>标签外的文字' },
+    { id: 1, role: 'assistant', message: '<gametxt><!-- 注释 --></gametxt>标签外的文字' },
+    { id: 2, role: 'assistant', message: '<gametxt />标签外的文字' },
+    { id: 3, role: 'assistant', message: '<gametxt><hidden>排除</hidden></gametxt>标签外的文字' },
+    { id: 4, role: 'assistant', message: '<think><gametxt>思考示例</gametxt></think>未加标签的正文' },
+    { id: 5, role: 'assistant', message: '<gametxt> </gametxt><gametxt>标签正文</gametxt>标签外的文字' },
+  ];
+  assert.deepEqual(
+    processMessagesByTags(input, ['gametxt'], ['hidden'], true).map(({ id, content }) => [id, content]),
+    [[4, '未加标签的正文'], [5, '标签正文']],
+  );
+});
+
+test('AI fallback retains story and HTML details while removing reasoning, scripts and technical shells', () => {
+  const message = `<recorder_output>思考前缀</thinking> </think><recorder_body>
+<script data-token="a > b">const example = '<gametxt>脚本中的假正文</gametxt>';</script><style>div { color: red }</style>
+<details data-x="a > b"> <summary>面板标题</summary>面板内容</details><summary>独立摘要</summary>
+角色进入城门。</recorder_body><recorder_after_format><recorder_done/><options>选项</options></recorder_after_format></recorder_output>`;
+  const input = [{ id: 1, role: 'assistant', message }, { id: 2, role: 'user', message: '<options>用户原文</options>' }];
+  const [assistant, user] = processMessagesByTags(input, ['tp', 'gametxt'], DEFAULT_EXCLUDE_TAGS, true);
+  assert.match(assistant.content, /<details data-x="a > b"> <summary>面板标题<\/summary>面板内容<\/details>/);
+  assert.match(assistant.content, /角色进入城门/);
+  assert.doesNotMatch(assistant.content, /思考前缀|假正文|<style|<script|<\/?recorder_|独立摘要|选项/);
+  assert.equal(user.content, input[1].message);
+  const [stray] = processMessagesByTags([{ id: 3, role: 'assistant', message: '普通剧情</thinking>后续描述。' }], ['gametxt'], [], true);
+  assert.match(stray.content, /普通剧情.*后续描述/);
+  const [system] = processMessagesByTags([{ id: 4, role: 'system', message: '<tp>时间</tp><gametxt>系统剧情<hidden>去除</hidden></gametxt>' }], ['gametxt'], ['hidden'], true);
+  assert.equal(system.content, '系统剧情');
+  const [details] = processMessagesByTags([{ id: 5, role: 'assistant', message: '<details><summary>标题</summary><think>保留</think></details>' }], ['gametxt'], [], true);
+  assert.match(details.content, /<think>保留<\/think>/);
+});
+
+test('summary normalization strips public notes and accepts prefill echoes and wrapped formats', () => {
+  const fake = '<summary_result>规划里的示例</summary_result>';
+  const notes = `<thinking>${fake}</thinking><archive_plan>${fake}<think>标签示例</archive_plan><archive_check>${fake}</archive_check><archive_finalize>${fake}</archive_finalize>`;
+  const body = '　---\r\n日期　｜ 城门 ：\r\n\t清晨\r\n　 抵达城门。\r\n    【未决事项】稍后回报。';
+  const normalized = '---\n日期 | 城门:\n  清晨\n  抵达城门。\n  【未决事项】稍后回报。';
+  assert.equal(extractSummaryResult(`\`\`\`xml\n${notes}<SUMMARY_RESULT>\n${body}\n</sUMMARY_result>\n\`\`\``, { format: 'legacy' }), normalized);
+  assert.equal(extractSummaryResult(`<SUMMARY_RESULT>\n\`\`\`text\n${body}\n\`\`\`\n</SUMMARY_RESULT>`, { prefill: PREFILLS.result, format: 'legacy' }), normalized);
+  assert.equal(extractSummaryResult(`<archive_plan>\nStep 1: PASS</archive_plan><summary_result>正文</summary_result>`, { prefill: PREFILLS.plan }), '正文');
+  assert.equal(extractSummaryResult(`<archive_check>${fake}</archive_check>续写正文</summary_result>`, { prefill: PREFILLS.result }), '续写正文');
+  for (const response of ['PASS', '<archive_plan>PASS', '<think>未完成' + fake]) {
+    assert.throws(() => extractSummaryResult(response, { prefill: PREFILLS.plan }), IncompleteSummaryError);
+  }
+  assert.throws(() => extractSummaryResult('<archive_finalize>未完成' + fake), IncompleteSummaryError);
+  const singleNarrative = '---\n日期 | 城门:\n  清晨抵达城门。';
+  assert.equal(extractSummaryResult(`<summary_result>${singleNarrative}</summary_result>`, { format: 'legacy' }), singleNarrative);
+  for (const content of ['【未决事项】仅有分类', '- 自由项目列表', '• 自由项目列表']) {
+    assert.throws(() => extractSummaryResult(`<summary_result>---\n日期 | 城门:\n  ${content}</summary_result>`, { format: 'legacy' }));
+  }
+});
+
+test('archive normalization canonicalizes headings and bullets and enforces heading order', () => {
+  const wrap = value => `<summary_result>${value}</summary_result>`;
+  const body = ' 【 时空与事件 】：\n * 清晨｜城门：到达。\n【信息与关系变化】: \n • 获得钥匙。\n【约定与未决事项】\n- 之后回报。';
+  const canonical = '【时空与事件】\n- 清晨｜城门：到达。\n【信息与关系变化】\n- 获得钥匙。\n【约定与未决事项】\n- 之后回报。';
+  assert.equal(extractSummaryResult(wrap(body), { format: 'archive' }), canonical);
+  for (const invalid of [
+    '【时空与事件】\n- 到达。\n【约定与未决事项】\n- 承诺。\n【信息与关系变化】\n- 获得钥匙。',
+    '【时空与事件】\n【信息与关系变化】\n- 获得钥匙。',
+    '【时空与事件】\n- 到达。\n【未知分类】\n- 内容。',
+  ]) assert.throws(() => extractSummaryResult(wrap(invalid), { format: 'archive' }));
 });
 
 test('a long floor list is paged in bounded slices and can jump and filter without loading rows for every floor',async()=>{
@@ -1227,4 +1401,290 @@ test('a chat growing to floor 120 triggers where the floor counts say and each r
     assert(messages.slice(lastEnd+1).every(message=>!message.is_hidden));
     assert.equal((await computeSummaryPreview()).unsummarizedCount,setting.remaining,`${setting.label} 的剩余未总结楼层`);
   }
+});
+
+test('migration moves safety keys across distinct stores and preserves the aliased host contract',async()=>{
+  const {migrateGlobalSummaryState,readGlobalStore,patchGlobalStore}=await import('../src/platform/store.js');
+  const {SECRETS_VAR_KEY,OWNED_BOOKS_VAR_KEY}=await import('../src/platform/storage-keys.js');
+  const legacy={keysByUrl:{'https://summary.invalid':'fixture-key'}};
+  script={managed_values:{test:true},[SECRETS_VAR_KEY]:legacy,[OWNED_BOOKS_VAR_KEY]:['old']};
+  migrateGlobalSummaryState();
+  writePresetStore({managed_values:{test:false}});
+  assert.deepEqual(readGlobalStore()[SECRETS_VAR_KEY],legacy);
+  assert.deepEqual(readGlobalStore()[OWNED_BOOKS_VAR_KEY],['old']);
+  let shared={otherFlavor:123};
+  const aliasRead=getVariables, aliasWrite=replaceVariables;
+  globalThis.getVariables=o=>o.type==='global'?structuredClone(shared):aliasRead(o);
+  globalThis.replaceVariables=(v,o)=>{if(o.type==='global')shared=structuredClone(v);else aliasWrite(v,o);};
+  migrateGlobalSummaryState();
+  assert.deepEqual(shared,{otherFlavor:123,[SECRETS_VAR_KEY]:legacy,[OWNED_BOOKS_VAR_KEY]:['old']});
+  assert.deepEqual(script,{managed_values:{test:false}});
+  script[SECRETS_VAR_KEY]={keysByUrl:{'https://summary.invalid':'stale'}};
+  migrateGlobalSummaryState(); assert(!Object.hasOwn(script,SECRETS_VAR_KEY));
+  assert.deepEqual(shared[SECRETS_VAR_KEY],legacy);
+  const skipGlobal=globalThis.replaceVariables;
+  globalThis.replaceVariables=(v,o)=>{if(o.type!=='global')skipGlobal(v,o);};
+  assert.throws(()=>patchGlobalStore({newField:true}),/校验/);
+});
+
+test('new preset, unbound chat, foreign preset and disposal remove only temporary global bindings',async()=>{
+  const service=await import('../src/summary/service.js');
+  const ledger='summary_assistant_owned_books', book='命定之诗总结世界书_1';
+  let shared={general_summary_owned_books:['Reverie']}, preset='v1.9', mine=true;
+  const handlers=new Map();
+  globalThis.getLoadedPresetName=()=>preset;
+  globalThis.getPreset=()=>({prompts:mine?[{id:'900cb71c-f6a6-441f-a78c-056ddfc8db10'}]:[]});
+  globalThis.tavern_events=Object.fromEntries(['CHAT_CHANGED','PRESET_CHANGED','WORLDINFO_UPDATED','MESSAGE_RECEIVED'].map(k=>[k,k]));
+  globalThis.eventOn=(name,fn)=>{handlers.set(name,fn);return ()=>handlers.delete(name);};
+  globalThis.getVariables=o=>structuredClone(o.type==='global'?shared:o.type==='chat'?chat:script);
+  globalThis.replaceVariables=(v,o)=>{if(o.type==='global')shared=structuredClone(v);else if(o.type==='chat')chat=structuredClone(v);else script=structuredClone(v);};
+  const native=['用户启用的书','Reverie']; globals=[...native];books[book]=[];chat={};
+  try {
+    await service.initialize({status:(...args)=>reports.push(args)});
+    await bindWorldbookToChat(book);await updateSettings({userPrefix:'v1 私有设置',customApiUrl:'https://model.invalid',customApiKey:'unit-test'});
+    assert.deepEqual(globals,[...native,book]);assert.deepEqual(shared[ledger],[book]);assert(!JSON.stringify(script).includes('unit-test'));
+    script={};preset='v2.0';await handlers.get('PRESET_CHANGED')();
+    assert.equal(getSettings().userPrefix,DEFAULT_SETTINGS.userPrefix);assert.equal(getKeyForUrl('https://model.invalid'),'unit-test');
+    chat={};ctx.chatId='B';await handlers.get('CHAT_CHANGED')();assert.deepEqual(globals,native);assert.deepEqual(shared[ledger],[]);
+    await bindWorldbookToChat(book);
+    mine=false;preset='foreign';script={};await handlers.get('PRESET_CHANGED')();
+    assert.deepEqual(globals,native);assert.deepEqual(script,{});assert.equal(chat.summary_assistant_worldbook,book);
+    mine=true;preset='v2.0';await handlers.get('PRESET_CHANGED')();assert.deepEqual(globals,[...native,book]);
+  } finally { await service.dispose(); delete globalThis.getPreset; }
+  assert.deepEqual(globals,native);assert.deepEqual(shared[ledger],[]);
+  assert.deepEqual(shared.general_summary_owned_books,['Reverie']);assert(!reports.some(([,kind])=>kind==='error'));
+});
+
+test('book migration preserves duplicate ordinary names and ids, scopes old mega maps, and retains a failed deletion',async()=>{
+  const {getMegaSummaryMap,setMegaSummaryMapping}=await import('../src/summary/storage.js');
+  const parent=['总结0-0楼','总结1-1楼'],mega='大总结0-1楼';
+  const ordinary=[{uid:0,name:'同名',content:'甲'},{uid:9,name:'同名',content:'乙'}];
+  books.book=[{uid:0,name:mega,content:'旧档案'}];books.new=structuredClone(ordinary);books.third=[];
+  chat[CONFIG.MEGA_SUMMARY_VAR_KEY]={[mega]:parent};
+  await bindWorldbookToChat('third');assert.deepEqual(await getMegaSummaryMap(),{});
+  await setMegaSummaryMapping(mega,['第三本书']);await bindWorldbookToChat('book');
+  assert.deepEqual(await getMegaSummaryMap(),{[mega]:parent});
+  await migrateWorldbookEntries('book','new');
+  assert.deepEqual(books.new.slice(0,2),ordinary);assert.deepEqual(await getMegaSummaryMap(),{[mega]:parent});
+  await deleteBoundSummaryBook();assert.deepEqual(books.new,ordinary);
+  await bindWorldbookToChat('third');assert.deepEqual(await getMegaSummaryMap(),{[mega]:['第三本书']});
+  globalThis.deleteWorldbook=async()=>false;
+  await assert.rejects(deleteBoundSummaryBook(),/删除失败/);
+  assert.equal(getActiveWorldbookName(),'third');assert.deepEqual(await getMegaSummaryMap(),{[mega]:['第三本书']});
+});
+
+test('deleting floors restores shifted auto-hidden sources and leaves native-hidden neighbors alone',async()=>{
+  seedFloors(8);messages[5].message=messages[3].message;messages[5].is_hidden=true;
+  await saveSettings(DEFAULT_SETTINGS);await upsertSummaryEntryByName('总结1-4楼','档案');
+  assert.deepEqual(chat.summary_assistant_auto_hidden_floors,[1,2,3,4]);
+  messages.splice(0,1);messages.forEach((msg,id)=>{msg.message_id=id;});
+  await auditArchiveSources();await applySummarizedFloorsVisibility();
+  assert.deepEqual(messages.map(m=>m.is_hidden),[false,false,false,false,true,false,false]);
+  assert.deepEqual(chat.summary_assistant_auto_hidden_floors,[]);
+});
+
+test('editing auto-hidden text from or to a duplicate restores the edited floor and preserves native-hidden neighbors', async () => {
+  for (const startsWithDuplicate of [true, false]) {
+    reset();
+    seedFloors(8);
+    messages[5].message=startsWithDuplicate ? messages[3].message : '<gametxt>另一段正文</gametxt>';
+    messages[5].is_hidden=true;
+    await saveSettings(DEFAULT_SETTINGS);
+    await upsertSummaryEntryByName('总结1-4楼','档案');
+    assert.deepEqual(chat.summary_assistant_auto_hidden_floors,[1,2,3,4]);
+    messages[3].message=startsWithDuplicate ? '<gametxt>修改后的正文</gametxt>' : messages[5].message;
+    await auditArchiveSources();
+    await applySummarizedFloorsVisibility();
+    assert.deepEqual(messages.map(message => message.is_hidden),[false,false,false,false,false,true,false,false]);
+    assert.deepEqual(chat.summary_assistant_auto_hidden_floors,[]);
+  }
+});
+
+test('in-place edits followed by a new floor retain ownership of the edited duplicate',async()=>{
+  seedFloors(10);
+  messages[2].message=messages[8].message='继续';
+  messages[8].is_hidden=true;
+  await saveSettings(DEFAULT_SETTINGS);
+  await upsertSummaryEntryByName('总结1-3楼','档案');
+  messages[2].message='往左走'; messages[3].message='向前。';
+  messages.push({message_id:10,role:'user',message:'后续',is_hidden:false});
+  await auditArchiveSources(); await applySummarizedFloorsVisibility();
+  assert.deepEqual(messages.filter(message=>message.is_hidden).map(message=>message.message_id),[8]);
+});
+
+test('tag extraction reports matched even for an empty story element',()=>{
+  assert.deepEqual(extractTagContent('<gametxt>   </gametxt>',['gametxt']),{matched:true,content:''});
+  assert.deepEqual(extractTagContent('<think><gametxt>示例</gametxt></think>',['gametxt']),{matched:false,content:''});
+});
+
+test('deleting one repeated floor preserves the visibility owner of the identifiable survivor',async()=>{
+  for (const removed of [2,8]) {
+    reset();seedFloors(10);
+    messages[2].message=messages[8].message='继续';
+    messages[8].is_hidden=true;
+    await saveSettings(DEFAULT_SETTINGS);
+    await upsertSummaryEntryByName('总结0-9楼','档案');
+    messages.splice(removed,1);messages.forEach((message,id)=>{message.message_id=id;});
+    await auditArchiveSources();await applySummarizedFloorsVisibility();
+    assert.deepEqual(messages.filter(message=>message.is_hidden).map(message=>message.message_id),removed===2?[7]:[]);
+  }
+});
+
+test('delayed host updater cannot mutate a book after invalidation, including outside runAction',async()=>{
+  const {updateWorldbookWith}=await import('../src/platform/lifecycle.js');
+  let release,called=false;
+  globalThis.updateWorldbookWith=(name,fn)=>new Promise((resolve,reject)=>{release=()=>{try{resolve(fn([]));}catch(error){reject(error);}};});
+  const pending=updateWorldbookWith('book',()=>{called=true;return [];});
+  invalidate();release();await assert.rejects(pending,{name:'AbortError'});assert.equal(called,false);
+});
+
+test('archive writes split exclusions and the audit disables enabled uncommitted entries',async()=>{
+  seedFloors(10);chat[ARCHIVE_VAR_KEY]={book:{records:{},excluded:[{start:0,end:9}]}};
+  await upsertSummaryEntryByName('总结3-5楼','正文');
+  assert.equal(books.book[0].ignoreBudget,true);assert.deepEqual(readArchive().excluded,[{start:0,end:2},{start:6,end:9}]);
+  chat[ARCHIVE_VAR_KEY].book.records['总结3-5楼'].committed=false;
+  assert.deepEqual(await auditArchiveSources(),['总结3-5楼']);assert.equal(books.book[0].enabled,false);
+});
+
+test('manual edits report failure for active mega parents, and rollback suppresses only identical parents',async()=>{
+  const {viewEditEntry}=await import('../src/summary/ui/panelEvents.js');
+  seedFloors(6);await saveSettings({...FLOW_SETTINGS,megaTriggerCount:3,megaBatchCount:2});
+  const names=['总结0-1楼','总结2-3楼','总结4-5楼'];
+  for(const name of names)await upsertSummaryEntryByName(name,name);
+  const mega='大总结0-3楼';
+  await upsertMegaSummaryEntry(mega,'合并',names.slice(0,2));assert(books.book.find(e=>e.name===mega).ignoreBudget);
+  configureRuntime({popup:async()=>'覆盖',status:(...args)=>reports.push(args)});
+  await viewEditEntry(null,names[0]);
+  assert(reports.some(([msg])=>msg==='该条目已被大总结包含，请先回档对应的大总结再修改'));assert(!reports.some(([,kind])=>kind==='success'));
+  assert.equal(books.book.find(e=>e.name===names[0]).content,names[0]);
+  await restoreMegaSummaryToSummaries(mega);
+  assert.deepEqual((await computeMegaPlan()).summaryNames,names.slice(1));
+  await upsertSummaryEntryByName(names[0],'已改写');
+  assert.deepEqual((await computeMegaPlan()).summaryNames,names.slice(0,2));
+});
+
+test('world context keeps ordinary text containing a short memory and filters whole entries and MVU controls',async()=>{
+  const {snapshotContext}=await import('../src/summary/macros.js');
+  books.book=[{name:'总结0-1楼',content:'旧城'},{name:'[mvu_update]变量',content:'内部控制行'}];
+  SillyTavern.getWorldInfoPrompt=async()=>({worldInfoBefore:'旧城的夜色\n旧城\n内部控制行\n北风',worldInfoAfter:'<UpdateVariable a="1">补丁</UpdateVariable>场景\n[mvu_update]隐私\n内部[/mvu_update]\n[mvu_update]单行'});
+  const values=await snapshotContext({mergedChatText:'剧情'},DEFAULT_SETTINGS);
+  assert.equal(values['summary.world_before'],'旧城的夜色\n北风');assert.equal(values['summary.world_after'],'场景');
+});
+
+
+test('summary panel displays host error text literally in all three record views',async()=>{
+  const {refreshEntryList,refreshMegaEntryList,refreshStatus}=await import('../src/summary/ui/panelEvents.js');
+  globalThis.getWorldbookNames=async()=>{throw new Error('读取 <书名> & 失败');};
+  for(const refresh of [refreshEntryList,refreshMegaEntryList,refreshStatus]){
+    const element={querySelector:()=>null};
+    await refresh({querySelector:()=>element});
+    if(refresh===refreshStatus)assert.match(element.textContent,/读取 <书名> & 失败/);
+    else assert.match(element.innerHTML,/读取 &lt;书名&gt; &amp; 失败/);
+  }
+});
+
+test('a second preset merges legacy credentials and owned books before its script data is cleaned', async () => {
+  const { migrateGlobalSummaryState } = await import('../src/platform/store.js');
+  const { SETTINGS_VAR_KEY:settings, SECRETS_VAR_KEY:secrets, OWNED_BOOKS_VAR_KEY:owned } = await import('../src/platform/storage-keys.js');
+  let shared = { unrelated: 'keep' }, dropGlobalWrite = false;
+  globalThis.getVariables = ({ type }) => structuredClone(type === 'global' ? shared : script);
+  globalThis.replaceVariables = (value, { type }) => {
+    if (type === 'script') script = structuredClone(value);
+    else if (!dropGlobalWrite) shared = structuredClone(value);
+  };
+  script = { [secrets]: { keysByUrl: { common: 'first', empty: '' } }, [owned]: ['first', 'both'] };
+  migrateGlobalSummaryState();
+  script = { [settings]: { customApiUrl: ' legacy ' }, [secrets]: {
+    keysByUrl: { common: 'second', empty: 'filled', new: 'second-only' }, customApiKey: 'single'
+  }, [owned]: ['both', 'second'], custom_models: [] };
+  const before = structuredClone(script);
+  dropGlobalWrite = true;
+  assert.throws(migrateGlobalSummaryState, /全局设置持久化校验失败/);
+  assert.deepEqual(script, before);
+  dropGlobalWrite = false;
+  migrateGlobalSummaryState();
+  assert.deepEqual(shared, { unrelated: 'keep', [secrets]: { keysByUrl: {
+    common:'first', empty:'filled', new:'second-only', legacy:'single',
+  } }, [owned]: ['first', 'both', 'second'] });
+  assert.deepEqual(script, { [settings]: { customApiUrl: ' legacy ' }, custom_models: [] });
+});
+
+test('worldbook migration reconciles existing summary flags and positions before removing the source', async () => {
+  const normal = { name:'总结0-1楼', content:'原始', uid:1, disable:true, position:{depth:9998, order:104} };
+  const mega = { name:'大总结0-1楼', content:'合并', uid:2, enabled:true, position:{depth:9999, order:1} };
+  const targetNormal = { ...normal, uid:70, enabled:true, disable:false, disabled:false, position:{depth:4, order:3} };
+  books.book = [normal, mega];
+  books.target = [targetNormal, { ...mega, uid:71, enabled:false }, { name:'旁注', content:'保留', uid:72 }];
+  const update = globalThis.updateWorldbookWith;
+  globalThis.updateWorldbookWith = async (name, modify) => {
+    await update(name, modify);
+    books.target[0].enabled = true;
+  };
+  await assert.rejects(migrateWorldbookEntries('book','target'), /记录校验失败/);
+  assert.deepEqual(books.book,[normal,mega]); assert.equal(getActiveWorldbookName(),'book');
+  globalThis.updateWorldbookWith = update;
+  await migrateWorldbookEntries('book','target');
+  assert.equal(books.book,undefined); assert.equal(getActiveWorldbookName(),'target');
+  assert.deepEqual(books.target[0],{ ...targetNormal, enabled:false, disable:true, disabled:true, position:normal.position });
+  assert.equal(books.target[1].enabled,true); assert.equal(books.target[1].uid,71);
+  assert.deepEqual(books.target[2],{ name:'旁注', content:'保留', uid:72 });
+});
+
+test('summary context filters whole control entries in character, chat and global books, tolerating a failed read',async t=>{
+  const { snapshotContext } = await import('../src/summary/macros.js');
+  const reads = [];
+  t.mock.method(console, 'warn', () => {});
+  t.after(()=>{delete globalThis.getCharWorldbookNames;delete globalThis.getChatWorldbookName;});
+  globalThis.getCharWorldbookNames = () => ({primary:'character',additional:['shared','missing']});
+  globalThis.getChatWorldbookName = () => 'chat';
+  globals = ['shared','global'];
+  books.character = [{name:'[mvu_update]输出规则',content:'变量条款'}];
+  books.shared = [{name:'[本体][变量]output_format_(随AI输出开，主API)',content:'多行\n输出协议'}];
+  books.chat = [{name:'大总结0-9楼',content:'旧的档案'}];
+  books.global = [{name:'output_format_(其他模式)',content:'接口控制'}];
+  globalThis.getWorldbook = async name => {
+    reads.push(name);
+    if (name === 'missing') throw new Error('世界书不可用');
+    return structuredClone(books[name]);
+  };
+  SillyTavern.getWorldInfoPrompt = async () => ({
+    worldInfoBefore:'变量条款\n普通资料引用变量条款。\n多行\n输出协议',
+    worldInfoAfter:'旧的档案\n接口控制\n保留场景',
+  });
+  const values = await snapshotContext({mergedChatText:'剧情'}, DEFAULT_SETTINGS);
+  assert.deepEqual(reads.sort(),['book','character','chat','global','missing','shared']);
+  assert.equal(values['summary.world_before'],'普通资料引用变量条款。');
+  assert.equal(values['summary.world_after'],'保留场景');
+  globalThis.getCharWorldbookNames = () => {throw Error('没有当前角色');};
+  assert.equal((await snapshotContext({},DEFAULT_SETTINGS))['summary.world_after'],'保留场景');
+});
+
+test('a failed chat binding pauses automation and a world-info event can recover without another chat switch', async t => {
+  const service = await import('../src/summary/service.js');
+  const events = new Map(), errors = [];
+  const before = globalThis.getLastMessageId;
+  let floorReads = 0, refuseBind = true;
+  globalThis.getLastMessageId = () => { floorReads++; return before(); };
+  globalThis.tavern_events = Object.fromEntries(['CHAT_CHANGED','WORLDINFO_UPDATED','MESSAGE_RECEIVED'].map(name=>[name,name]));
+  globalThis.eventOn = (name, fn) => { events.set(name,fn); return () => events.delete(name); };
+  chat = {}; globals = [];
+  await service.initialize({status:(message,kind)=>{if (kind === 'error') errors.push(message);}});
+  t.after(()=>service.dispose());
+  ctx.chatId = 'other';
+  chat = {[CONFIG.CHAT_WB_VAR_KEY]:'book'};
+  globalThis.rebindGlobalWorldbooks = async names => {
+    if (refuseBind) throw Error('暂时不能绑定');
+    globals = [...names];
+  };
+  await events.get('CHAT_CHANGED')();
+  assert.deepEqual(errors,['暂时不能绑定']);
+  events.get('MESSAGE_RECEIVED')();
+  const paused = floorReads;
+  await new Promise(resolve=>setTimeout(resolve,200));
+  assert.equal(floorReads,paused);
+  refuseBind = false;
+  await events.get('WORLDINFO_UPDATED')();
+  assert.deepEqual(globals,['book']);
+  await new Promise(resolve=>setTimeout(resolve,200));
+  assert(floorReads > paused);
 });

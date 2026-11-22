@@ -2,9 +2,11 @@ import { tavernContext, helperApi } from '../platform/ambient.js';
 import { IDENTITY_MACRO_SOURCE, captureIdentityValues, identityMacroValue, expandIdentityMacros } from '../platform/identity-macros.js';
 import { captureContext, checkContext } from '../platform/lifecycle.js';
 import { BLOCK_TYPES, BUILTIN_PROMPTS } from './config.js';
-import { OUTPUT_CONTRACT, formatInstruction, activeResultFormat } from './archiveDefaults.js';
-import { getWorldbookEntriesSafe } from './worldbook.js';
+import { ADAPTER_PROMPTS, OUTPUT_CONTRACT, formatInstruction, activeResultFormat } from './archiveDefaults.js';
+import { getActiveWorldbookName } from './worldbook.js';
+import { VARIABLE_WORLD_ENTRIES } from '../preset/definitions.js';
 import { parseRange } from './provenance.js';
+import { escapeRegex, normalizeWorldbookEntries } from './utils.js';
 
 export const MACROS = [
   ['summary.output_format', '所选输出格式与结果标签要求'],
@@ -14,6 +16,45 @@ export const MACROS = [
 // Mirrors SillyTavern's defaultGlobalScanData; some builds read it without a default.
 const WORLD_SCAN_DATA = Object.freeze({ trigger: 'normal', personaDescription: '', characterDescription: '', characterPersonality: '', characterDepthPrompt: '', scenario: '', creatorNotes: '' });
 const builtinNames = { world_info_before: 'world_before', persona_description: 'persona', char_description: 'character', char_personality: 'personality', scenario: 'scenario', world_info_after: 'world_after', dialogue_examples: 'examples' };
+
+const variableEntries = new Set(Object.values(VARIABLE_WORLD_ENTRIES));
+function isControlEntry(entry) {
+  const name = entry.name?.normalize('NFKC') ?? '';
+  return parseRange(entry.name) || variableEntries.has(entry.name) || /\[mvu_update\]/i.test(name) ||
+    /^(?:\[[^\]]+\]\s*)*output_format_/i.test(name.trim());
+}
+
+async function omittedWorldInfo(token) {
+  const readBook = helperApi('getWorldbook');
+  if (!readBook) return [];
+  const readBindings = [
+    async () => {
+      const character = await helperApi('getCharWorldbookNames')?.('current');
+      return [character?.primary, ...(character?.additional ?? [])];
+    },
+    async () => [await helperApi('getChatWorldbookName')?.('current')],
+    async () => await helperApi('getGlobalWorldbookNames')?.() ?? [],
+  ];
+  const bindings = await Promise.allSettled(readBindings.map(read => read()));
+  checkContext(token);
+  const names = new Set([getActiveWorldbookName()]);
+  for (const result of bindings) {
+    if (result.status === 'fulfilled') for (const name of result.value) names.add(name);
+    else console.warn('总结资料未能读取世界书绑定', result.reason);
+  }
+  const books = [...names].filter(Boolean);
+  const reads = await Promise.allSettled(books.map(async name => readBook(name)));
+  checkContext(token);
+  const omitted = new Set();
+  reads.forEach((result, index) => {
+    if (result.status === 'rejected') { console.warn('总结资料未能读取世界书', books[index], result.reason); return; }
+    for (const entry of normalizeWorldbookEntries(result.value)) {
+      if (isControlEntry(entry) && entry.content?.trim()) omitted.add(entry.content.trim());
+    }
+  });
+  return [...omitted].sort((a, b) => b.length - a.length);
+}
+
 export async function snapshotContext(params, settings) {
   const token = captureContext(), st = tavernContext(), ctx = st?.getContext?.() ?? st ?? {};
   const fields = (st?.getCharacterCardFields ?? ctx.getCharacterCardFields)?.() ?? {};
@@ -26,10 +67,21 @@ export async function snapshotContext(params, settings) {
   };
   const scan = st?.getWorldInfoPrompt ?? ctx.getWorldInfoPrompt;
   if (scan) {
-    const memories = (await getWorldbookEntriesSafe()).filter(entry => parseRange(entry.name)).map(entry => entry.content).filter(Boolean);
+    const omitted = await omittedWorldInfo(token);
     const world = await scan([params.scanText ?? values['summary.material']], ctx.chatCompletionSettings?.openai_max_context ?? st?.chatCompletionSettings?.openai_max_context ?? 32000, true, { ...WORLD_SCAN_DATA });
     checkContext(token);
-    const clean = text => memories.reduce((value, memory) => value.split(memory).join(''), String(text ?? '')).trim();
+    const clean = text => {
+      let value = String(text ?? '').replace(/\r\n/g, '\n');
+      // ST joins whole world-info entries with newlines. A short summary may
+      // also occur inside an ordinary sentence, which must remain intact.
+      for (const entry of omitted) {
+        const block = escapeRegex(entry.replace(/\r\n/g, '\n'));
+        value = value.replace(new RegExp('^[ \\t]*' + block + '[ \\t]*(?:\\n|$)', 'gm'), '');
+      }
+      return value.replace(/<UpdateVariable\b[^>]*>[\s\S]*?<\/UpdateVariable\s*>/gi, '')
+        .replace(/\[mvu_update\][\s\S]*?\[\/mvu_update\]/gi, '')
+        .replace(/^[ \t]*\[mvu_update\].*$/gim, '').trim();
+    };
     values['summary.world_before'] = clean(world?.worldInfoBefore);
     values['summary.world_after'] = clean(world?.worldInfoAfter);
   }
@@ -58,6 +110,8 @@ export async function compilePrompt(params, settings) {
   const expand = text => expandMacros(text, values, settings.customMacros);
   const messages = [];
   const add = (content, role = 'system') => { if (content?.trim()) messages.push({ role, content }); };
+  const adapters = (params.promptBlocks ?? []).filter(block => block.choiceGroup === 'adapter');
+  if (adapters.length && !adapters.some(block => block.enabled && expand(block.content).trim())) add(ADAPTER_PROMPTS.standard);
   for (const block of params.promptBlocks ?? []) {
     if (!block.enabled) continue;
     if (block.type === BLOCK_TYPES.BUILTIN_GROUP) {

@@ -45,10 +45,28 @@ test('discussion floors are absent from summary material, scan text, and sources
   assert.deepEqual(params.sources.map(source => source.id), [0, 1, 4, 5]);
 });
 
+test('pure legacy discussion wrappers are excluded and every other floor is fingerprinted', async () => {
+  messages = [
+    { ...story(0, 'assistant', '<gametxt>开局</gametxt>'), name: '甲' },
+    story(1, 'user', '<discussion_record>用户原样引用</discussion_record>'),
+    story(2, 'assistant', '<summary>只有摘要</summary>'),
+    story(3, 'assistant', '<!--旧记录--><discussion_record note="a > b"><gametxt>幕后讨论</gametxt></discussion_record><!--结尾-->'),
+    story(4, 'assistant', '<destined_discussion>旧版讨论</destined_discussion>'),
+    { ...story(5, 'assistant', '<discussion_record><gametxt>片段讨论</gametxt></discussion_record><gametxt>下一场</gametxt>'), name: '乙' },
+  ];
+  const params = await buildSummaryPromptParams(0, 5, { ...DEFAULT_SETTINGS, includeOldSummary: false });
+  assert.doesNotMatch(params.mergedChatText, /只有摘要|幕后讨论|旧版讨论|片段讨论/);
+  assert.doesNotMatch(params.scanText, /幕后讨论|旧版讨论/);
+  assert.match(params.mergedChatText, /第 0 楼 · 开局 · AI 正文（实际剧情） · AI · 甲/);
+  assert.match(params.mergedChatText, /第 5 楼 · AI 正文（实际剧情） · AI · 乙/);
+  assert.match(params.mergedChatText, /<discussion_record>用户原样引用<\/discussion_record>/);
+  assert.deepEqual(params.sources.map(source => source.id), [0, 1, 2, 5]);
+});
+
 test('automatic planning keeps story-floor semantics and bridges only discussion gaps', async () => {
   messages = [
     story(0, 'user', 'a'), story(1, 'assistant', '<gametxt>a</gametxt>'),
-    discussion(2, 'user', 'ooc'), discussion(3, 'assistant', 'ooc'),
+    story(2, 'assistant', '<discussion_record>legacy ooc</discussion_record>'), discussion(3, 'assistant', 'ooc'),
     story(4, 'user', 'b'), story(5, 'assistant', '<gametxt>b</gametxt>'),
     story(6, 'user', 'keep'), story(7, 'assistant', '<gametxt>keep</gametxt>'),
   ];

@@ -47,9 +47,21 @@ export function sourceFloors(entry, archive, megaMap, lastId) {
   const ranges = normal ? [normal] : (Array.isArray(megaMap[entry.name]) ? megaMap[entry.name] : []).map(parseSummaryEntryName).filter(Boolean);
   return [...new Set(ranges.flatMap(range => Array.from({ length: Math.max(0, Math.min(lastId, range.end) - range.start + 1) }, (_, i) => range.start + i)))];
 }
-export function excludeRange(name, { mega = false } = {}) {
+export function sameMegaParents(excluded, name, parents, archive) {
+  const saved = typeof excluded === 'string' ? { name: excluded, parents: archive.records[excluded]?.parents } : excluded;
+  if (saved.name !== name) return false;
+  // Early records only stored the exact mega name. Where available, use its
+  // recorded parents to allow remerging after a parent is edited.
+  if (!saved.parents?.length) return true;
+  return saved.parents.length === parents.length && parents.every(parent =>
+    saved.parents.some(item => item.name === parent.name && item.fingerprint === parent.fingerprint));
+}
+export function excludeRange(name, { mega = false, parents } = {}) {
   const archive = readArchive(), range = parseRange(name);
-  if (mega) archive.megaExcluded = [...new Set([...archive.megaExcluded, name])];
+  if (mega) {
+    const signature = { name, parents: parents ?? archive.records[name]?.parents ?? [] };
+    if (!archive.megaExcluded.some(item => sameMegaParents(item, name, signature.parents, archive))) archive.megaExcluded.push(signature);
+  }
   else if (range && !archive.excluded.some(item => item.start === range.start && item.end === range.end)) archive.excluded.push(range);
   writeArchive(archive);
 }
