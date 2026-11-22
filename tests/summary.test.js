@@ -10,7 +10,7 @@ import { loadSettings, saveSettings, getSettings, updateSettings, getKeyForUrl, 
 import { PREVIOUS_ARCHIVE_PROMPTS, PREVIOUS_COMPACT_PROMPTS, THINKING_TEMPLATES, PREFILLS, optionBlocks, activeResultFormat } from '../src/summary/archiveDefaults.js';
 import { deleteBoundSummaryBook, getManagedSummaryBookNames } from '../src/summary/worldbook.js';
 import { computeSummaryPlan, computeSummaryPlans, computeSummaryPreview, shouldAutoTrigger, executeSummary, finalizeMegaSummarySave, regenerateAndReplaceEntry, startSummaryProcess, startCustomRangeSummaryProcess, skipPendingTask } from '../src/summary/summary.js';
-import { callSummaryApi, callMegaSummaryApi } from '../src/summary/api.js';
+import { callSummaryApi, callMegaSummaryApi, testConnection } from '../src/summary/api.js';
 import { processMessagesByTags } from '../src/summary/messages.js';
 import { upsertSummaryEntryByName, upsertMegaSummaryEntry, restoreMegaSummaryToSummaries, activateMegaSummaryEntry, applySummarizedFloorsVisibility, writeChatWorldbookBinding, migrateWorldbookEntries, getAllSummaryEntriesForDisplay } from '../src/summary/worldbook.js';
 import { migrate } from '../src/summary/service.js';
@@ -122,6 +122,25 @@ test('summary generation sends resolved ordered prompts and isolates RP history'
   await saveSettings({...getSettings(),apiMode:'custom',customApiUrl:'https://example.invalid/v1',customApiModel:'model',customApiKey:'secret',temperature:0.4,maxTokens:2048});
   await callMegaSummaryApi({promptBlocks:DEFAULT_SETTINGS.megaPromptBlocks,mergedSummaryText:'records',oldMegaSummaryContent:''});
   assert.equal(request.custom_api.key,'secret');assert.equal(request.custom_api.max_tokens,2048);
+});
+test('the saved streaming preference applies to regular summaries, mega summaries and connection tests', async () => {
+  const legacySettings = structuredClone(FLOW_SETTINGS);
+  delete legacySettings.streamGeneration;
+  script[CONFIG.SETTINGS_VAR_KEY] = legacySettings;
+  assert.equal((await loadSettings()).streamGeneration, true);
+  const streamed = [];
+  globalThis.generateRaw = async ({ should_stream }) => {
+    streamed.push(should_stream);
+    return 'OK';
+  };
+  for (const expected of [true, false]) {
+    await updateSettings({ streamGeneration: expected });
+    assert.equal((await loadSettings()).streamGeneration, expected);
+    await callSummaryApi({ promptBlocks: DEFAULT_SETTINGS.promptBlocks, mergedChatText: '聊天材料' });
+    await callMegaSummaryApi({ promptBlocks: DEFAULT_SETTINGS.megaPromptBlocks, mergedSummaryText: '总结材料' });
+    assert.equal(await testConnection(), true);
+    assert.deepEqual(streamed.splice(0), [expected, expected, expected]);
+  }
 });
 test('speaker prefixes remain customizable while the AI default avoids the card name',async()=>{
   await saveSettings({...FLOW_SETTINGS,userPrefix:'玩家 {{user}}'});seedFloors(2);let request;
@@ -354,12 +373,110 @@ test('save failures preserve a valid result and never hide before retry',async()
 });
 test('one automatic retry uses identical materials and settings, then manual retry refreshes settings',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:true,customApiKey:'hidden-key',temperature:0.1});seedFloors();const requests=[];
-  globalThis.generateRaw=async config=>{requests.push(config);await updateSettings({temperature:0.9});throw Error('timeout https://host.invalid?key=hidden-key');};
+  globalThis.generateRaw=async config=>{requests.push(config);await updateSettings({temperature:0.9,streamGeneration:false});throw Error('timeout https://host.invalid?key=hidden-key');};
   await executeSummary(0,19,'总结0-19楼');assert.equal(requests.length,2);assert.equal(getTask().phase,'pending');
   const materials=request=>request.ordered_prompts;
   assert.equal(requests[1].custom_api.temperature,0.1);assert.deepEqual(materials(requests[0]),materials(requests[1]));assert(!getTask().details.includes('hidden-key'));
+  assert.deepEqual(requests.map(request=>request.should_stream),[true,true]);
   globalThis.generateRaw=async config=>{requests.push(config);return '<summary_result>重试正文</summary_result>';};
-  await retryTask();assert.equal(requests[2].custom_api.temperature,0.9);assert.equal(getTask().phase,'complete');
+  await retryTask();assert.equal(requests[2].custom_api.temperature,0.9);assert.equal(requests[2].should_stream,false);assert.equal(getTask().phase,'complete');
+});
+
+const upstream524 = '[API 错误] OpenAI endpoint failed with status 524';
+for (const [label, generate] of [
+  ['a returned Tavern error', async () => upstream524],
+  ['a rejected API call', async () => { throw new Error(upstream524); }],
+]) test(`HTTP 524 from ${label} is reported as a request failure`, async () => {
+  await saveSettings(FLOW_SETTINGS);
+  seedFloors(2);
+  let calls = 0;
+  globalThis.generateRaw = async () => {
+    calls++;
+    return generate();
+  };
+  await assert.rejects(testConnection(), error => error.status === 524 && /524/.test(error.message));
+  assert.equal(calls, 1);
+  assert.equal(await executeSummary(0, 1, '总结0-1楼'), false);
+  assert.equal(calls, 3);
+  const task = getTask();
+  assert.equal(task.phase, 'pending');
+  assert.equal(task.errorKind, 'request');
+  assert.match(task.message, /524/);
+  assert.match(task.message, /超时/);
+  assert.match(task.details, /524/);
+  assert.equal(task.raw, '');
+  assert.deepEqual(books.book, []);
+  assert.deepEqual(readArchive().records, {});
+  assert(messages.every(message => !message.is_hidden));
+});
+
+for (const [label, failure, detail] of [
+  ['a fetch failure', new TypeError('Failed to fetch'), /Failed to fetch/i],
+  ['an unexpected upstream abort', new DOMException('The operation was aborted.', 'AbortError'), /aborted/i],
+]) test(`network errors leave the floors available after ${label}`, async () => {
+  await saveSettings(FLOW_SETTINGS);
+  seedFloors(2);
+  let calls = 0;
+  globalThis.generateRaw = async () => {
+    calls++;
+    throw failure;
+  };
+  assert.equal(await executeSummary(0, 1, '总结0-1楼'), false);
+  assert.equal(calls, 2);
+  const task = getTask();
+  assert.equal(task.phase, 'pending');
+  assert.equal(task.running, false);
+  assert.equal(task.errorKind, 'request');
+  assert.match(task.message, /连接|中断/);
+  assert.match(task.details, detail);
+  assert.equal(task.raw, '');
+  assert.deepEqual(books.book, []);
+  assert(messages.every(message => !message.is_hidden));
+});
+
+for (const { label, response, streamGeneration, prefillTemplate, possiblyInterrupted } of [
+  { label: 'an unclosed result tag in a streamed response', response: '<summary_result>局部正文', streamGeneration: true, prefillTemplate: 'off', possiblyInterrupted: true },
+  { label: 'partial result tag in a streamed response', response: '<summary_result>局部正文</summary_res', streamGeneration: true, prefillTemplate: 'off', possiblyInterrupted: true },
+  { label: 'partial result tag with an assistant prefill', response: '局部正文</summary_res', streamGeneration: true, prefillTemplate: 'result', possiblyInterrupted: true },
+  { label: 'partial result tag in a non-streamed response', response: '<summary_result>局部正文</summary_res', streamGeneration: false, prefillTemplate: 'off', possiblyInterrupted: false },
+  { label: 'plain text without a result tag', response: '正文里提到门牌 524。', streamGeneration: true, prefillTemplate: 'off', possiblyInterrupted: false },
+  { label: 'plain text after an assistant prefill', response: '正文里提到门牌 524。', streamGeneration: true, prefillTemplate: 'result', possiblyInterrupted: false },
+  { label: 'duplicated complete result tags', response: '<summary_result>第一份</summary_result><summary_result>第二份</summary_result>', streamGeneration: true, prefillTemplate: 'off', possiblyInterrupted: false },
+]) test(`summary format failure keeps editable output after ${label}`, async () => {
+  await saveSettings({ ...withOptions(FLOW_SETTINGS, { resultFormat: 'free', prefillTemplate }), streamGeneration });
+  seedFloors(2);
+  let calls = 0;
+  globalThis.generateRaw = async () => {
+    calls++;
+    return response;
+  };
+  assert.equal(await executeSummary(0, 1, '总结0-1楼'), false);
+  assert.equal(calls, 2);
+  const task = getTask();
+  assert.equal(task.phase, 'pending');
+  assert.equal(task.errorKind, 'format');
+  assert.equal(task.raw, response);
+  const feedback = `${task.message} ${task.details}`;
+  if (possiblyInterrupted) assert.match(feedback, /可能[^。！？]*(?:中断|截断)/);
+  else assert.doesNotMatch(feedback, /可能[^。！？]*中断|(?:流式|连接|传输)[^。！？]*中断/);
+  assert.deepEqual(books.book, []);
+  assert(messages.every(message => !message.is_hidden));
+  assert.equal(await retryTask('save', '手动补全的正文'), true);
+  assert.equal(calls, 2);
+  assert.equal(books.book[0].content, '手动补全的正文');
+});
+
+for (const prefillTemplate of ['off', 'result']) test(`API error words inside a valid summary are saved (prefill: ${prefillTemplate})`, async () => {
+  await saveSettings(withOptions(FLOW_SETTINGS, { resultFormat: 'free', prefillTemplate }));
+  seedFloors(2);
+  const body = '[API 错误] OpenAI endpoint failed with status 524 是日志上记载的一行文字。';
+  globalThis.generateRaw = async ({ ordered_prompts }) => {
+    const prefill = ordered_prompts.at(-1).role === 'assistant';
+    assert.equal(prefill, prefillTemplate === 'result');
+    return `${prefill ? '' : '<summary_result>'}${body}</summary_result>`;
+  };
+  assert.equal(await executeSummary(0, 1, '总结0-1楼'), true);
+  assert.equal(books.book[0].content, body);
 });
 test('stop cancels only its own generation and blocks automatic restart',async()=>{
   await saveSettings({...FLOW_SETTINGS,enabled:true});seedFloors();let resolve,request;const stopped=[];

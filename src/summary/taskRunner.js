@@ -2,21 +2,45 @@ import { getSettings } from './storage.js';
 import { getActiveWorldbookName, ensureWorldbookExists, auditArchiveSources, applySummarizedFloorsVisibility, commitArchiveEntry, getWorldbookEntriesSafe } from './worldbook.js';
 import { buildSummaryPromptParams, buildMegaSummaryPromptParams } from './prompt.js';
 import { prepareGeneration, sendPreparedGeneration } from './api.js';
-import { extractSummaryResult, validateResultBody } from './result.js';
+import { extractSummaryResult, validateResultBody, IncompleteSummaryError } from './result.js';
 import { sourcesMatch, fingerprint } from './provenance.js';
 import { beginTask, checkTask, updateTask, finishTask, getTask, taskRunning, waitForRetry, taskBatchFields } from './taskState.js';
 import { getHost, cancelOwnRequests } from '../platform/lifecycle.js';
-import { safeErrorDetails, extractHttpStatus, NO_AI_BODY_MESSAGE } from './errorHandler.js';
+import { safeErrorDetails, extractHttpStatus, summaryRequestMessage, NO_AI_BODY_MESSAGE } from './errorHandler.js';
 
 const finished=batch=>['complete','skipped','paused'].includes(batch.phase);
 function failure(error, stage, settings) {
   if (stage === 'preparing' && error.message === NO_AI_BODY_MESSAGE) {
     return { phase: 'pending', errorKind: 'material', message: NO_AI_BODY_MESSAGE, details: NO_AI_BODY_MESSAGE };
   }
-  const sourceChanged=/来源|世界书已改变|原始总结/.test(error.message),status=extractHttpStatus(error);
-  const errorKind=sourceChanged?'source':stage==='saving'?'save':stage==='visibility'?'visibility':stage==='validating'?'format':'request';
-  const requestMessage=status===401||status===403?'连接认证失败，请检查密钥和权限':status===429?'接口繁忙或额度受限':/timeout|timed out|超时|超过 5 分钟/i.test(error.message)?'连接超时':'请求未完成，请检查连接后重试';
-  return {phase:'pending',errorKind,message:errorKind==='visibility'?'总结已保存，楼层隐藏尚未完成':errorKind==='save'?'总结未保存，生成结果已保留':errorKind==='format'?'返回内容不符合结果标签或正文要求':sourceChanged?error.message:requestMessage,details:safeErrorDetails(error,[settings.customApiKey])};
+  const details = safeErrorDetails(error, [settings.customApiKey]);
+  if (stage !== 'generating' && /来源|世界书已改变|原始总结/.test(error.message)) {
+    return { phase: 'pending', errorKind: 'source', message: details, details };
+  }
+  let errorKind, message;
+  switch (stage) {
+    case 'saving':
+      errorKind = 'save';
+      message = '总结未保存，生成结果已保留';
+      break;
+    case 'visibility':
+      errorKind = 'visibility';
+      message = '总结已保存，楼层隐藏尚未完成';
+      break;
+    case 'validating':
+      errorKind = 'format';
+      message = '返回内容不符合结果标签或正文要求';
+      if (error instanceof IncompleteSummaryError) {
+        message = settings.streamGeneration
+          ? '总结缺少结束标签，可能是流式传输中断、达到输出上限或模型漏写。请查看原始返回，若反复中断可关闭总结流式后重试。'
+          : '总结缺少结束标签。请查看原始返回，检查最大输出 Tokens 和总结提示词。';
+      }
+      break;
+    default:
+      errorKind = 'request';
+      message = summaryRequestMessage(error, settings.streamGeneration);
+  }
+  return { phase: 'pending', errorKind, message, details };
 }
 async function assertSources(task, batch) {
   checkTask(task);
@@ -40,7 +64,7 @@ async function generateBatch(task, batch, settings, advance, mode, editedBody) {
   const prepared=await prepareGeneration(params,settings);checkTask(task);
   advance('generating',{book:getActiveWorldbookName(),sources:params.sources,parents:params.parents,resultFormat:prepared.resultFormat});
   for(let attempt=0;attempt<2;attempt++){
-    advance('generating',{attempt:attempt+1});
+    advance('generating',{attempt:attempt+1,raw:''});
     try{
       const response=await sendPreparedGeneration(prepared,settings);checkTask(task);
       advance('validating',{raw:response});

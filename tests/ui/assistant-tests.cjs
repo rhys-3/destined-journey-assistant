@@ -10,6 +10,14 @@ module.exports=async(cdp,evaluate)=>{
   check('新装默认关闭总结',!q('#sa-enabled').checked&&!ui.summary.capture().enabled);
   click('#sa-enabled');await pause(30);check('总结启用开关独立持久化',vars.summary_assistant_settings.enabled===true);
   click('[data-tab="settings"].sa-tab-item');
+  click('[data-sub-nav="api"]');
+  check('总结默认使用流式',q('#sa-stream-generation').checked&&ui.summary.capture().streamGeneration===true);
+  click('#sa-stream-generation');await pause(850);
+  check('关闭总结流式后自动保存',vars.summary_assistant_settings.streamGeneration===false);
+  ui.closePanel();await pause(30);ui.openPanel();await pause(40);
+  click('[data-tab="settings"].sa-tab-item');click('[data-sub-nav="api"]');
+  check('重开面板保留非流式',!q('#sa-stream-generation').checked&&ui.summary.capture().streamGeneration===false);
+  click('[data-sub-nav="core"]');
   q('#sa-trigger-count').value='41';q('#sa-trigger-count').dispatchEvent(new Event('input',{bubbles:true}));
   await pause(850);check('总结参数自动保存',ui.summary.capture().triggerFloorCount===41);
   await ui.setGlobalPreference('保存预设不丢总结');await ui.settle();check('预设整表保存不覆盖总结',vars.summary_assistant_settings.triggerFloorCount===41);
@@ -33,10 +41,16 @@ module.exports=async(cdp,evaluate)=>{
   q('[data-action="configuration-name"]').value='仅总结';q('[data-action="configuration-name"]').dispatchEvent(new Event('input',{bubbles:true}));
   click('[data-action="configuration-save-new"]');await ui.settle();
   const item=ui.configLibrary().items.find(i=>i.name==='仅总结');check('保存范围勾选生成仅总结配置',item?.snapshot.summary&&!item.snapshot.preset);
-  const original=JSON.stringify(data);await ui.summary.apply({...ui.summary.capture(),triggerFloorCount:61});await ui.applyConfiguration(item.id);
-  check('仅总结配置切换不改动预设',JSON.stringify(data)===original&&ui.summary.capture().triggerFloorCount===41);
+  const original=JSON.stringify(data);await ui.summary.apply({...ui.summary.capture(),triggerFloorCount:61,streamGeneration:true});await ui.applyConfiguration(item.id);
+  check('仅总结配置切换恢复非流式且不改动预设',JSON.stringify(data)===original&&ui.summary.capture().triggerFloorCount===41&&ui.summary.capture().streamGeneration===false);
   check('恢复点只记录受影响的总结部分',!!ui.configLibrary().recovery.snapshot.summary&&!ui.configLibrary().recovery.snapshot.preset);
-  await ui.applyConfiguration('__recovery__');check('仅总结恢复点还原总结参数',ui.summary.capture().triggerFloorCount===61&&JSON.stringify(data)===original);
+  await ui.applyConfiguration('__recovery__');check('仅总结恢复点还原总结参数',ui.summary.capture().triggerFloorCount===61&&ui.summary.capture().streamGeneration===true&&JSON.stringify(data)===original);
+  const nonStreamingExport=JSON.parse(ui.exportConfigurations(item.id,{preset:false,summary:true}));
+  check('配置导出保留显式关闭流式',nonStreamingExport.items[0].snapshot.summary.streamGeneration===false);
+  const legacySummary=nonStreamingExport.items[0];legacySummary.id='old-summary-config';legacySummary.name='旧总结配置';
+  delete legacySummary.snapshot.summary.streamGeneration;
+  await ui.importConfigurations(JSON.stringify(nonStreamingExport));
+  check('旧总结配置缺少流式字段时默认开启',ui.configLibrary().items.find(i=>i.id===legacySummary.id)?.snapshot.summary.streamGeneration===true);
   const both=await ui.saveNamedConfiguration('两类配置','',{preset:true,summary:true});
   const exported=JSON.parse(ui.exportConfigurations(both,{preset:false,summary:true}));check('导出可再次筛选范围',exported.version===2&&exported.items[0].snapshot.summary&&!exported.items[0].snapshot.preset);
   const legacy={format:'destined-configurations',version:1,items:[{id:'old-config',name:'旧版配置',snapshot:ui.captureConfiguration()}]};await ui.importConfigurations(JSON.stringify(legacy));
@@ -89,6 +103,18 @@ module.exports=async(cdp,evaluate)=>{
   ui.closePanel();window.generateRaw=async()=>{throw Object.assign(Error('bad credentials https://example.invalid?key=private-secret'),{status:401});};
   click('[data-notice-retry]');await pause(150);check('失败提示可关闭且不自动打开面板',!ui.state.open&&!q('.dj-dialog')&&!q('.sa-notice-layer').hidden);
   click('.sa-notice-close');ui.openPanel();await pause(50);check('关闭失败提示后保留待处理入口',q('[data-task-title]').textContent.includes('认证失败')&&!q('[data-task-retry]').hidden);
+  for (const [streamGeneration, reply, reason] of [
+    [false, '[API 错误] OpenAI endpoint failed with status 524', '网关超时'],
+    [true, '<summary_result>只收到半段', '可能是流式传输中断'],
+  ]) {
+    await ui.summary.apply({...ui.summary.capture(),streamGeneration});
+    window.generateRaw=async request=>{lastRequest=request;return reply;};
+    click('[data-task-retry]');
+    const deadline=Date.now()+5000;
+    while (!q('[data-task-title]').textContent.includes(reason) && Date.now()<deadline) await pause(50);
+    check('顶部提示和任务详情显示'+reason,lastRequest.should_stream===streamGeneration&&!q('.sa-notice-layer').hidden&&q('.sa-notice-title').textContent.includes(reason)&&q('[data-task-message]').textContent.includes(reason));
+    check(reason+'后保留原楼层',messages.slice(20,40).every(message=>!message.is_hidden)&&!Object.values(books).flat().some(entry=>entry.name==='总结20-39楼'));
+  }
   window.generateRaw=async request=>{lastRequest=request;const data={messages:request.ordered_prompts};for(const fn of handlers.get('CHAT_COMPLETION_SETTINGS_READY')??[])await fn(data);window.lastSentSummary=JSON.parse(JSON.stringify(data));return '<summary_result>恢复后的记录。</summary_result>';};
   click('[data-task-retry]');await pause(250);check('手动重试恢复完成并解除按钮锁定',!q('#sa-start-summary').disabled&&Object.values(books).flat().some(e=>e.name==='总结20-39楼'));
   check('实际发送请求已移除临时防合并标记',lastSentSummary.messages.every(p=>typeof p==='object'&&!p.content.includes('<|no-trans|>')));

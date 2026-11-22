@@ -1,6 +1,16 @@
+export class IncompleteSummaryError extends Error {}
+
 export function extractSummaryResult(output, { prefill = '', format = 'free' } = {}) {
-  const text = `${prefill}${String(output ?? '')}`;
+  const reply = String(output ?? '');
+  const text = `${prefill}${reply}`;
   const tags = [...text.matchAll(/<\/?summary_result\b[^>]*>/gi)];
+  if (tags.length === 1 && tags[0][0] === '<summary_result>') {
+    // A supplied opening tag alone tells us nothing about where the reply ended.
+    const closingFragment = reply.trimEnd().match(/<\/\w*$/)?.[0];
+    if (reply.includes('<summary_result>') || (closingFragment && '</summary_result>'.startsWith(closingFragment))) {
+      throw new IncompleteSummaryError('总结缺少完整的 </summary_result> 结束标签');
+    }
+  }
   if (tags.length !== 2 || tags[0][0] !== '<summary_result>' || tags[1][0] !== '</summary_result>') throw new Error('需要且只能有一组完整的 <summary_result> 结果标签');
   const body = text.slice(tags[0].index + tags[0][0].length, tags[1].index).trim();
   // Also reject a truncated duplicate opener/closer that the complete-tag scan cannot see.

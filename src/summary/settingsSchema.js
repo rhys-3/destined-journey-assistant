@@ -1,6 +1,6 @@
 import { DEFAULT_SETTINGS, BLOCK_TYPES } from './config.js';
 
-const booleans = ['enabled','includeOldSummary','autoTriggerConfirm','autoHideSummarizedFloors','excludeHtmlComments','autoMegaSummary','parallelBatches'];
+const booleans = ['enabled','streamGeneration','includeOldSummary','autoTriggerConfirm','autoHideSummarizedFloors','excludeHtmlComments','autoMegaSummary','parallelBatches'];
 const strings = ['customApiUrl','customApiModel','customApiSource','userPrefix','assistantPrefix'];
 function demand(value, message) { if(!value) throw new Error(message); }
 export function summarySnapshot(input) {

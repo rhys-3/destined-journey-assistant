@@ -46,6 +46,7 @@ const DEFAULT_SETTINGS = {
   behaviorVersion: 1,
   enabled: false,
   apiMode: "tavern",
+  streamGeneration: true,
   customApiUrl: "",
   customApiKey: "",
   customApiModel: "",

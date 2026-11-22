@@ -65,6 +65,7 @@ const collectSettingsFromPanel = (overlay) => {
     apiMode:
       overlay.querySelector('input[name="sa-api-mode"]:checked')?.value ||
       "tavern",
+    streamGeneration: checked('sa-stream-generation'),
     customApiUrl: val("sa-api-url"),
     customApiKey: val("sa-api-key"),
     customApiModel: val('sa-api-model-manual') || val('sa-api-model'),

@@ -36,7 +36,7 @@ const buildCustomApiConfig = (settings) => {
 
 export async function prepareGeneration(params, settings = getSettings()) {
   const compiled = await compilePrompt(params, settings);
-  const config = { should_silence: true, ordered_prompts: compiled.orderedPrompts, max_chat_history: 0, overrides: { chat_history: { prompts: [], with_depth_entries: false }, world_info_before: '', world_info_after: '', persona_description: '', char_description: '', char_personality: '', scenario: '', dialogue_examples: '' } };
+  const config = { should_stream: settings.streamGeneration, should_silence: true, ordered_prompts: compiled.orderedPrompts, max_chat_history: 0, overrides: { chat_history: { prompts: [], with_depth_entries: false }, world_info_before: '', world_info_after: '', persona_description: '', char_description: '', char_personality: '', scenario: '', dialogue_examples: '' } };
   const custom = { ...buildCustomApiConfig(settings) };
   const st=tavernContext(), context=st?.getContext?.()??{}, active=st?.chatCompletionSettings??context.chatCompletionSettings;
   if(active){
@@ -53,18 +53,31 @@ export async function prepareGeneration(params, settings = getSettings()) {
 export async function sendPreparedGeneration(prepared, settings = getSettings()) {
   const generate = generationApi();
   if (!generate) throw new Error('需要酒馆助手 generateRaw 接口，请更新或启用酒馆助手');
-  try { return String(await requestGeneration(config => generate(config), structuredClone(prepared.config)) ?? '').trim(); }
-  catch (error) {
-    if (error.name === 'AbortError') throw error;
-    const status = extractHttpStatus(error);
-    const failure = new Error(safeErrorDetails(error, [settings.customApiKey])); failure.status = status; throw failure;
-  }
+  return requestGeneration(async config => {
+    try {
+      const text = String(await generate(config) ?? '').trim();
+      if (/^\[API\s*(?:错误|error)\]/iu.test(text)) {
+        const completesPrefill = prepared.prefill?.includes('<summary_result>') && text.includes('</summary_result>');
+        if (!completesPrefill) throw new Error(text);
+      }
+      if (!text) throw new Error('接口未返回正文');
+      return text;
+    } catch (error) {
+      const details = safeErrorDetails(error, [settings.customApiKey]);
+      // An AbortError from the host is a failed request. Stops issued by the assistant
+      // are handled separately by requestGeneration, including stale chat contexts.
+      const failure = new Error(error?.name === 'AbortError' ? `接口中断了请求。\n${details}` : details);
+      failure.status = extractHttpStatus(error);
+      throw failure;
+    }
+  }, structuredClone(prepared.config));
 }
 const callSummaryApi = async (params, settings = getSettings()) => sendPreparedGeneration(await prepareGeneration(params, settings), settings);
 const callMegaSummaryApi = callSummaryApi;
 export async function testConnection(settings = getSettings()) {
-  const config = { should_silence: true, max_chat_history: 0, ordered_prompts: [{ role: 'user', content: '请只回复 OK。' }], overrides: { chat_history: { prompts: [], with_depth_entries: false } }, custom_api: { ...buildCustomApiConfig(settings), max_tokens: 32 } };
-  const text = await sendPreparedGeneration({ config }, settings); if (!text.trim()) throw new Error('连接已返回，但内容为空'); return true;
+  const config = { should_stream: settings.streamGeneration, should_silence: true, max_chat_history: 0, ordered_prompts: [{ role: 'user', content: '请只回复 OK。' }], overrides: { chat_history: { prompts: [], with_depth_entries: false } }, custom_api: { ...buildCustomApiConfig(settings), max_tokens: 32 } };
+  await sendPreparedGeneration({ config }, settings);
+  return true;
 }
 
 const fetchModelList = errorCatched(async (apiUrl, apiKey) => {

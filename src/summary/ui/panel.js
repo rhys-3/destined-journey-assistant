@@ -141,6 +141,8 @@ const buildPanelHtml = (settings) => `
               <div class="sa-pair-item"><span class="sa-label">温度</span><select class="sa-select" id="sa-temperature-mode"><option value="follow" ${settings.temperature==='same_as_preset'?'selected':''}>跟随连接</option><option value="override" ${settings.temperature!=='same_as_preset'?'selected':''}>指定数值</option></select><input class="sa-input" id="sa-temperature" type="number" min="0" step="0.1" aria-label="总结温度" value="${settings.temperature==='same_as_preset'?1:settings.temperature}" ${settings.temperature==='same_as_preset'?'disabled':''}></div>
               <div class="sa-pair-item"><span class="sa-label">最大 Tokens</span><select class="sa-select" id="sa-max-tokens-mode"><option value="follow" ${settings.maxTokens==='same_as_preset'?'selected':''}>跟随连接</option><option value="override" ${settings.maxTokens!=='same_as_preset'?'selected':''}>指定数值</option></select><input class="sa-input" id="sa-max-tokens" type="number" min="1" aria-label="总结最大 Tokens" value="${settings.maxTokens==='same_as_preset'?32000:settings.maxTokens}" ${settings.maxTokens==='same_as_preset'?'disabled':''}></div>
             </div>
+            <div class="sa-row"><label class="sa-enable"><input type="checkbox" id="sa-stream-generation" aria-describedby="sa-stream-generation-hint" ${settings.streamGeneration?'checked':''}>流式生成总结</label></div>
+            <p class="sa-hint" id="sa-stream-generation-hint">接口不支持流式时可关闭。</p>
           </div>
            <div class="sa-settings-pane" data-sub-pane="tags">
             ${renderTagEditor('includeTags','提取标签',settings.includeTags)}
