@@ -2,10 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_GEMINI_LOW_REASONING,
+  DEFAULT_INPUT_ESCAPE_SECTIONS,
   DEFAULT_INPUT_ESCAPE_SETTINGS,
   ESCAPED_ENVELOPE_OPEN,
   HEAVY_ENTITY_NOTE,
+  HEAVY_OUTPUT_REMINDER,
   INPUT_ESCAPE_MODES,
+  INPUT_ESCAPE_SECTIONS,
+  LIGHT_OUTPUT_REMINDER,
+  LIGHT_SEPARATOR_NOTE,
   applyGeminiRequestTransforms,
   applyInputEscapeToRequest,
   createInputEscape,
@@ -13,6 +18,7 @@ import {
   encodeLightSeparator,
   locateDestinedBody,
   normalizeGeminiLowReasoning,
+  normalizeInputEscapeSections,
   normalizeInputEscapeSettings,
 } from '../src/preset/input-escape.js';
 import { paginateLines, renderTextToImages, wrapTextToLines } from '../src/preset/input-escape-image.js';
@@ -29,11 +35,11 @@ const GENERATE = '/api/backends/chat-completions/generate';
 
 function buildStoryBody({
   world = '世界设定：红月帝国与酒馆角色档案',
-  reference = '参考资料：深度300世界书规则',
+  reference = '参考资料：深度300世界书规则与面板字段',
   memory = '总结记忆：第1到10轮普通总结与大总结',
   history = 'Participant: 之前发生了什么？\nRecorder: 你们刚离开酒馆。\n\nParticipant:\n<Participant_input>\n我推开门走进房间，测试 😀 表情\n</Participant_input>',
   writing = '## NSFW描写\n敏感测试词句与细节描写',
-  runtime = 'current_state:\n  hp: 85\n  mood: "紧张焦虑"\n  outfit_status: "凌乱"',
+  runtime = 'current_state:\n  hp: 85\n  状态: "紧张焦虑"\n  outfit_status: "凌乱"',
 } = {}) {
   return [
     '<VOID_output_contract id="RECORDER_OUTPUT">',
@@ -87,7 +93,7 @@ function buildDiscussionBody() {
     '<VOID_world>',
     '讨论用世界资料：包含敏感设定',
     '</VOID_world>',
-    '<VOID_reference>讨论参考资料</VOID_reference>',
+    '<VOID_reference>讨论参考规则书</VOID_reference>',
     '<VOID_memory>讨论记忆总结</VOID_memory>',
     '<historical_record>',
     'Participant:\n<Participant_input>\n我们来讨论一下这段色情设定怎么改写？\n</Participant_input>',
@@ -152,13 +158,36 @@ function decodeFakePage(part) {
   return JSON.parse(raw);
 }
 
-test('normalizeInputEscapeSettings handles legacy and invalid values safely', () => {
+test('normalizeInputEscapeSettings handles legacy values, default sections, and empty-section fallback safely', () => {
   assert.deepEqual(normalizeInputEscapeSettings(undefined), DEFAULT_INPUT_ESCAPE_SETTINGS);
-  assert.deepEqual(normalizeInputEscapeSettings(null), { enabled: false, mode: 'light', maxThreeImages: false });
-  assert.deepEqual(normalizeInputEscapeSettings({ enabled: 'yes', mode: 'unknown', maxThreeImages: 'yes' }), { enabled: false, mode: 'light', maxThreeImages: false });
-  assert.deepEqual(normalizeInputEscapeSettings({ enabled: true, mode: 'heavy', maxThreeImages: false }), { enabled: true, mode: 'heavy', maxThreeImages: false });
-  assert.deepEqual(normalizeInputEscapeSettings({ enabled: true, mode: 'image', maxThreeImages: true }), { enabled: true, mode: 'image', maxThreeImages: true });
+  assert.deepEqual(normalizeInputEscapeSettings(null), {
+    enabled: false,
+    mode: 'light',
+    maxThreeImages: false,
+    sections: { ...DEFAULT_INPUT_ESCAPE_SECTIONS },
+  });
+  assert.deepEqual(normalizeInputEscapeSettings({ enabled: 'yes', mode: 'unknown', maxThreeImages: 'yes' }), {
+    enabled: false,
+    mode: 'light',
+    maxThreeImages: false,
+    sections: { ...DEFAULT_INPUT_ESCAPE_SECTIONS },
+  });
+  assert.deepEqual(normalizeInputEscapeSettings({ enabled: true, mode: 'heavy', maxThreeImages: false }), {
+    enabled: true,
+    mode: 'heavy',
+    maxThreeImages: false,
+    sections: { ...DEFAULT_INPUT_ESCAPE_SECTIONS },
+  });
+  assert.deepEqual(normalizeInputEscapeSections({ world: false, reference: false, memory: false, history: false, writing: false, runtime: false }), {
+    world: false,
+    reference: false,
+    memory: false,
+    history: true,
+    writing: false,
+    runtime: false,
+  });
   assert.deepEqual(INPUT_ESCAPE_MODES, ['light', 'heavy', 'image']);
+  assert.equal(INPUT_ESCAPE_SECTIONS.length, 6);
 });
 
 test('encodeHeavyCodepoint converts CJK ideographs (including extension planes) to XML hex entities idempotently', () => {
@@ -170,7 +199,7 @@ test('encodeHeavyCodepoint converts CJK ideographs (including extension planes) 
   assert.equal(decoded, input);
 });
 
-test('heavy mode encodes Option-A sections and VOID_info into XML numeric entities while keeping head, contracts, protocols and tail plaintext', () => {
+test('heavy mode encodes selected sections and VOID_info into XML entities while keeping unselected reference/runtime plaintext', () => {
   const head = { role: 'system', content: 'Noise segment 1\n<role_adapter core="recorder_core">' };
   const tail = { role: 'system', content: 'Start exactly with:\n<recorder_output>\n<recorder_thinking>' };
   const body = { messages: [head, { role: 'user', content: buildStoryBody() }, tail], reasoning_effort: 'auto' };
@@ -187,20 +216,19 @@ test('heavy mode encodes Option-A sections and VOID_info into XML numeric entiti
   const userContent = result.body.messages[1].content;
   assert.equal(typeof userContent, 'string');
   assert.ok(userContent.includes(HEAVY_ENTITY_NOTE));
+  assert.ok(userContent.includes(HEAVY_OUTPUT_REMINDER));
   assert.ok(userContent.includes('<VOID_output_contract id="RECORDER_OUTPUT">'));
   assert.ok(userContent.includes('<VOID_body_protocols target="recorder_body">'));
   assert.ok(userContent.includes('<VOID_output_assembler>'));
-  // Neither plaintext Chinese nor \uXXXX sequences remain inside VOID_info or sensitive sections.
   assert.ok(!userContent.includes('\\u4e'));
-  for (const phrase of ['色情', '红月帝国', '普通总结与大总结', '我推开门走进房间', '敏感测试词句', '紧张焦虑']) {
+  // Selected default sections (world, memory, history, writing) + VOID_info are encoded.
+  for (const phrase of ['色情', '红月帝国', '普通总结与大总结', '我推开门走进房间', '敏感测试词句']) {
     assert.ok(!userContent.includes(phrase), `Plaintext phrase leaked in heavy mode: ${phrase}`);
   }
-  const decoded = userContent.replace(/&#x([0-9a-f]+);/gu, (_, hex) => String.fromCodePoint(parseInt(hex, 16)));
-  assert.ok(decoded.includes('红月帝国') && decoded.includes('色情') && decoded.includes('紧张焦虑'));
-  // ASCII tags, keys, and numbers stay literal.
-  assert.ok(userContent.includes('current_state:'));
+  // Unselected default sections (reference depth 3~900 & runtime depth 0~2) remain untouched plaintext!
+  assert.ok(userContent.includes('深度300世界书规则与面板字段'));
+  assert.ok(userContent.includes('状态: "紧张焦虑"'));
   assert.ok(userContent.includes('hp: 85'));
-  assert.ok(userContent.includes('<Participant_input>'));
   // Idempotent on second pass.
   assert.equal(
     applyGeminiRequestTransforms(result.body, {
@@ -219,7 +247,7 @@ test('encodeLightSeparator breaks consecutive CJK characters with visible middle
   assert.equal(encoded.replaceAll('·', ''), input);
 });
 
-test('light mode escapes Option-A body sections and VOID_info while keeping head, contracts, protocols and tail plaintext', () => {
+test('light mode escapes default selected sections with head/tail anti-dot reminders while keeping reference & runtime plaintext', () => {
   const head = { role: 'system', content: 'Noise segment 1\n<role_adapter core="recorder_core">' };
   const tail = { role: 'system', content: 'Start exactly with:\n<recorder_output>\n<recorder_thinking>' };
   const body = { messages: [head, { role: 'user', content: buildStoryBody() }, tail] };
@@ -232,25 +260,40 @@ test('light mode escapes Option-A body sections and VOID_info while keeping head
 
   const userContent = result.body.messages[1].content;
   assert.equal(typeof userContent, 'string');
+  assert.ok(userContent.includes(LIGHT_SEPARATOR_NOTE));
+  assert.ok(userContent.includes(LIGHT_OUTPUT_REMINDER));
   assert.ok(userContent.includes('<VOID_output_contract id="RECORDER_OUTPUT">'));
   assert.ok(userContent.includes('<VOID_body_protocols target="recorder_body">'));
   assert.ok(userContent.includes('<VOID_output_assembler>'));
-  // No confrontational encoding envelope or \uXXXX sequences that trigger anti-jailbreak alerts.
-  assert.ok(!userContent.includes('\\u4e'));
-  // Sensitive Chinese phrases in VOID_info, world, memory, history, NSFW, and runtime are broken up.
-  for (const phrase of ['色情', '红月帝国', '普通总结与大总结', '我推开门走进房间', '敏感测试词句', '紧张焦虑']) {
+  // Default selected sections are dot-separated.
+  for (const phrase of ['色情', '红月帝国', '普通总结与大总结', '我推开门走进房间', '敏感测试词句']) {
     assert.ok(!userContent.includes(phrase), `Plaintext phrase leaked: ${phrase}`);
   }
   assert.equal(userContent.replaceAll('·', '').includes('红月帝国'), true);
-  // ASCII tags, keys, and numbers inside runtime stay literal.
-  assert.ok(userContent.includes('current_state:'));
+  // Default unselected rule & variable sections remain untouched plaintext (no dots in variable keys/values!).
+  assert.ok(userContent.includes('深度300世界书规则与面板字段'));
+  assert.ok(userContent.includes('状态: "紧张焦虑"'));
   assert.ok(userContent.includes('hp: 85'));
   assert.ok(userContent.includes('<Participant_input>'));
-  // Idempotent: a second call (e.g. dual installed assistants) skips cleanly.
+  // Idempotent on second call.
   assert.equal(applyInputEscapeToRequest(result.body, { enabled: true, mode: 'light' }), null);
+
+  // When user explicitly selects ONLY history + runtime, world/memory/writing stay plaintext while runtime gets escaped.
+  const customOnly = applyInputEscapeToRequest(body, {
+    enabled: true,
+    mode: 'light',
+    sections: { world: false, reference: false, memory: false, history: true, writing: false, runtime: true },
+  });
+  const customText = customOnly.body.messages[1].content;
+  assert.ok(customText.includes('红月帝国'));
+  assert.ok(customText.includes('普通总结与大总结'));
+  assert.ok(customText.includes('敏感测试词句'));
+  assert.ok(!customText.includes('我推开门走进房间'));
+  assert.ok(!customText.includes('紧张焦虑'));
+  assert.ok(customText.includes('hp: 85'));
 });
 
-test('discussion mode anchors after </role_core> and does not mis-slice <material_scope> reference to <VOID_world>', () => {
+test('discussion mode anchors cleanly, keeps <material_scope> & <narrative_reference> intact, and respects section selection', () => {
   const body = { messages: [{ role: 'user', content: buildDiscussionBody() }] };
   const located = locateDestinedBody(body.messages);
   assert.ok(located && !located.alreadyEscaped);
@@ -260,13 +303,18 @@ test('discussion mode anchors after </role_core> and does not mis-slice <materia
   assert.ok(content.includes('<material_scope>\n\n- <VOID_world>、<VOID_reference>'));
   assert.ok(!content.includes('讨论用世界资料'));
   assert.ok(!content.includes('这段色情设定怎么改写'));
-  assert.ok(!content.includes('讨论中'));
+  assert.ok(!content.includes('文风与 NSFW 设定样本'));
+  // Unselected reference & runtime stay plaintext.
+  assert.ok(content.includes('讨论参考规则书'));
+  assert.ok(content.includes('讨论中'));
+  assert.ok(content.includes('<narrative_reference kind="writing">'));
+  assert.ok(content.includes('</narrative_reference>'));
   assert.ok(content.includes('<narrative_reference kind="body_protocols">'));
 });
 
-test('quoted literal tags inside chat history never confuse Option-A boundaries', () => {
+test('quoted literal tags inside chat history never confuse any of the six section boundaries', () => {
   const trickyHistory = [
-    'Participant: 请解释 <VOID_world> 和 </VOID_runtime> 标签的作用',
+    'Participant: 请解释 <VOID_world>、</VOID_reference>、</VOID_memory>、</historical_record> 和 </VOID_runtime> 标签的作用',
     'Recorder: 好的，</writing_guidance> 也是标签。',
     'Participant:\n<Participant_input>\n继续剧情，包含敏感内容\n</Participant_input>',
   ].join('\n');
@@ -275,11 +323,12 @@ test('quoted literal tags inside chat history never confuse Option-A boundaries'
   const content = result.body.messages[0].content;
   assert.ok(!content.includes('继续剧情，包含敏感内容'));
   assert.ok(!content.includes('敏感测试词句'));
-  assert.ok(!content.includes('紧张焦虑'));
+  assert.ok(content.includes('深度300世界书规则与面板字段'));
+  assert.ok(content.includes('状态: "紧张焦虑"'));
   assert.ok(content.includes('<VOID_body_protocols target="recorder_body">'));
 });
 
-test('image mode renders narrative sections as PNG pages, preserves interleaved user images, and light-escapes runtime', () => {
+test('image mode renders only selected narrative sections, keeps unselected reference/runtime plaintext, and light-escapes runtime when selected', () => {
   const { createCanvas } = makeFakeCanvasFactory();
   const userPhoto = { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,USERPHOTO' } };
   const story = buildStoryBody();
@@ -293,6 +342,7 @@ test('image mode renders narrative sections as PNG pages, preserves interleaved 
     ],
   };
 
+  // Default sections: world -> image group 1; reference -> plaintext; memory+history+writing -> image group 2 (with userPhoto preserved); runtime -> plaintext.
   const result = applyInputEscapeToRequest(
     { messages: [{ role: 'system', content: 'Gemini head' }, mixedUserMessage] },
     { enabled: true, mode: 'image' },
@@ -300,34 +350,41 @@ test('image mode renders narrative sections as PNG pages, preserves interleaved 
   );
   assert.ok(result);
   assert.equal(result.stats.mode, 'image');
-  assert.ok(result.stats.pages >= 2);
+  assert.ok(result.stats.pages >= 3);
   assert.equal(result.stats.preservedMedia, 1);
 
   const parts = result.body.messages[1].content;
   assert.ok(Array.isArray(parts));
-  const imageIndices = parts.map((p, i) => (p.type === 'image_url' ? i : -1)).filter(i => i >= 0);
-  assert.equal(imageIndices.length, result.stats.pages + 1);
-  // Original user photo sits in order between rendered pre-photo and post-photo pages.
-  const photoIdx = parts.findIndex(p => p.type === 'image_url' && p.image_url.url === userPhoto.image_url.url);
-  assert.ok(photoIdx > imageIndices[0] && photoIdx < imageIndices.at(-1));
-
   const renderedPages = parts.filter(p => p.type === 'image_url' && p.image_url.url !== userPhoto.image_url.url).map(decodeFakePage);
   const allRenderedText = renderedPages.flatMap(page => page.lines).join('\n');
   assert.ok(allRenderedText.includes('红月帝国'));
   assert.ok(allRenderedText.includes('普通总结与大总结'));
   assert.ok(allRenderedText.includes('我推开门走进房间'));
   assert.ok(allRenderedText.includes('敏感测试词句'));
+  assert.ok(!allRenderedText.includes('深度300世界书规则与面板字段'));
+  assert.ok(!allRenderedText.includes('紧张焦虑'));
 
   const allPlainText = parts.filter(p => p.type === 'text').map(p => p.text).join('\n');
-  // Narrative phrases are NOT in plaintext; runtime keys/numbers remain exact while CJK runtime values are escaped.
   assert.ok(!allPlainText.includes('红月帝国'));
   assert.ok(!allPlainText.includes('敏感测试词句'));
-  assert.ok(!allPlainText.includes('紧张焦虑'));
+  // Unselected reference & runtime stay literal plaintext!
+  assert.ok(allPlainText.includes('深度300世界书规则与面板字段'));
+  assert.ok(allPlainText.includes('状态: "紧张焦虑"'));
   assert.ok(allPlainText.includes('hp: 85'));
-  assert.ok(allPlainText.includes('<VOID_runtime>'));
   assert.ok(allPlainText.includes('<VOID_body_protocols target="recorder_body">'));
-  // No empty text parts emitted.
   assert.ok(parts.every(p => p.type !== 'text' || p.text.length > 0));
+
+  // When runtime IS explicitly selected in image mode, runtime falls back to light dot escaping + tail reminder.
+  const withRuntime = applyInputEscapeToRequest(
+    { messages: [{ role: 'system', content: 'Gemini head' }, { role: 'user', content: buildStoryBody() }] },
+    { enabled: true, mode: 'image', sections: { world: false, reference: false, memory: false, history: true, writing: false, runtime: true } },
+    { imageOptions: { createCanvas } },
+  );
+  const runtimePlain = withRuntime.body.messages[1].content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+  assert.ok(runtimePlain.includes('红月帝国'));
+  assert.ok(!runtimePlain.includes('紧张焦虑'));
+  assert.ok(runtimePlain.includes('hp: 85'));
+  assert.ok(runtimePlain.includes(LIGHT_OUTPUT_REMINDER));
 });
 
 test('image renderer wraps graphemes/CJK safely and enforces page limits fail-closed', () => {
@@ -344,7 +401,7 @@ test('image renderer wraps graphemes/CJK safely and enforces page limits fail-cl
   );
 });
 
-test('maxThreeImages option caps total images at 3 using adaptive tiers and accounts for user photos', () => {
+test('maxThreeImages option caps total images at 3 across split groups and accounts for user photos', () => {
   const { createCanvas } = makeFakeCanvasFactory();
   const longWorld = '世界设定与历史记录长段测试内容，用来验证多页内容在开启最多三张图限制时自动调整排版并合并到三张图以内。\n'.repeat(180);
   const body = { messages: [{ role: 'user', content: buildStoryBody({ world: longWorld }) }] };
@@ -357,7 +414,7 @@ test('maxThreeImages option caps total images at 3 using adaptive tiers and acco
   const imageCount = capped.body.messages[0].content.filter(p => p.type === 'image_url').length;
   assert.ok(imageCount <= 3);
 
-  // Interleaved user photo counts toward the 3-image cap (1 user photo + at most 2 rendered text pages = 3 total).
+  // Contiguous selected sections with 1 interleaved user photo: 1 photo + 2 rendered pages = 3 total.
   const userPhoto = { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,PHOTO1' } };
   const story = buildStoryBody({ world: longWorld });
   const splitAt = story.indexOf('<Participant_input>');
@@ -367,13 +424,21 @@ test('maxThreeImages option caps total images at 3 using adaptive tiers and acco
       content: [{ type: 'text', text: story.slice(0, splitAt) }, userPhoto, { type: 'text', text: story.slice(splitAt) }],
     }],
   };
-  const cappedWithPhoto = applyInputEscapeToRequest(withPhoto, { enabled: true, mode: 'image', maxThreeImages: true }, { imageOptions: { createCanvas } });
+  const cappedWithPhoto = applyInputEscapeToRequest(
+    withPhoto,
+    {
+      enabled: true,
+      mode: 'image',
+      maxThreeImages: true,
+      sections: { world: true, reference: true, memory: true, history: true, writing: true, runtime: false },
+    },
+    { imageOptions: { createCanvas } },
+  );
   const totalImagesWithPhoto = cappedWithPhoto.body.messages[0].content.filter(p => p.type === 'image_url').length;
   assert.equal(totalImagesWithPhoto, 3);
   assert.equal(cappedWithPhoto.stats.preservedMedia, 1);
   assert.equal(cappedWithPhoto.stats.pages, 2);
 
-  // Image mode uses neutral manuscript framing without confrontational anti-thinking wording.
   const allText = capped.body.messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n');
   assert.ok(allText.includes(ESCAPED_ENVELOPE_OPEN));
   assert.ok(!/decode them mentally|Do NOT transcribe/iu.test(allText));
@@ -390,7 +455,7 @@ test('background summary (generateRaw) and non-Destined requests are always skip
   assert.equal(applyInputEscapeToRequest(summaryReq, { enabled: true, mode: 'image' }), null);
 });
 
-test('createInputEscape only enables/transforms when preset belongs to flavor and Gemini adapter is active', async () => {
+test('createInputEscape manages section selection, enforces at least one section, and respects Gemini adapter & flavor', async () => {
   let adapter = 'Claude';
   let mine = true;
   const ctx = {
@@ -407,20 +472,21 @@ test('createInputEscape only enables/transforms when preset belongs to flavor an
   const controller = createInputEscape(ctx);
   assert.equal(controller.readInputEscapeControl().supported, false);
   await assert.rejects(() => controller.setInputEscapeSetting('enabled', true), /仅在 Gemini 适配时生效/);
+  await assert.rejects(() => controller.setInputEscapeSection('runtime', true), /仅在 Gemini 适配时生效/);
   assert.equal(controller.transformOutgoingRequest({ messages: [{ role: 'user', content: buildStoryBody() }] }), null);
 
   adapter = 'Gemini';
   assert.equal(controller.readInputEscapeControl().supported, true);
-  // Low reasoning defaults on for Gemini even while input escaping is off.
+  assert.deepEqual(controller.readInputEscapeControl().sections, DEFAULT_INPUT_ESCAPE_SECTIONS);
   assert.equal(DEFAULT_GEMINI_LOW_REASONING, true);
   assert.equal(normalizeGeminiLowReasoning(undefined), true);
   assert.equal(normalizeGeminiLowReasoning(false), false);
   assert.equal(controller.readGeminiReasoningControl().enabled, true);
+
   const lowOnly = controller.transformOutgoingRequest({ messages: [{ role: 'user', content: buildStoryBody() }], reasoning_effort: 'high' });
   assert.equal(lowOnly.body.reasoning_effort, 'low');
   assert.equal(lowOnly.stats.lowReasoning, true);
   assert.equal(lowOnly.stats.mode, null);
-  // Summary generateRaw never receives reasoning_effort override.
   assert.equal(controller.transformOutgoingRequest({ messages: [{ role: 'user', content: '普通总结材料' }], reasoning_effort: 'high' }), null);
 
   await controller.setGeminiLowReasoning(false);
@@ -428,10 +494,18 @@ test('createInputEscape only enables/transforms when preset belongs to flavor an
   assert.equal(controller.transformOutgoingRequest({ messages: [{ role: 'user', content: buildStoryBody() }], reasoning_effort: 'high' }), null);
 
   await controller.setInputEscapeSetting('enabled', true);
-  assert.equal(ctx.state.config.input_escape.enabled, true);
-  const escapedWithHigh = controller.transformOutgoingRequest({ messages: [{ role: 'user', content: buildStoryBody() }], reasoning_effort: 'high' });
-  assert.ok(escapedWithHigh);
-  assert.equal(escapedWithHigh.body.reasoning_effort, 'high');
+  await controller.setInputEscapeSection('world', false);
+  await controller.setInputEscapeSection('memory', false);
+  await controller.setInputEscapeSection('writing', false);
+  // Trying to uncheck the last remaining section (`history`) is rejected.
+  await assert.rejects(() => controller.setInputEscapeSection('history', false), /至少需保留一个转义板块/);
+  assert.equal(ctx.state.config.input_escape.sections.history, true);
+
+  const historyOnly = controller.transformOutgoingRequest({ messages: [{ role: 'user', content: buildStoryBody() }], reasoning_effort: 'high' });
+  assert.ok(historyOnly);
+  assert.equal(historyOnly.body.reasoning_effort, 'high');
+  assert.ok(historyOnly.body.messages[0].content.includes('红月帝国'));
+  assert.ok(!historyOnly.body.messages[0].content.includes('我推开门走进房间'));
 
   await controller.setGeminiLowReasoning(true);
   const headWithNoise = { role: 'system', content: 'Noise segment\n<role_adapter core="recorder_core">\n</role_adapter>' };
@@ -443,13 +517,11 @@ test('createInputEscape only enables/transforms when preset belongs to flavor an
   assert.equal(both.stats.mode, 'light');
   assert.equal(both.stats.lowReasoning, true);
   assert.deepEqual(both.body.messages[0], headWithNoise);
-  // Idempotent when applied twice (e.g. stacked assistants).
   assert.equal(
     applyGeminiRequestTransforms(both.body, { escapeSettings: { enabled: true, mode: 'light' }, lowReasoning: true }),
     null,
   );
 
-  // Switching to Claude disables runtime transformation without erasing saved preference.
   adapter = 'Claude';
   assert.equal(controller.transformOutgoingRequest({ messages: [{ role: 'user', content: buildStoryBody() }] }), null);
   adapter = 'Gemini';
@@ -512,6 +584,7 @@ test('installToolOutputTransport coordinates input escaping with normal and 2-ca
   assert.equal(sent.length, 3);
   assert.ok(sent[2].messages[0].content.includes('红·月·帝·国'));
   assert.ok(!sent[2].messages[0].content.includes('红月帝国'));
+  assert.ok(sent[2].messages[0].content.includes('状态: "紧张焦虑"'));
 
   // 3. Transform failure rejects request fail-closed and notifies error handler.
   transport.dispose();

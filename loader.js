@@ -1,5 +1,5 @@
 // Paste this loader into the existing 命定预设助手 script (preserve its UUID and variables).
-const version = '3.20.0';
+const version = '3.20.1';
 const asset = `/gh/rhys-3/destined-journey-assistant@v${version}/dist/destined-journey-assistant.js`;
 const hosts = ['cdn.jsdelivr.net', 'testingcf.jsdelivr.net'];
 const reloadName = '重新加载命定预设助手';

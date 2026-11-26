@@ -216,6 +216,11 @@ export function createEvents(ctx) {
       catch (error) { ctx.showErrorToast(error); }
       return;
     }
+    if (action === 'input-escape-section') {
+      try { await ctx.setInputEscapeSection(target.dataset.section, target.checked); }
+      catch (error) { ctx.showErrorToast(error); }
+      return;
+    }
     if (action === 'body-pool-weight') return ctx.setBodyPoolOption(target.dataset.group, target.dataset.option, Number(target.value)).catch(ctx.showErrorToast);
     if (action === 'setting-enabled') return ctx.handleSettingAction(action, target);
     if (action === 'placement-field') return ctx.setPlacementField(target.dataset.field,target.value);

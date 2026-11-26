@@ -153,25 +153,33 @@ const variableMerge = require('../helpers/tavern-variables.cjs').mergeTavernVari
       if (q('[data-gemini-guidelines-controls]')) throw Error('Guidelines card should be removed');
       if (q('[data-action="input-escape-enabled"]').checked !== false) throw Error('Must default off');
 
-      // Enable & test heavy codepoint mode first, then switch to image mode
+      // Verify default section checkboxes (4 checked: history/world/writing/memory; 2 unchecked: reference/runtime).
+      const sec = key => q('[data-action="input-escape-section"][data-section="' + key + '"]');
+      if (!sec('history')?.checked || !sec('world')?.checked || !sec('writing')?.checked || !sec('memory')?.checked) {
+        throw Error('Default narrative sections must be checked');
+      }
+      if (sec('reference')?.checked !== false || sec('runtime')?.checked !== false) {
+        throw Error('Reference and runtime sections must default unchecked');
+      }
+
+      // Enable & test light mode with selective sections (uncheck world, verify world stays plaintext and tail reminder is added)
       const maxThree = q('[data-action="input-escape-max-three"]');
       if (!maxThree || maxThree.checked !== false || maxThree.disabled !== true) throw Error('maxThree must default off and disabled in light mode');
       q('[data-action="input-escape-enabled"]').click();
       await ui.settle();
-      q('[data-action="input-escape-mode"][data-value="heavy"]').click();
+      sec('world').click();
       await ui.settle();
-      if (vars.input_escape?.mode !== 'heavy') throw Error('Heavy mode did not persist');
-      if (q('[data-action="input-escape-max-three"]').disabled !== true) throw Error('maxThree must stay disabled in heavy mode');
+      if (vars.input_escape?.sections?.world !== false) throw Error('Section toggle did not persist');
 
       const sampleBody = [
         '<VOID_output_contract id="RECORDER_OUTPUT">协议</VOID_output_contract>',
         '<role_core id="recorder_core"><VOID_info>色情、暴力测试</VOID_info></role_core>',
         '<VOID_world>世界书设定：雾都钟楼与酒馆角色档案 😀</VOID_world>',
-        '<VOID_reference>参考资料</VOID_reference>',
+        '<VOID_reference>参考规则：深度三百战斗协议</VOID_reference>',
         '<VOID_memory>总结记忆：第一卷回顾</VOID_memory>',
         '<historical_record>Participant:\\n<Participant_input>\\n我走进雾都酒馆\\n</Participant_input></historical_record>',
         '<writing_guidance>## NSFW描写\\n直接描写测试</writing_guidance>',
-        '<VOID_runtime>mood: "平稳"\\nhp: 100</VOID_runtime>',
+        '<VOID_runtime>状态: "平稳"\\nhp: 100</VOID_runtime>',
         '<VOID_body_protocols target="recorder_body">正文协议</VOID_body_protocols>',
         '<VOID_output_assembler><recorder_output></recorder_output></VOID_output_assembler>',
       ].join('\\n\\n');
@@ -180,10 +188,28 @@ const variableMerge = require('../helpers/tavern-variables.cjs').mergeTavernVari
         method: 'POST',
         body: JSON.stringify({ messages: [{ role: 'system', content: 'Gemini head' }, { role: 'user', content: sampleBody }] }),
       });
-      const heavySent = window.sentPayloads[0];
+      const lightSent = window.sentPayloads[0];
+      const lightText = String(lightSent?.messages?.[1]?.content ?? '');
+      if (!lightText.includes('雾都钟楼') || lightText.includes('我走进雾都酒馆')) throw Error('Light selective escape mismatch');
+      if (!lightText.includes('深度三百战斗协议') || !lightText.includes('状态: "平稳"')) throw Error('Unselected reference/runtime should stay plaintext');
+      if (!lightText.includes('Omit them completely')) throw Error('Light output reminder missing');
+
+      // Re-enable world & test heavy codepoint mode
+      sec('world').click();
+      await ui.settle();
+      q('[data-action="input-escape-mode"][data-value="heavy"]').click();
+      await ui.settle();
+      if (vars.input_escape?.mode !== 'heavy') throw Error('Heavy mode did not persist');
+      if (q('[data-action="input-escape-max-three"]').disabled !== true) throw Error('maxThree must stay disabled in heavy mode');
+
+      await window.fetch('/api/backends/chat-completions/generate', {
+        method: 'POST',
+        body: JSON.stringify({ messages: [{ role: 'system', content: 'Gemini head' }, { role: 'user', content: sampleBody }] }),
+      });
+      const heavySent = window.sentPayloads[1];
       const heavyText = String(heavySent?.messages?.[1]?.content ?? '');
       if (!heavyText.includes('&#x96fe;&#x90fd;') || heavyText.includes('雾都钟楼')) throw Error('Heavy mode did not encode CJK to XML hex entities');
-      if (!heavyText.includes('hp: 100')) throw Error('Heavy mode altered ASCII runtime key/value');
+      if (!heavyText.includes('状态: "平稳"') || !heavyText.includes('hp: 100')) throw Error('Unselected runtime must stay plaintext in heavy mode');
 
       // Switch to image mode
       q('[data-action="input-escape-mode"][data-value="image"]').click();
@@ -199,12 +225,16 @@ const variableMerge = require('../helpers/tavern-variables.cjs').mergeTavernVari
         body: JSON.stringify({ messages: [{ role: 'system', content: 'Gemini head' }, { role: 'user', content: sampleBody }] }),
       });
 
-      const sent = window.sentPayloads[1];
+      const sent = window.sentPayloads[2];
       if (sent?.reasoning_effort !== 'low') throw Error('Expected reasoning_effort=low, got ' + sent?.reasoning_effort);
       const parts = sent?.messages?.[1]?.content;
       if (!Array.isArray(parts)) throw Error('Expected multimodal array content');
-      const imgPart = parts.find(p => p.type === 'image_url');
+      const imgParts = parts.filter(p => p.type === 'image_url');
+      if (imgParts.length !== 2) throw Error('Expected 2 image groups (world + memory/history/writing), got ' + imgParts.length);
+      const imgPart = imgParts[0];
       if (!imgPart || !imgPart.image_url?.url?.startsWith('data:image/png;base64,')) throw Error('Missing real PNG data URL');
+      const imgPlainText = parts.filter(p => p.type === 'text').map(p => p.text).join('\\n');
+      if (!imgPlainText.includes('深度三百战斗协议') || !imgPlainText.includes('状态: "平稳"')) throw Error('Unselected reference/runtime must stay plaintext in image mode');
 
       // Verify the rendered PNG actually loads into an Image element with real dimensions.
       const dims = await new Promise((resolve, reject) => {
@@ -222,7 +252,7 @@ const variableMerge = require('../helpers/tavern-variables.cjs').mergeTavernVari
         method: 'POST',
         body: JSON.stringify({ messages: [{ role: 'user', content: sampleBody }] }),
       });
-      const claudeUntouched = typeof window.sentPayloads[2].messages[0].content === 'string' && window.sentPayloads[2].messages[0].content.includes('雾都钟楼');
+      const claudeUntouched = typeof window.sentPayloads[3].messages[0].content === 'string' && window.sentPayloads[3].messages[0].content.includes('雾都钟楼');
 
       // Switch back to Gemini for layout checks.
       await ui.selectModelAdapter('Gemini');
@@ -232,7 +262,7 @@ const variableMerge = require('../helpers/tavern-variables.cjs').mergeTavernVari
 
     assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
     assert.equal(result.dims.w, 1120);
-    assert.ok(result.dims.h >= 200 && result.dims.h <= 1560, JSON.stringify(result.dims));
+    assert.ok(result.dims.h >= 80 && result.dims.h <= 1560, JSON.stringify(result.dims));
     assert.equal(result.disabledOnClaude, true);
     assert.equal(result.claudeUntouched, true);
 
