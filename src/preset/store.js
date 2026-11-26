@@ -2,6 +2,7 @@ import { writePresetStore } from '../platform/store.js';
 import { normalizeCustomSettingValues } from './setting-items.js';
 import { DISCUSSION_SETTINGS_KEY } from '../discussion/preferences.js';
 import { normalizeNoiseSettings } from './noise-text.js';
+import { normalizeInputEscapeSettings, normalizeGeminiLowReasoning } from './input-escape.js';
 import { normalizeBodyPool } from './body-pool.js';
 
 // Dependencies use live accessors so asynchronous operations share the current state.
@@ -88,6 +89,8 @@ export function createStore(ctx) {
       style_structure_version: Number(raw.style_structure_version) || 0,
       managed_values: {},
       noise_padding: normalizeNoiseSettings(raw.noise_padding),
+      input_escape: normalizeInputEscapeSettings(raw.input_escape),
+      gemini_low_reasoning: normalizeGeminiLowReasoning(raw.gemini_low_reasoning),
       entry_points: sanitizeEntryPoints(raw.entry_points),
       connection_link: {
         enabled: source.enabled === true,

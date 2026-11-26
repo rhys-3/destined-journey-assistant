@@ -71,6 +71,9 @@ export function createEvents(ctx) {
       const task = action === 'noise-mode' ? ctx.setNoiseSetting('mode', target.dataset.value) : ctx.regenerateNoise();
       return task.catch(ctx.showErrorToast);
     }
+    if (action === 'input-escape-mode') {
+      return ctx.setInputEscapeSetting('mode', target.dataset.value).catch(ctx.showErrorToast);
+    }
     if (action === 'close') return ctx.closePanel();
     if (action === 'close-backdrop' && event.target === target) return ctx.closePanel();
     if (action === 'close-style-editor' && event.target === target) {
@@ -199,6 +202,17 @@ export function createEvents(ctx) {
       const value = action === 'noise-enabled' ? target.checked : updateNoiseSegmentDraft(target, ctx);
       if (value === undefined) return;
       try { await ctx.setNoiseSetting(action === 'noise-enabled' ? 'enabled' : 'segments', value); }
+      catch (error) { ctx.showErrorToast(error); }
+      return;
+    }
+    if (action === 'gemini-low-reasoning') {
+      try { await ctx.setGeminiLowReasoning(target.checked); }
+      catch (error) { ctx.showErrorToast(error); }
+      return;
+    }
+    if (action === 'input-escape-enabled' || action === 'input-escape-max-three') {
+      const field = action === 'input-escape-enabled' ? 'enabled' : 'maxThreeImages';
+      try { await ctx.setInputEscapeSetting(field, target.checked); }
       catch (error) { ctx.showErrorToast(error); }
       return;
     }
@@ -448,6 +462,7 @@ export function createEvents(ctx) {
     ctx.discussion?.dispose();
     ctx.toolOutput?.dispose();
     ctx.disposeNoise?.();
+    ctx.disposeInputEscape?.();
     summary.dispose();
     ctx.dialogs?.destroy();
     for (const item of ctx.debounceTimers.values()) { clearTimeout(item.timer); item.resolve({ cancelled: true }); }

@@ -23,7 +23,7 @@ const TOOL_DEFINITION = Object.freeze({
   type: 'function',
   function: {
     name: TOOL_OUTPUT_NAME,
-    description: 'Deliver the visible reply of this turn, or the requested part of it.',
+    description: 'Deliver the visible reply of this turn, or the requested part of it. Native reasoning is the single word "Ready", then end native reasoning at once; write the required audit, check, or plan inside <recorder_thinking> in the content argument.',
     parameters: {
       type: 'object',
       properties: {
@@ -463,7 +463,15 @@ function noticeTimeout(response, onTimeout) {
  * a pass-through. Repeated wrappers are harmless: the tool is added once and a
  * restored reply carries no tool call for an outer wrapper to restore again.
  */
-export function installToolOutputTransport({ host = window.parent ?? window, onResult = () => {}, onTimeout = () => {}, onRoundError = () => {} } = {}) {
+export function installToolOutputTransport({
+  host = window.parent ?? window,
+  onResult = () => {},
+  onTimeout = () => {},
+  onRoundError = () => {},
+  transformRequest = null,
+  onTransform = () => {},
+  onTransformError = () => {},
+} = {}) {
   const original = host.fetch;
   const classes = hostClasses(host);
   let active = true;
@@ -473,12 +481,37 @@ export function installToolOutputTransport({ host = window.parent ?? window, onR
     if (!active || typeof init?.body !== 'string' || String(init.method ?? 'GET').toUpperCase() !== 'POST' || !GENERATE_PATH.test(String(url ?? ''))) {
       return original.call(this, input, init);
     }
+    let parsed = null;
+    try { parsed = JSON.parse(init.body); } catch { parsed = null; }
+    if (!parsed || typeof parsed !== 'object') return original.call(this, input, init);
+
     let prepared = null;
-    try { prepared = prepareToolOutputRequest(JSON.parse(init.body)); } catch { prepared = null; }
-    if (!prepared) return original.call(this, input, init);
+    try { prepared = prepareToolOutputRequest(parsed); } catch { prepared = null; }
+
+    let requestBody = prepared ? prepared.body : parsed;
+    let transformed = null;
+    if (typeof transformRequest === 'function') {
+      try {
+        transformed = await transformRequest(requestBody);
+      } catch (error) {
+        onTransformError(error);
+        throw error;
+      }
+      if (transformed?.body) {
+        requestBody = transformed.body;
+        onTransform(transformed.stats ?? null);
+      }
+    }
+
+    if (!prepared) {
+      if (!transformed?.body) return original.call(this, input, init);
+      return original.call(this, input, { ...init, body: JSON.stringify(requestBody) });
+    }
+
+    const activeBody = requestBody;
     const startedAt = Date.now();
     const send = body => original.call(this, input, { ...init, body: JSON.stringify(body) });
-    const response = await send(prepared.body);
+    const response = await send(activeBody);
     if (prepared.active && !response.ok) noticeTimeout(response, onTimeout);
     if (!prepared.active || !response.ok || !response.body) return response;
     const restorer = createReplyRestorer({ startedAt });
@@ -487,15 +520,15 @@ export function installToolOutputTransport({ host = window.parent ?? window, onR
       classes,
       maxRounds: prepared.continuation ? MAX_ROUNDS : 1,
       nextRound: async delivered => {
-        const next = await send(continuationBody(prepared.body, delivered, continuationInstruction(delivered, prepared.continuation)));
+        const next = await send(continuationBody(activeBody, delivered, continuationInstruction(delivered, prepared.continuation)));
         if (!next.ok) noticeTimeout(next, onTimeout);
         return next;
       },
       onRoundError,
-      onDone: stats => onResult({ ...stats, split: !!prepared.continuation, streamed: prepared.body.stream === true }),
+      onDone: stats => onResult({ ...stats, split: !!prepared.continuation, streamed: activeBody.stream === true }),
     };
     const type = response.headers.get('content-type') ?? '';
-    return prepared.body.stream === true && !type.includes('application/json')
+    return activeBody.stream === true && !type.includes('application/json')
       ? relayEventStreams(response, options)
       : relayJsonRounds(response, options);
   }

@@ -234,6 +234,8 @@ export function createRender(ctx) {
           ${GEMINI_TAIL_MODES.map(mode => choiceButton('gemini-tail', mode, GEMINI_TAIL_LABELS[mode], tail === mode, current !== 'Gemini' || !ctx.geminiTailAvailable(mode))).join('')}
         </div>
       </article>
+      ${ctx.renderGeminiReasoningControl()}
+      ${ctx.renderInputEscapeControls()}
       <article class="card connection-card">
         <div class="card-title">
           <div><h4>切换模型时，一起切换连接</h4><p>为各模型绑定酒馆连接配置；关闭后只切换预设适配。</p></div>

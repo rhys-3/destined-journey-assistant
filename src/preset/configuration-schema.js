@@ -4,6 +4,7 @@ import { DESCRIPTION_KEYS, DESCRIPTION_LIMIT } from './descriptions.js';
 import { migrateCustomSettingPrompts } from './setting-items.js';
 import { GEMINI_TAIL_MODES, OPTIONAL_MODEL_PROMPT_IDS, geminiTailMode } from './definitions.js';
 import { normalizeNoiseSettings } from './noise-text.js';
+import { normalizeInputEscapeSettings, normalizeGeminiLowReasoning } from './input-escape.js';
 import { migrateNoisePlacement } from './noise-placement.js';
 import { FLAVOR } from '../flavor.js';
 
@@ -160,6 +161,8 @@ export function createConfigurationSchema(ctx) {
     return {
       managed_values: ctx.sanitizeManagedValues(config.managed_values, preset),
       noise_padding: normalizeNoiseSettings(config.noise_padding),
+      input_escape: normalizeInputEscapeSettings(config.input_escape),
+      gemini_low_reasoning: normalizeGeminiLowReasoning(config.gemini_low_reasoning),
       entry_points: ctx.sanitizeEntryPoints(config.entry_points),
       custom_models,
       connection_link: { enabled: config.connection_link?.enabled === true, bindings },

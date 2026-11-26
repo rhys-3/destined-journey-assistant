@@ -55,6 +55,8 @@ import { createModels } from './models.js';
 import { createManaged } from './managed.js';
 import { createNoise } from './noise.js';
 import { createNoiseControls } from './noise-controls.js';
+import { createInputEscape } from './input-escape.js';
+import { createInputEscapeControls } from './input-escape-controls.js';
 import { createBodyPoolControls } from './body-pool-controls.js';
 import { createSettingLists } from './setting-lists.js';
 import { createStylesEditor } from './styles-editor.js';
@@ -416,6 +418,8 @@ export async function startPresetAssistant() {
   } = createManaged(ctx);
   const noise = createNoise(ctx);
   Object.assign(ctx, noise, createNoiseControls(ctx));
+  const inputEscape = createInputEscape(ctx);
+  Object.assign(ctx, inputEscape, createInputEscapeControls(ctx));
   Object.assign(ctx, createBodyPoolControls(ctx));
   Object.assign(ctx, createSettingLists(ctx));
   const { openStyleEditor, saveStyleEditor, deleteUserStyle, setStreaming, ensurePromptMetadata, inferPromptMeta } = createStylesEditor(ctx);
@@ -688,6 +692,17 @@ export async function startPresetAssistant() {
     toastr.warning('工具输出请求超时（524）：工具输出要等正文完整生成后才一次返回，期间连接没有数据，等待过久会被接口或网关断开。可缩短回复、换用超时更宽松的接口，或切回非预填充尾部。', BUTTON_NAME, { timeOut: 15000 });
   }
 
+  function reportInputEscape(stats) {
+    if (!stats) return;
+    console.info(`[${SCRIPT_NAME}] Gemini 输入转义`, stats);
+  }
+
+  function reportInputEscapeError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[${SCRIPT_NAME}] Gemini 输入转义失败`, error);
+    toastr.error(message, 'Gemini 输入转义', { timeOut: 15000, preventDuplicates: true });
+  }
+
   globalThis[FLAVOR.singletonKey] = { destroy: cleanup, open: openPanel };
   try {
     const version = await getTavernHelperVersion();
@@ -702,7 +717,15 @@ export async function startPresetAssistant() {
 
   createUi();
   discussion = startDiscussion(ctx);
-  toolOutput = installToolOutputTransport({ host: window.parent, onResult: reportToolOutput, onTimeout: reportToolOutputTimeout, onRoundError: reportToolOutputRoundError });
+  toolOutput = installToolOutputTransport({
+    host: window.parent,
+    onResult: reportToolOutput,
+    onTimeout: reportToolOutputTimeout,
+    onRoundError: reportToolOutputRoundError,
+    transformRequest: body => inputEscape.transformOutgoingRequest(body),
+    onTransform: reportInputEscape,
+    onTransformError: reportInputEscapeError,
+  });
   dialogs = createDialogs({ getRoot: () => shadow, open: () => { if (!state.open) openPanel(); } });
   await summary.initialize({
     popup: (...args) => dialogs.popup(...args),
